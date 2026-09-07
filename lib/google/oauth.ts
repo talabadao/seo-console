@@ -8,6 +8,9 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
   // Read-only access to Search Console properties + Search Analytics + URL Inspection
   "https://www.googleapis.com/auth/webmasters.readonly",
+  // Submit URLs to the Google Indexing API (works with user creds when the signed-in
+  // account is an Owner of the property — no service-account key needed).
+  "https://www.googleapis.com/auth/indexing",
 ];
 
 export function oauthClient() {

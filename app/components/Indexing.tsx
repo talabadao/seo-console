@@ -42,7 +42,7 @@ interface IndexData {
   job: { status: string; checked: number; message: string | null; finished_at: number | null } | null;
   quotaLeft: number;
   dailyCap: number;
-  indexing: { configured: boolean; serviceAccountEmail: string | null };
+  indexing: { configured: boolean; serviceAccount: boolean };
 }
 
 export function Indexing({ property }: { property: string }) {
@@ -101,7 +101,15 @@ export function Indexing({ property }: { property: string }) {
       });
       const j = await res.json();
       if (res.ok) {
-        setMsg(`Submitted ${j.submitted} URL(s) to the Indexing API${j.failed ? `, ${j.failed} failed` : ""}.`);
+        if (j.needsReconnect) {
+          setMsg(
+            "Google rejected the request — your account was connected before the indexing permission existed. Sign out and sign back in, then retry.",
+          );
+        } else {
+          setMsg(
+            `Submitted ${j.submitted} URL(s) to the Indexing API${j.failed ? `, ${j.failed} failed (${j.results.find((r: { ok: boolean; message: string }) => !r.ok)?.message ?? ""})` : ""}.`,
+          );
+        }
         await load();
       } else setMsg(j.error ?? "Submit failed");
     } finally {
@@ -183,25 +191,22 @@ export function Indexing({ property }: { property: string }) {
               ? ` · last run ${format(data.job.finished_at, "MMM d HH:mm")} (${data.job.checked} checked)`
               : ""}
           </span>
-          {data.indexing.configured ? (
-            data.submittableCount > 0 && (
-              <button
-                onClick={() =>
-                  submit(data.urls.filter((u) => u.submittable && !u.submittedAt).map((u) => u.url))
-                }
-                disabled={submitting === "bulk"}
-                className="rounded-md border border-accent px-2 py-1 font-medium text-accent disabled:opacity-50"
-              >
-                {submitting === "bulk"
-                  ? "Submitting…"
-                  : `Submit ${data.submittableCount} not-indexed to Google`}
-              </button>
-            )
-          ) : (
-            <span className="text-bad">
-              Indexing API not set up — add a service-account key to enable “Submit to Index”. See README.
-            </span>
+          {data.submittableCount > 0 && (
+            <button
+              onClick={() =>
+                submit(data.urls.filter((u) => u.submittable && !u.submittedAt).map((u) => u.url))
+              }
+              disabled={submitting === "bulk"}
+              className="rounded-md border border-accent px-2 py-1 font-medium text-accent disabled:opacity-50"
+            >
+              {submitting === "bulk"
+                ? "Submitting…"
+                : `Submit ${data.submittableCount} not-indexed to Google`}
+            </button>
           )}
+          <span className="text-muted">
+            Indexing API via your Google login{data.indexing.serviceAccount ? " + service account" : ""}
+          </span>
         </div>
       )}
 

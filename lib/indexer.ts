@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { accessTokenFor } from "@/lib/google/oauth";
 import { inspectUrl, listSitemaps } from "@/lib/google/searchconsole";
-import { indexingConfigured, publishUrl, serviceAccountEmail } from "@/lib/google/indexingApi";
+import { publishUrl, serviceAccountConfigured } from "@/lib/google/indexingApi";
 import type { UserRow } from "@/lib/session";
 
 export interface SiteRow {
@@ -364,8 +364,9 @@ export function indexDashboard(siteId: number) {
     quotaLeft: quotaLeft(siteId),
     dailyCap: DAILY_CAP,
     indexing: {
-      configured: indexingConfigured(),
-      serviceAccountEmail: serviceAccountEmail(),
+      // Available for any signed-in user (via OAuth); a service account is optional.
+      configured: true,
+      serviceAccount: serviceAccountConfigured(),
     },
   };
 }
@@ -375,6 +376,7 @@ export function indexDashboard(siteId: number) {
 export async function submitUrls(
   site: SiteRow,
   urls: string[],
+  userToken?: string,
 ): Promise<{ url: string; ok: boolean; message: string }[]> {
   const out: { url: string; ok: boolean; message: string }[] = [];
   const mark = db.prepare(
@@ -386,7 +388,7 @@ export async function submitUrls(
   );
   for (const url of urls) {
     try {
-      await publishUrl(url, "URL_UPDATED");
+      await publishUrl(url, { userToken });
       ensureRow.run(site.id, url);
       mark.run(Date.now(), "ok", site.id, url);
       out.push({ url, ok: true, message: "submitted" });

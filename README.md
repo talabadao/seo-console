@@ -19,7 +19,7 @@ Runs locally, stores data in a local SQLite file, and builds daily history over 
 | Growing / Decaying / **New** tabs on every breakdown (New = "new rankings", now a filter, not a separate page) | ✅ |
 | Filters: branded / non-branded, People Also Ask, long-tail, AI-prompt, Top 3/10/20, contains | ✅ |
 | **Indexing** tab — automated sitemap discovery + quota-aware URL Inspection, stacked history chart, per-URL table | ✅ |
-| **Submit to Index** button (Google Indexing API) for not-indexed / "unknown to Google" URLs | ⚙️ needs a service-account key — see below |
+| **Submit to Index** button (Google Indexing API) for not-indexed / "unknown to Google" URLs | ⚙️ enable the Indexing API + reconnect once — see below |
 | Single URL Inspection tool (24h cache) | ✅ |
 | Sortable / filterable tables, **show-all rows**, CSV export | ✅ |
 | Light / dark / system theme | ✅ |
@@ -45,17 +45,20 @@ the **Indexing API**, which Google officially supports **only for pages with `Jo
 This app exposes it as a best-effort nudge for URLs that come back **not indexed** or
 **"URL is unknown to Google"**.
 
-It uses a **service account** (separate from your Google sign-in):
+**Setup (uses your Google login — no service-account key needed):**
 
-1. Cloud Console → **IAM & Admin → Service Accounts** → create one → **Keys → Add key → JSON** → download.
-2. **APIs & Services → Library** → enable **Web Search Indexing API**.
-3. Search Console → **Settings → Users and permissions** → **Add user** → paste the service
-   account's email (`…@….iam.gserviceaccount.com`) → role **Owner**.
-4. In `.env.local` set `GOOGLE_SA_KEY_FILE=` to the JSON key path (or paste the JSON into
-   `GOOGLE_SA_KEY_JSON=`). Restart.
+1. **APIs & Services → Library** → enable **Web Search Indexing API** in the same Cloud project.
+2. Sign out of SEO Console and sign back in — the sign-in now also asks for the
+   "Submit data to the Indexing API" permission. Approve it.
+3. Done. The signed-in account must be an **Owner** of the property (you are, since you
+   verified the site).
 
 The Indexing tab then shows a **Submit** button per eligible URL and a bulk
 "Submit N not-indexed to Google" button. Submissions and their result are recorded per URL.
+
+> This path is unaffected by the `iam.disableServiceAccountKeyCreation` org policy that
+> blocks downloadable service-account keys. If you *do* have a service-account key, you can
+> still point `GOOGLE_SA_KEY_FILE` / `GOOGLE_SA_KEY_JSON` at it as a fallback.
 
 ### Known API limits (Google's, not ours)
 
@@ -74,7 +77,8 @@ The Indexing tab then shows a **Submit** button per eligible URL and a bulk
 
 In [Google Cloud Console](https://console.cloud.google.com/):
 
-1. **APIs & Services → Library →** enable **Google Search Console API**.
+1. **APIs & Services → Library →** enable **Google Search Console API**
+   (and **Web Search Indexing API** if you want the "Submit to Index" button).
 2. **APIs & Services → OAuth consent screen:**
    - User type: **External**
    - Add scope `.../auth/webmasters.readonly` (optional; it's requested at runtime too)
