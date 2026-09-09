@@ -35,6 +35,7 @@ interface IndexUrlRow {
   submitResult: string | null;
   submittable: boolean;
   unknownToGoogle: boolean;
+  requestIndexingUrl: string;
 }
 
 interface IndexData {
@@ -474,11 +475,25 @@ function Donut({ pct }: { pct: number }) {
 function StatusPill({ r }: { r: IndexUrlRow }) {
   const color = r.indexed ? "var(--good)" : r.lastInspection ? "var(--bad)" : "var(--muted)";
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
-      <span style={{ color }}>{r.status ?? (r.lastInspection ? "—" : "not inspected")}</span>
-      {r.atRisk && (
-        <span className="rounded bg-bad/15 px-1 text-[10px] font-semibold text-bad">AT RISK</span>
+    <span className="flex flex-col gap-0.5">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+        <span style={{ color }}>{r.status ?? (r.lastInspection ? "—" : "not inspected")}</span>
+        {r.atRisk && (
+          <span className="rounded bg-bad/15 px-1 text-[10px] font-semibold text-bad">AT RISK</span>
+        )}
+      </span>
+      {!r.indexed && (
+        <a
+          href={r.requestIndexingUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="w-fit text-xs text-accent hover:underline"
+          title="Open this URL's inspection page in Search Console, then click “Request indexing”"
+        >
+          Request Indexing ↗
+        </a>
       )}
     </span>
   );

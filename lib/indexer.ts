@@ -248,8 +248,8 @@ export async function runIndexCheck(
     INSERT INTO url_inspections
       (site_id, url, inspected_at, verdict, coverage_state, robots_txt_state, indexing_state,
        page_fetch_state, last_crawl_time, google_canonical, user_canonical, crawled_as,
-       rich_results, rich_verdict, in_sitemap, raw_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+       rich_results, rich_verdict, inspect_link, in_sitemap, raw_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     ON CONFLICT(site_id, url) DO UPDATE SET
       inspected_at = excluded.inspected_at, verdict = excluded.verdict,
       coverage_state = excluded.coverage_state, robots_txt_state = excluded.robots_txt_state,
@@ -257,7 +257,7 @@ export async function runIndexCheck(
       last_crawl_time = excluded.last_crawl_time, google_canonical = excluded.google_canonical,
       user_canonical = excluded.user_canonical, crawled_as = excluded.crawled_as,
       rich_results = excluded.rich_results, rich_verdict = excluded.rich_verdict,
-      in_sitemap = 1, raw_json = excluded.raw_json
+      inspect_link = excluded.inspect_link, in_sitemap = 1, raw_json = excluded.raw_json
   `);
   const logChange = db.prepare(`
     INSERT INTO url_status_history (site_id, url, changed_at, before_state, after_state, indexing_change)
@@ -306,6 +306,7 @@ export async function runIndexCheck(
         idx.crawledAs ?? null,
         rich,
         r.richResultsResult?.verdict ?? null,
+        r.inspectionResultLink ?? null,
         JSON.stringify(r),
       );
       checked++;
@@ -385,6 +386,19 @@ export interface IndexUrlRow {
   submitResult: string | null;
   submittable: boolean;
   unknownToGoogle: boolean;
+  /** Deep link to this URL's inspection page in Search Console (for "Request indexing"). */
+  requestIndexingUrl: string;
+}
+
+/** Build the Search Console URL Inspection deep link for a URL. */
+export function inspectionDeepLink(property: string, url: string, apiLink?: string | null): string {
+  if (apiLink) return apiLink;
+  return (
+    "https://search.google.com/search-console/inspect?resource_id=" +
+    encodeURIComponent(property) +
+    "&id=" +
+    encodeURIComponent(url)
+  );
 }
 
 /** URLs Google doesn't know at all, or has crawled but not indexed — worth a nudge. */
@@ -417,6 +431,11 @@ export function indexDashboard(siteId: number) {
     ).map((r) => r.url),
   );
 
+  const property =
+    (db.prepare("SELECT property FROM sites WHERE id = ?").get(siteId) as
+      | { property: string }
+      | undefined)?.property ?? "";
+
   const rows = db
     .prepare(`
       SELECT s.url AS url,
@@ -425,7 +444,7 @@ export function indexDashboard(siteId: number) {
              i.inspected_at AS lastInspection, i.robots_txt_state AS robotsTxtState,
              i.indexing_state AS indexingState, i.page_fetch_state AS pageFetchState,
              i.google_canonical AS googleCanonical, i.user_canonical AS userCanonical,
-             i.crawled_as AS crawledAs,
+             i.crawled_as AS crawledAs, i.inspect_link AS inspectLink,
              i.submitted_at AS submittedAt, i.submit_result AS submitResult,
              COALESCE((SELECT SUM(clicks) FROM perf_rows p
                         WHERE p.site_id = s.site_id AND p.dimension = 'page'
@@ -440,8 +459,8 @@ export function indexDashboard(siteId: number) {
     `)
     .all(since, since, siteId) as (Omit<
       IndexUrlRow,
-      "indexed" | "stateLabel" | "atRisk" | "submittable" | "unknownToGoogle"
-    > & { verdict: string | null })[];
+      "indexed" | "stateLabel" | "atRisk" | "submittable" | "unknownToGoogle" | "requestIndexingUrl"
+    > & { verdict: string | null; inspectLink: string | null })[];
 
   const urls: IndexUrlRow[] = rows.map((r) => {
     const indexed = isIndexed(r.status, r.verdict);
@@ -452,6 +471,7 @@ export function indexDashboard(siteId: number) {
       atRisk: atRiskSet.has(r.url),
       submittable: isSubmittable(r.status, indexed, Boolean(r.lastInspection)),
       unknownToGoogle: /unknown to google/i.test(r.status ?? ""),
+      requestIndexingUrl: inspectionDeepLink(property, r.url, r.inspectLink),
     };
   });
 

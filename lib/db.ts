@@ -181,6 +181,7 @@ function migrate(conn: DatabaseSync) {
   ensureColumn(conn, "url_inspections", "submitted_at", "INTEGER");
   ensureColumn(conn, "url_inspections", "submit_result", "TEXT");
   ensureColumn(conn, "url_inspections", "rich_verdict", "TEXT");
+  ensureColumn(conn, "url_inspections", "inspect_link", "TEXT");
   ensureColumn(conn, "index_snapshots", "states_json", "TEXT");
   ensureColumn(conn, "users", "google_scopes", "TEXT");
   ensureColumn(conn, "quota_usage", "submissions", "INTEGER NOT NULL DEFAULT 0");
