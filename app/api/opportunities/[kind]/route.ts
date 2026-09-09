@@ -85,8 +85,10 @@ export async function GET(
           { current, previous, yoy },
           searchType,
           {
-            critical: Number(p.get("critical") || 30),
-            warning: Number(p.get("warning") || 15),
+            months,
+            minBaseline: Number(p.get("minBaseline") || 20),
+            sharePct: Number(p.get("sharePct") || 0.5),
+            perMonth: Number(p.get("perMonth") || 100),
           },
         ),
       });

@@ -32,7 +32,8 @@ const TABS: { id: Kind; label: string; blurb: string }[] = [
   {
     id: "underperforming",
     label: "Underperforming Pages",
-    blurb: "Pages down vs. both the previous period and the same period last year — candidates for a refresh.",
+    blurb:
+      "Pages that used to earn real traffic and have since dropped materially — vs. the previous window or the same window last year — where the loss is a meaningful share of the site's clicks or more than the per-month threshold.",
   },
 ];
 
@@ -49,6 +50,9 @@ export function Opportunities({
   const [posTo, setPosTo] = useState(10);
   const [minImpr, setMinImpr] = useState(100);
   const [months, setMonths] = useState(2);
+  const [minBaseline, setMinBaseline] = useState(20);
+  const [sharePct, setSharePct] = useState(0.5);
+  const [perMonth, setPerMonth] = useState(100);
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -74,7 +78,12 @@ export function Opportunities({
       p.set("posTo", String(posTo));
       p.set("minImpr", String(minImpr));
     }
-    if (kind === "underperforming") p.set("months", String(months));
+    if (kind === "underperforming") {
+      p.set("months", String(months));
+      p.set("minBaseline", String(minBaseline));
+      p.set("sharePct", String(sharePct));
+      p.set("perMonth", String(perMonth));
+    }
     try {
       const res = await fetch(`/api/opportunities/${kind}?${p}`);
       const j = await res.json();
@@ -83,7 +92,20 @@ export function Opportunities({
     } finally {
       setLoading(false);
     }
-  }, [property, searchType, kind, resolved, range.preset, posFrom, posTo, minImpr, months]);
+  }, [
+    property,
+    searchType,
+    kind,
+    resolved,
+    range.preset,
+    posFrom,
+    posTo,
+    minImpr,
+    months,
+    minBaseline,
+    sharePct,
+    perMonth,
+  ]);
 
   useEffect(() => {
     load();
@@ -146,15 +168,48 @@ export function Opportunities({
           </div>
         )}
         {kind === "underperforming" && (
-          <div className="flex items-center gap-2 rounded-md border bg-surface px-3 py-1.5 text-sm">
-            <span className="text-muted">Window</span>
-            <input
-              type="number"
-              value={months}
-              onChange={(e) => setMonths(Number(e.target.value))}
-              className="w-14 rounded border bg-background px-1.5 py-0.5"
-            />
-            <span className="text-muted">months, vs previous + YoY</span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-surface px-3 py-1.5 text-sm">
+            <span className="flex items-center gap-1">
+              <span className="text-muted">Window</span>
+              <input
+                type="number"
+                value={months}
+                onChange={(e) => setMonths(Number(e.target.value))}
+                className="w-12 rounded border bg-background px-1.5 py-0.5"
+              />
+              <span className="text-muted">mo</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-muted">had ≥</span>
+              <input
+                type="number"
+                value={minBaseline}
+                onChange={(e) => setMinBaseline(Number(e.target.value))}
+                className="w-14 rounded border bg-background px-1.5 py-0.5"
+              />
+              <span className="text-muted">clicks</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-muted">lost ≥</span>
+              <input
+                type="number"
+                step="0.1"
+                value={sharePct}
+                onChange={(e) => setSharePct(Number(e.target.value))}
+                className="w-14 rounded border bg-background px-1.5 py-0.5"
+              />
+              <span className="text-muted">% of site</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-muted">or ≥</span>
+              <input
+                type="number"
+                value={perMonth}
+                onChange={(e) => setPerMonth(Number(e.target.value))}
+                className="w-16 rounded border bg-background px-1.5 py-0.5"
+              />
+              <span className="text-muted">clicks/mo</span>
+            </span>
           </div>
         )}
         {loading && <span className="text-xs text-muted">Loading…</span>}
@@ -201,6 +256,9 @@ interface UnderRow {
   clicksYoY: number;
   deltaPrev: number;
   deltaYoY: number;
+  lostClicks: number;
+  lostPerMonth: number;
+  siteSharePct: number;
   top10Now: number;
   top10Prev: number;
   top10Delta: number;
@@ -353,6 +411,7 @@ function UnderperformingTable({ rows, months }: { rows: UnderRow[]; months: numb
         <tr className="border-b">
           <th className="px-3 py-2.5 font-medium">Page</th>
           <th className="px-3 py-2.5 text-right font-medium">Clicks last {months}mo</th>
+          <th className="px-3 py-2.5 text-right font-medium">Lost clicks</th>
           <th className="px-3 py-2.5 text-right font-medium">vs prev {months}mo</th>
           <th className="px-3 py-2.5 text-right font-medium">vs YoY</th>
           <th className="px-3 py-2.5 text-right font-medium">Top-10 queries Δ</th>
@@ -368,6 +427,13 @@ function UnderperformingTable({ rows, months }: { rows: UnderRow[]; months: numb
               </a>
             </td>
             <td className="px-3 py-2 text-right tabular-nums">{fmt(r.clicks, "count")}</td>
+            <td className="px-3 py-2 text-right tabular-nums text-bad">
+              −{fmt(r.lostClicks, "count")}
+              <span className="text-muted">
+                {" "}
+                ({r.siteSharePct >= 0.1 ? `${r.siteSharePct.toFixed(1)}% of site` : `${Math.round(r.lostPerMonth)}/mo`})
+              </span>
+            </td>
             <td className="px-3 py-2 text-right tabular-nums text-bad">
               {pctLabel(r.deltaPrev)}{" "}
               <span className="text-muted">({fmt(r.clicksPrev, "count")})</span>
@@ -396,7 +462,7 @@ function UnderperformingTable({ rows, months }: { rows: UnderRow[]; months: numb
             </td>
           </tr>
         ))}
-        {!rows.length && <EmptyRow cols={6} />}
+        {!rows.length && <EmptyRow cols={7} />}
       </tbody>
     </Shell>
   );

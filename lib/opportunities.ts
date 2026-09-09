@@ -198,10 +198,23 @@ export interface UnderperformingRow {
   clicksYoY: number;
   deltaPrev: number; // %
   deltaYoY: number; // %
+  lostClicks: number; // biggest absolute drop vs a baseline
+  lostPerMonth: number;
+  siteSharePct: number; // lost clicks as a share of the site's baseline clicks (%)
   top10Now: number;
   top10Prev: number;
   top10Delta: number;
   status: "critical" | "warning" | "ok";
+}
+
+export interface UnderperformingOpts {
+  months?: number;
+  /** page must have earned at least this many clicks in a baseline period */
+  minBaseline?: number;
+  /** lost clicks worth at least this % of the site's baseline clicks qualifies */
+  sharePct?: number;
+  /** ...or an absolute drop of more than this many clicks per month qualifies */
+  perMonth?: number;
 }
 
 async function pageRows(token: string, property: string, range: Range, type: SearchType) {
@@ -218,10 +231,12 @@ export async function underperformingPages(
   property: string,
   windows: { current: Range; previous: Range; yoy: Range },
   type: SearchType,
-  bands: { critical?: number; warning?: number } = {},
+  opts: UnderperformingOpts = {},
 ): Promise<UnderperformingRow[]> {
-  const critical = bands.critical ?? 30;
-  const warning = bands.warning ?? 15;
+  const months = Math.max(1, opts.months ?? 2);
+  const minBaseline = opts.minBaseline ?? 20;
+  const sharePct = opts.sharePct ?? 0.5; // percent
+  const perMonth = opts.perMonth ?? 100;
 
   const [cur, prev, yoy, curQP, prevQP] = await Promise.all([
     pageRows(token, property, windows.current, type),
@@ -244,6 +259,8 @@ export async function underperformingPages(
   const curMap = m(cur);
   const prevMap = m(prev);
   const yoyMap = m(yoy);
+  const sitePrev = [...prevMap.values()].reduce((a, b) => a + b, 0);
+  const siteYoy = [...yoyMap.values()].reduce((a, b) => a + b, 0);
 
   // Count distinct top-10 queries per normalised page.
   const top10 = (rows: Awaited<ReturnType<typeof queryPageRows>>) => {
@@ -263,31 +280,55 @@ export async function underperformingPages(
   const t10now = top10(curQP);
   const t10prev = top10(prevQP);
 
+  // Consider every page that had a baseline, not just ones with current clicks.
+  const urls = new Set<string>([...curMap.keys(), ...prevMap.keys(), ...yoyMap.keys()]);
+
   const out: UnderperformingRow[] = [];
-  for (const [url, clicks] of curMap) {
+  for (const url of urls) {
+    const clicks = curMap.get(url) ?? 0;
     const cPrev = prevMap.get(url) ?? 0;
     const cYoY = yoyMap.get(url) ?? 0;
-    if (clicks >= cPrev && clicks >= cYoY) continue; // not down on both
-    const dPrev = cPrev ? ((clicks - cPrev) / cPrev) * 100 : 0;
-    const dYoY = cYoY ? ((clicks - cYoY) / cYoY) * 100 : 0;
-    if (dPrev >= 0 || dYoY >= 0) continue;
-    const worst = Math.min(dPrev, dYoY);
-    const status = -worst >= critical ? "critical" : -worst >= warning ? "warning" : "ok";
-    if (status === "ok") continue;
+
+    // Must have actually performed before.
+    if (Math.max(cPrev, cYoY) < minBaseline) continue;
+
+    const lostPrev = Math.max(0, cPrev - clicks);
+    const lostYoY = Math.max(0, cYoY - clicks);
+    if (lostPrev <= 0 && lostYoY <= 0) continue; // not down on either
+
+    const sharePrev = sitePrev ? (lostPrev / sitePrev) * 100 : 0;
+    const shareYoY = siteYoy ? (lostYoY / siteYoy) * 100 : 0;
+
+    // Material either as a share of total site clicks, or in absolute terms.
+    const materialShare = Math.max(sharePrev, shareYoY) >= sharePct;
+    const materialAbs = Math.max(lostPrev, lostYoY) / months > perMonth;
+    if (!materialShare && !materialAbs) continue;
+
+    const lostClicks = Math.max(lostPrev, lostYoY);
+    const lostPerMonth = lostClicks / months;
+    const siteShare = Math.max(sharePrev, shareYoY);
+
+    // Critical when it's a big absolute bleed or a large slice of the site.
+    const status: UnderperformingRow["status"] =
+      lostPerMonth >= perMonth * 2 || siteShare >= sharePct * 3 ? "critical" : "warning";
+
     out.push({
       url,
       clicks,
       clicksPrev: cPrev,
       clicksYoY: cYoY,
-      deltaPrev: dPrev,
-      deltaYoY: dYoY,
+      deltaPrev: cPrev ? ((clicks - cPrev) / cPrev) * 100 : 0,
+      deltaYoY: cYoY ? ((clicks - cYoY) / cYoY) * 100 : 0,
+      lostClicks,
+      lostPerMonth,
+      siteSharePct: siteShare,
       top10Now: t10now.get(url) ?? 0,
       top10Prev: t10prev.get(url) ?? 0,
       top10Delta: (t10now.get(url) ?? 0) - (t10prev.get(url) ?? 0),
       status,
     });
   }
-  out.sort((a, b) => a.deltaYoY - b.deltaYoY);
+  out.sort((a, b) => b.lostClicks - a.lostClicks);
   return out;
 }
 
