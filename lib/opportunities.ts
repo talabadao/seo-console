@@ -28,6 +28,57 @@ function foldWeighted(rows: RowStat[]): RowStat {
   };
 }
 
+/**
+ * A "page" for these reports is its origin + path — query-string and fragment
+ * variants (tracking params, ?fbclid=…, AMP, etc.) are the same page. Without
+ * this, GSC returns one row per parameterised URL and a single page shows up
+ * dozens of times.
+ */
+export function pageKey(raw: string): string {
+  try {
+    const u = new URL(raw);
+    return u.origin + u.pathname;
+  } catch {
+    return raw.split(/[?#]/)[0];
+  }
+}
+
+/** Group query→page rows, collapsing parameter variants of the same page. */
+function groupQueryPages(
+  rows: Awaited<ReturnType<typeof queryPageRows>>,
+  filter: (query: string) => boolean = () => true,
+): Map<string, (RowStat & { url: string })[]> {
+  const byQuery = new Map<string, Map<string, RowStat & { url: string }>>();
+  for (const r of rows) {
+    const [query, rawUrl] = r.keys ?? [];
+    if (!query || !rawUrl || !filter(query)) continue;
+    const url = pageKey(rawUrl);
+    let pages = byQuery.get(query);
+    if (!pages) byQuery.set(query, (pages = new Map()));
+    const prev = pages.get(url);
+    if (prev) {
+      const merged = foldWeighted([prev, r]);
+      pages.set(url, { url, ...merged });
+    } else {
+      pages.set(url, {
+        url,
+        clicks: r.clicks,
+        impressions: r.impressions,
+        ctr: r.ctr,
+        position: r.position,
+      });
+    }
+  }
+  const out = new Map<string, (RowStat & { url: string })[]>();
+  for (const [query, pages] of byQuery) {
+    out.set(
+      query,
+      [...pages.values()].sort((a, b) => b.impressions - a.impressions),
+    );
+  }
+  return out;
+}
+
 /** Typical organic CTR by rank — used to spot under-clicked queries. */
 const CTR_CURVE = [0.28, 0.15, 0.11, 0.08, 0.067, 0.055, 0.045, 0.037, 0.031, 0.028];
 export function expectedCtr(position: number): number {
@@ -76,19 +127,12 @@ export async function cannibalization(
   const minPages = opts.minPages ?? 2;
   const brandTerms = opts.brandTerms ?? [];
   const rows = await queryPageRows(token, property, range, type);
-  const byQuery = new Map<string, (RowStat & { url: string })[]>();
-  for (const r of rows) {
-    const [query, url] = r.keys ?? [];
-    if (!query || !url || r.impressions <= 0) continue;
-    if (isBranded(query, brandTerms)) continue; // skip brand terms
-    const arr = byQuery.get(query) ?? [];
-    arr.push({ url, clicks: r.clicks, impressions: r.impressions, ctr: r.ctr, position: r.position });
-    byQuery.set(query, arr);
-  }
+  const byQuery = groupQueryPages(rows, (q) => !isBranded(q, brandTerms));
+
   const out: CannibalRow[] = [];
-  for (const [query, pages] of byQuery) {
+  for (const [query, allPages] of byQuery) {
+    const pages = allPages.filter((p) => p.impressions > 0);
     if (pages.length < minPages) continue;
-    pages.sort((a, b) => b.impressions - a.impressions);
     out.push({
       query,
       pageCount: pages.length,
@@ -122,14 +166,7 @@ export async function lowHangingFruit(
   const minImpr = opts.minImpr ?? 100;
 
   const rows = await queryPageRows(token, property, range, type);
-  const byQuery = new Map<string, (RowStat & { url: string })[]>();
-  for (const r of rows) {
-    const [query, url] = r.keys ?? [];
-    if (!query || !url) continue;
-    const arr = byQuery.get(query) ?? [];
-    arr.push({ url, clicks: r.clicks, impressions: r.impressions, ctr: r.ctr, position: r.position });
-    byQuery.set(query, arr);
-  }
+  const byQuery = groupQueryPages(rows);
 
   const out: LowHangingRow[] = [];
   for (const [query, pages] of byQuery) {
@@ -139,7 +176,6 @@ export async function lowHangingFruit(
     const exp = expectedCtr(agg.position);
     const gap = exp - agg.ctr;
     if (gap <= 0) continue; // already clicking at/above expectation
-    pages.sort((a, b) => b.impressions - a.impressions);
     out.push({
       query,
       ...agg,
@@ -195,21 +231,33 @@ export async function underperformingPages(
     queryPageRows(token, property, windows.previous, type, 40000),
   ]);
 
+  // Aggregate clicks by normalised page (collapse parameter variants).
   const m = (rows: typeof cur) => {
     const map = new Map<string, number>();
-    for (const r of rows) if (r.keys?.[0]) map.set(r.keys[0], r.clicks);
+    for (const r of rows) {
+      if (!r.keys?.[0]) continue;
+      const k = pageKey(r.keys[0]);
+      map.set(k, (map.get(k) ?? 0) + r.clicks);
+    }
     return map;
   };
   const curMap = m(cur);
   const prevMap = m(prev);
   const yoyMap = m(yoy);
 
+  // Count distinct top-10 queries per normalised page.
   const top10 = (rows: Awaited<ReturnType<typeof queryPageRows>>) => {
-    const map = new Map<string, number>();
+    const seen = new Map<string, Set<string>>();
     for (const r of rows) {
-      const url = r.keys?.[1];
-      if (url && r.position > 0 && r.position <= 10) map.set(url, (map.get(url) ?? 0) + 1);
+      const [query, rawUrl] = r.keys ?? [];
+      if (!query || !rawUrl || !(r.position > 0 && r.position <= 10)) continue;
+      const k = pageKey(rawUrl);
+      let s = seen.get(k);
+      if (!s) seen.set(k, (s = new Set()));
+      s.add(query);
     }
+    const map = new Map<string, number>();
+    for (const [k, s] of seen) map.set(k, s.size);
     return map;
   };
   const t10now = top10(curQP);
