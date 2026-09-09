@@ -33,44 +33,13 @@ function fullDate(bucket: string, grain: Grain): string {
   }
 }
 
-/** Narrow per-bucket value column shown beside the chart (one metric). */
-function SideColumn({
-  metric,
-  series,
-  align,
-}: {
-  metric: MetricKey;
-  series: SeriesPoint[];
-  align: "left" | "right";
-}) {
-  const meta = METRIC_META[metric];
-  const total = series.reduce((s, p) => s + p[metric], 0);
-  return (
-    <div
-      className={`hidden w-24 shrink-0 flex-col md:flex ${align === "right" ? "border-l" : "border-r"}`}
-    >
-      <div className="px-2 py-1.5 text-right">
-        <div className="text-[11px] font-medium" style={{ color: meta.color }}>
-          {meta.label.replace("Total ", "")}
-        </div>
-        <div className="text-xs font-semibold tabular-nums">
-          {fmt(total, meta.kind)}
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {series.map((p) => (
-          <div
-            key={p.bucket}
-            className="flex justify-between gap-1 px-2 py-[3px] text-[11px] tabular-nums even:bg-background/60"
-          >
-            <span className="text-muted">{p.label}</span>
-            <span>{fmt(p[metric], meta.kind)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// Which side each metric's axis sits on, GSC-style.
+const AXIS_SIDE: Record<MetricKey, "left" | "right"> = {
+  clicks: "left",
+  position: "left",
+  impressions: "right",
+  ctr: "right",
+};
 
 export function Chart({
   series,
@@ -101,20 +70,56 @@ export function Chart({
     );
   }
 
+  // Axes to render: always clicks (left) + impressions (right); add ctr / position
+  // only when the user has toggled them on.
+  const axisMetrics: MetricKey[] = ["clicks", "impressions", "ctr", "position"].filter(
+    (m) => m === "clicks" || m === "impressions" || active.includes(m as MetricKey),
+  ) as MetricKey[];
+
+  const total = (m: MetricKey) => series.reduce((s, p) => s + p[m], 0);
+
   return (
-    <div className="flex h-72 w-full">
-      <SideColumn metric="clicks" series={series} align="left" />
-      <div className="min-w-0 flex-1">
-        <ResponsiveContainer>
-          <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
-            <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 12, fill: "var(--muted)" }}
-              minTickGap={28}
-              stroke="var(--border)"
-            />
-            {active.map((m) => (
+    <div className="relative h-72 w-full">
+      {/* corner metric labels, like the real Search Console chart */}
+      <div className="pointer-events-none absolute left-1 top-0 z-10 text-xs">
+        <span style={{ color: METRIC_META.clicks.color }}>Clicks</span>
+        <div className="font-semibold tabular-nums">{fmt(total("clicks"), "count")}</div>
+      </div>
+      <div className="pointer-events-none absolute right-1 top-0 z-10 text-right text-xs">
+        <span style={{ color: METRIC_META.impressions.color }}>Impressions</span>
+        <div className="font-semibold tabular-nums">{fmt(total("impressions"), "count")}</div>
+      </div>
+
+      <ResponsiveContainer>
+        <LineChart data={data} margin={{ top: 28, right: 8, bottom: 4, left: 8 }}>
+          <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 12, fill: "var(--muted)" }}
+            minTickGap={28}
+            stroke="var(--border)"
+          />
+          {axisMetrics.map((m) => {
+            const meta = METRIC_META[m];
+            return (
+              <YAxis
+                key={m}
+                yAxisId={m}
+                orientation={AXIS_SIDE[m]}
+                width={46}
+                axisLine={false}
+                tickLine={false}
+                reversed={m === "position"}
+                domain={m === "position" ? ["dataMin", "dataMax"] : [0, "dataMax"]}
+                tick={{ fontSize: 11, fill: meta.color }}
+                tickFormatter={(v: number) => fmt(v, meta.kind)}
+              />
+            );
+          })}
+          {/* hidden axes so inactive metric lines still have a scale */}
+          {(["ctr", "position"] as MetricKey[])
+            .filter((m) => !axisMetrics.includes(m))
+            .map((m) => (
               <YAxis
                 key={m}
                 yAxisId={m}
@@ -123,61 +128,61 @@ export function Chart({
                 domain={m === "position" ? ["dataMin", "dataMax"] : [0, "dataMax"]}
               />
             ))}
-            <Tooltip
-              contentStyle={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                fontSize: 13,
-              }}
-              labelFormatter={((_label: unknown, payload: unknown) => {
-                const p = payload as { payload?: SeriesPoint }[] | undefined;
-                const bucket = p?.[0]?.payload?.bucket;
-                return bucket ? fullDate(bucket, grain) : String(_label);
-              }) as never}
-              formatter={((value: unknown, name: unknown) => {
-                const n = String(name);
-                if (n === "prevLabel") return [String(value), "Compared to"];
-                const key = n.replace("prev_", "") as MetricKey;
-                const meta = METRIC_META[key];
-                if (!meta) return [String(value), n];
-                const label = n.startsWith("prev_") ? `${meta.label} (prev)` : meta.label;
-                return [fmtFull(Number(value) || 0, meta.kind), label];
-              }) as never}
+
+          <Tooltip
+            contentStyle={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              fontSize: 13,
+            }}
+            labelFormatter={((_label: unknown, payload: unknown) => {
+              const p = payload as { payload?: SeriesPoint }[] | undefined;
+              const bucket = p?.[0]?.payload?.bucket;
+              return bucket ? fullDate(bucket, grain) : String(_label);
+            }) as never}
+            formatter={((value: unknown, name: unknown) => {
+              const n = String(name);
+              if (n === "prevLabel") return [String(value), "Compared to"];
+              const key = n.replace("prev_", "") as MetricKey;
+              const meta = METRIC_META[key];
+              if (!meta) return [String(value), n];
+              const label = n.startsWith("prev_") ? `${meta.label} (prev)` : meta.label;
+              return [fmtFull(Number(value) || 0, meta.kind), label];
+            }) as never}
+          />
+
+          {active.map((m) => (
+            <Line
+              key={m}
+              yAxisId={m}
+              type="monotone"
+              dataKey={m}
+              stroke={METRIC_META[m].color}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4 }}
+              isAnimationActive={false}
             />
-            {active.map((m) => (
-              <Line
-                key={m}
-                yAxisId={m}
-                type="monotone"
-                dataKey={m}
-                stroke={METRIC_META[m].color}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-                isAnimationActive={false}
-              />
-            ))}
-            {prevSeries?.length
-              ? active.map((m) => (
-                  <Line
-                    key={`prev_${m}`}
-                    yAxisId={m}
-                    type="monotone"
-                    dataKey={`prev_${m}`}
-                    stroke={METRIC_META[m].color}
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                    strokeOpacity={0.5}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))
-              : null}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <SideColumn metric="impressions" series={series} align="right" />
+          ))}
+          {prevSeries?.length
+            ? active.map((m) => (
+                <Line
+                  key={`prev_${m}`}
+                  yAxisId={m}
+                  type="monotone"
+                  dataKey={`prev_${m}`}
+                  stroke={METRIC_META[m].color}
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  strokeOpacity={0.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              ))
+            : null}
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }
