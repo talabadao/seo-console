@@ -182,4 +182,5 @@ function migrate(conn: DatabaseSync) {
   ensureColumn(conn, "url_inspections", "submit_result", "TEXT");
   ensureColumn(conn, "url_inspections", "rich_verdict", "TEXT");
   ensureColumn(conn, "index_snapshots", "states_json", "TEXT");
+  ensureColumn(conn, "users", "google_scopes", "TEXT");
 }

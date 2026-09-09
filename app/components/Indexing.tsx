@@ -60,7 +60,7 @@ interface IndexData {
   job: { status: string; checked: number; message: string | null; finished_at: number | null } | null;
   quotaLeft: number;
   dailyCap: number;
-  indexing: { configured: boolean; serviceAccount: boolean };
+  indexing: { configured: boolean; serviceAccount: boolean; hasScope: boolean };
 }
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -218,7 +218,11 @@ export function Indexing({ property }: { property: string }) {
                   .map((u) => u.url),
               )
             }
-            disabled={submitting === "bulk" || !data?.submittableCount}
+            disabled={
+              submitting === "bulk" ||
+              !data?.submittableCount ||
+              data?.indexing.hasScope === false
+            }
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
           >
             {submitting === "bulk"
@@ -229,11 +233,19 @@ export function Indexing({ property }: { property: string }) {
       </div>
 
       {msg && <div className="mb-3 rounded-lg border bg-surface p-3 text-sm">{msg}</div>}
-      {reconnect && (
-        <div className="mb-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
-          The Indexing API needs a permission your current login doesn&apos;t have. Enable
-          <strong> Web Search Indexing API</strong> in Google Cloud, then <strong>Sign out</strong> and
-          sign back in to grant it.
+      {(reconnect || data?.indexing.hasScope === false) && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
+          <span>
+            <strong>Submit to Index isn&apos;t authorised.</strong> Your Google sign-in was
+            created before the Indexing API permission existed. Enable{" "}
+            <strong>Web Search Indexing API</strong> in Google Cloud, then reconnect to grant it.
+          </span>
+          <a
+            href="/api/auth/google"
+            className="rounded-md bg-bad px-3 py-1.5 text-xs font-semibold text-white"
+          >
+            Reconnect Google
+          </a>
         </div>
       )}
       {data && (
@@ -336,6 +348,7 @@ export function Indexing({ property }: { property: string }) {
                   onToggle={() => setExpanded(expanded === r.url ? null : r.url)}
                   onSubmit={() => submit([r.url])}
                   submitting={submitting === r.url}
+                  scopeOk={data?.indexing.hasScope !== false}
                 />
               ))}
               {!shown.length && (
@@ -411,14 +424,16 @@ function RowGroup({
   onToggle,
   onSubmit,
   submitting,
+  scopeOk,
 }: {
   r: IndexUrlRow;
   open: boolean;
   onToggle: () => void;
   onSubmit: () => void;
   submitting: boolean;
+  scopeOk: boolean;
 }) {
-  const canSubmit = r.submittable && r.submitResult !== "ok";
+  const canSubmit = r.submittable && r.submitResult !== "ok" && scopeOk;
   return (
     <>
       <tr

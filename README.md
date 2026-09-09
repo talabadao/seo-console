@@ -48,10 +48,14 @@ This app exposes it as a best-effort nudge for URLs that come back **not indexed
 **Setup (uses your Google login — no service-account key needed):**
 
 1. **APIs & Services → Library** → enable **Web Search Indexing API** in the same Cloud project.
-2. Sign out of SEO Console and sign back in — the sign-in now also asks for the
-   "Submit data to the Indexing API" permission. Approve it.
-3. Done. The signed-in account must be an **Owner** of the property (you are, since you
-   verified the site).
+2. **APIs & Services → OAuth consent screen → Data access → Add or remove scopes** → add
+   `https://www.googleapis.com/auth/indexing` → Save.
+3. **Sign out of SEO Console and sign back in.** The consent screen now also asks for
+   "Submit data to the Web Search Indexing API" — approve it. (Your old sign-in token
+   can't gain the scope; you must re-consent — the app shows a red "Reconnect Google"
+   banner until you do.)
+4. The signed-in account must be an **Owner** of the property in Search Console
+   (Settings → Users and permissions), not just a full/restricted user.
 
 The Indexing tab then shows a **Submit** button per eligible URL and a bulk
 "Submit N not-indexed to Google" button. Submissions and their result are recorded per URL.

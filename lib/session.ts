@@ -31,6 +31,7 @@ export interface UserRow {
   google_access_token: string | null;
   google_refresh_token: string | null;
   google_token_expiry: number | null;
+  google_scopes: string | null;
   bing_api_key: string | null;
 }
 

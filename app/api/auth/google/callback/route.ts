@@ -37,17 +37,20 @@ export async function GET(req: NextRequest) {
     // Keep an existing refresh token if Google didn't return a new one.
     const refresh = tokens.refresh_token ?? existing?.google_refresh_token ?? null;
 
+    const scope = tokens.scope ?? null;
+
     let userId: number;
     if (existing) {
       db.prepare(
         `UPDATE users SET name = ?, picture = ?, google_access_token = ?,
-           google_refresh_token = ?, google_token_expiry = ?, updated_at = ? WHERE id = ?`,
+           google_refresh_token = ?, google_token_expiry = ?, google_scopes = ?, updated_at = ? WHERE id = ?`,
       ).run(
         name ?? null,
         picture ?? null,
         tokens.access_token ?? null,
         refresh,
         tokens.expiry_date ?? now + 3500_000,
+        scope,
         now,
         existing.id,
       );
@@ -57,8 +60,8 @@ export async function GET(req: NextRequest) {
         db
           .prepare(
             `INSERT INTO users (email, name, picture, google_access_token, google_refresh_token,
-               google_token_expiry, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+               google_token_expiry, google_scopes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
           )
           .get(
             email,
@@ -67,6 +70,7 @@ export async function GET(req: NextRequest) {
             tokens.access_token ?? null,
             refresh,
             tokens.expiry_date ?? now + 3500_000,
+            scope,
             now,
             now,
           ) as { id: number }

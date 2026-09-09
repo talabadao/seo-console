@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { siteConfigFor } from "@/lib/siteConfig";
 import { indexDashboard } from "@/lib/indexer";
+import { hasIndexingScope } from "@/lib/google/oauth";
 
 export async function GET(req: NextRequest) {
   const user = await currentUser();
@@ -12,5 +13,9 @@ export async function GET(req: NextRequest) {
   const sc = siteConfigFor(user.id, property);
   if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
-  return NextResponse.json(indexDashboard(sc.siteId));
+  const data = indexDashboard(sc.siteId);
+  return NextResponse.json({
+    ...data,
+    indexing: { ...data.indexing, hasScope: hasIndexingScope(user.google_scopes) },
+  });
 }

@@ -541,11 +541,29 @@ export async function submitUrls(
       mark.run(Date.now(), "ok", site.id, url);
       out.push({ url, ok: true, message: "submitted" });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = cleanApiError(e instanceof Error ? e.message : String(e));
       ensureRow.run(site.id, url);
-      mark.run(Date.now(), message.slice(0, 200), site.id, url);
+      mark.run(Date.now(), message, site.id, url);
       out.push({ url, ok: false, message });
     }
   }
   return out;
+}
+
+/** Turn a raw "Indexing API 403: {json}" string into something readable. */
+function cleanApiError(raw: string): string {
+  const m = /Indexing API (\d+):\s*(\{[\s\S]*\})?/.exec(raw);
+  if (!m) return raw.slice(0, 160);
+  const code = m[1];
+  try {
+    const j = JSON.parse(m[2] ?? "{}");
+    const msg = j?.error?.message ?? "";
+    if (/insufficient authentication scopes/i.test(msg))
+      return `${code}: reconnect Google to grant the Indexing permission`;
+    if (/verify.*ownership|not.*owner/i.test(msg))
+      return `${code}: this Google account isn't an Owner of the property in Search Console`;
+    return `${code}: ${String(msg).slice(0, 140)}`;
+  } catch {
+    return `${code}: ${raw.slice(0, 140)}`;
+  }
 }
