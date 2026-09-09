@@ -76,18 +76,20 @@ export function Chart({
     (m) => m === "clicks" || m === "impressions" || active.includes(m as MetricKey),
   ) as MetricKey[];
 
-  const total = (m: MetricKey) => series.reduce((s, p) => s + p[m], 0);
-
   return (
     <div className="relative h-72 w-full">
       {/* corner metric labels, like the real Search Console chart */}
-      <div className="pointer-events-none absolute left-1 top-0 z-10 text-xs">
-        <span style={{ color: METRIC_META.clicks.color }}>Clicks</span>
-        <div className="font-semibold tabular-nums">{fmt(total("clicks"), "count")}</div>
+      <div
+        className="pointer-events-none absolute left-1 top-0 z-10 text-xs"
+        style={{ color: METRIC_META.clicks.color }}
+      >
+        Clicks
       </div>
-      <div className="pointer-events-none absolute right-1 top-0 z-10 text-right text-xs">
-        <span style={{ color: METRIC_META.impressions.color }}>Impressions</span>
-        <div className="font-semibold tabular-nums">{fmt(total("impressions"), "count")}</div>
+      <div
+        className="pointer-events-none absolute right-1 top-0 z-10 text-right text-xs"
+        style={{ color: METRIC_META.impressions.color }}
+      >
+        Impressions
       </div>
 
       <ResponsiveContainer>
@@ -111,7 +113,7 @@ export function Chart({
                 tickLine={false}
                 reversed={m === "position"}
                 domain={m === "position" ? ["dataMin", "dataMax"] : [0, "dataMax"]}
-                tick={{ fontSize: 11, fill: meta.color }}
+                tick={{ fontSize: 11, fill: "var(--muted)" }}
                 tickFormatter={(v: number) => fmt(v, meta.kind)}
               />
             );
