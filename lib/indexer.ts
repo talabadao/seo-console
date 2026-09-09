@@ -11,9 +11,17 @@ export interface SiteRow {
   property: string;
 }
 
-const DAILY_CAP = Number(process.env.INDEX_DAILY_CAP || 200);
+// URL Inspection API limit is 2,000 queries/day per property (600/min).
+// https://developers.google.com/webmaster-tools/limits
+const DAILY_CAP = Number(process.env.INDEX_DAILY_CAP || 2000);
+// One interactive "Run check" click stays well under the route timeout; the
+// nightly `npm run sync` uses the full daily budget.
+const PER_RUN_CAP = Number(process.env.INDEX_PER_RUN_CAP || 500);
+const INSPECT_DELAY_MS = Number(process.env.INDEX_INSPECT_DELAY_MS || 40); // ~<600/min
 const STALE_MS = 3 * 24 * 60 * 60 * 1000; // re-inspect after 3 days
 const MAX_SITEMAP_FETCHES = 50;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- sitemap discovery ----------
 
@@ -174,14 +182,15 @@ function bumpQuota(siteId: number, n: number) {
 export async function runIndexCheck(
   user: UserRow,
   site: SiteRow,
-  opts: { max?: number } = {},
+  opts: { max?: number; interactive?: boolean } = {},
 ): Promise<{ checked: number; quotaLeft: number; message?: string }> {
   db.prepare(`
     INSERT INTO index_jobs (site_id, started_at, status, checked) VALUES (?, ?, 'running', 0)
     ON CONFLICT(site_id) DO UPDATE SET started_at = excluded.started_at, status = 'running', checked = 0, finished_at = NULL, message = NULL
   `).run(site.id, Date.now());
 
-  const cap = Math.min(opts.max ?? DAILY_CAP, quotaLeft(site.id));
+  const requested = opts.max ?? (opts.interactive ? PER_RUN_CAP : DAILY_CAP);
+  const cap = Math.min(requested, quotaLeft(site.id));
   if (cap <= 0) {
     db.prepare(
       "UPDATE index_jobs SET status = 'done', finished_at = ?, message = 'daily quota reached' WHERE site_id = ?",
@@ -239,6 +248,7 @@ export async function runIndexCheck(
   let checked = 0;
   let lastError: string | undefined;
   for (const t of targets) {
+    if (checked > 0 && INSPECT_DELAY_MS > 0) await sleep(INSPECT_DELAY_MS);
     try {
       const r = await inspectUrl(token, site.property, t.url);
       const idx = r.indexStatusResult ?? {};
@@ -290,11 +300,17 @@ export async function runIndexCheck(
 
   writeSnapshot(site.id);
 
+  const left = quotaLeft(site.id);
+  const more =
+    !lastError && checked >= cap && left > 0 && targets.length === cap
+      ? "Run-limit reached — click again to keep going."
+      : undefined;
+
   db.prepare(
     "UPDATE index_jobs SET status = 'done', finished_at = ?, checked = ?, message = ? WHERE site_id = ?",
-  ).run(Date.now(), checked, lastError ?? null, site.id);
+  ).run(Date.now(), checked, lastError ?? more ?? null, site.id);
 
-  return { checked, quotaLeft: quotaLeft(site.id), message: lastError };
+  return { checked, quotaLeft: left, message: lastError ?? more };
 }
 
 export function writeSnapshot(siteId: number) {

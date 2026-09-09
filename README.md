@@ -63,9 +63,11 @@ The Indexing tab then shows a **Submit** button per eligible URL and a bulk
 ### Known API limits (Google's, not ours)
 
 - **No bulk "Pages / Index Coverage" API.** Index/no-index is assembled from the
-  **URL Inspection API**, one URL at a time, **max 2,000/day per property**. The Indexing
-  tab discovers your sitemap URLs and inspects up to `INDEX_DAILY_CAP` (default 200) per
-  day, oldest-first, re-checking after 3 days.
+  **URL Inspection API**, one URL at a time, **max 2,000/day per property** (Google's limit).
+  The Indexing tab discovers your sitemap URLs and inspects up to `INDEX_DAILY_CAP`
+  (default 2000) per day, oldest-first, re-checking after 3 days. Each interactive
+  "Run check" does `INDEX_PER_RUN_CAP` (500) so it doesn't hit the request timeout —
+  click again to continue, or let the nightly `npm run sync` use the full budget.
 - **No Crawl Stats API.** "Last crawl time" per URL (from URL Inspection) is the substitute;
   Bing's crawl API is richer once connected.
 - Search Analytics data is final after ~2 days; the live view uses `dataState=all` so recent

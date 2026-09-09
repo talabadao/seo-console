@@ -28,6 +28,6 @@ export async function POST(req: NextRequest) {
     discovered = d.found;
   }
 
-  const result = await runIndexCheck(user, site, { max: body.max });
+  const result = await runIndexCheck(user, site, { max: body.max, interactive: true });
   return NextResponse.json({ discovered, ...result });
 }
