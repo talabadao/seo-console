@@ -70,27 +70,31 @@ export function Chart({
     );
   }
 
-  // Axes to render: always clicks (left) + impressions (right); add ctr / position
-  // only when the user has toggled them on.
-  const axisMetrics: MetricKey[] = ["clicks", "impressions", "ctr", "position"].filter(
-    (m) => m === "clicks" || m === "impressions" || active.includes(m as MetricKey),
-  ) as MetricKey[];
+  // Search Console only shows the numeric axis scales for 1–2 selected metrics;
+  // with 3+ on, the stacked axes get noisy, so we hide them (lines only).
+  const showScales = active.length > 0 && active.length <= 2;
+  const scaleMetrics = showScales ? active : [];
+  const allMetrics: MetricKey[] = ["clicks", "impressions", "ctr", "position"];
 
   return (
     <div className="relative h-72 w-full">
       {/* corner metric labels, like the real Search Console chart */}
-      <div
-        className="pointer-events-none absolute left-1 top-0 z-10 text-xs"
-        style={{ color: METRIC_META.clicks.color }}
-      >
-        Clicks
-      </div>
-      <div
-        className="pointer-events-none absolute right-1 top-0 z-10 text-right text-xs"
-        style={{ color: METRIC_META.impressions.color }}
-      >
-        Impressions
-      </div>
+      {showScales && active.includes("clicks") && (
+        <div
+          className="pointer-events-none absolute left-1 top-0 z-10 text-xs"
+          style={{ color: METRIC_META.clicks.color }}
+        >
+          Clicks
+        </div>
+      )}
+      {showScales && active.includes("impressions") && (
+        <div
+          className="pointer-events-none absolute right-1 top-0 z-10 text-right text-xs"
+          style={{ color: METRIC_META.impressions.color }}
+        >
+          Impressions
+        </div>
+      )}
 
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top: 28, right: 8, bottom: 4, left: 8 }}>
@@ -101,12 +105,14 @@ export function Chart({
             minTickGap={28}
             stroke="var(--border)"
           />
-          {axisMetrics.map((m) => {
+          {allMetrics.map((m) => {
             const meta = METRIC_META[m];
+            const visible = scaleMetrics.includes(m);
             return (
               <YAxis
                 key={m}
                 yAxisId={m}
+                hide={!visible}
                 orientation={AXIS_SIDE[m]}
                 width={46}
                 axisLine={false}
@@ -118,18 +124,6 @@ export function Chart({
               />
             );
           })}
-          {/* hidden axes so inactive metric lines still have a scale */}
-          {(["ctr", "position"] as MetricKey[])
-            .filter((m) => !axisMetrics.includes(m))
-            .map((m) => (
-              <YAxis
-                key={m}
-                yAxisId={m}
-                hide
-                reversed={m === "position"}
-                domain={m === "position" ? ["dataMin", "dataMax"] : [0, "dataMax"]}
-              />
-            ))}
 
           <Tooltip
             contentStyle={{

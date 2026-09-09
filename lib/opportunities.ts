@@ -1,4 +1,5 @@
 import { searchAnalyticsAll, type SearchType } from "@/lib/google/searchconsole";
+import { isBranded } from "@/lib/queryFilters";
 import type { Range } from "@/lib/dateRanges";
 
 export interface RowStat {
@@ -70,13 +71,16 @@ export async function cannibalization(
   property: string,
   range: Range,
   type: SearchType,
-  minPages = 2,
+  opts: { minPages?: number; brandTerms?: string[] } = {},
 ): Promise<CannibalRow[]> {
+  const minPages = opts.minPages ?? 2;
+  const brandTerms = opts.brandTerms ?? [];
   const rows = await queryPageRows(token, property, range, type);
   const byQuery = new Map<string, (RowStat & { url: string })[]>();
   for (const r of rows) {
     const [query, url] = r.keys ?? [];
     if (!query || !url || r.impressions <= 0) continue;
+    if (isBranded(query, brandTerms)) continue; // skip brand terms
     const arr = byQuery.get(query) ?? [];
     arr.push({ url, clicks: r.clicks, impressions: r.impressions, ctr: r.ctr, position: r.position });
     byQuery.set(query, arr);

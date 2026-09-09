@@ -26,9 +26,8 @@ export async function GET(
   const p = req.nextUrl.searchParams;
   const property = p.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
-  if (!siteConfigFor(user.id, property)) {
-    return NextResponse.json({ error: "unknown property" }, { status: 404 });
-  }
+  const sc = siteConfigFor(user.id, property);
+  if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   const searchType = (p.get("searchType") || "web") as SearchType;
   const preset = (p.get("preset") || "3m") as PresetId;
@@ -46,10 +45,12 @@ export async function GET(
 
   try {
     if (kind === "cannibalization") {
-      const minPages = Math.max(2, Number(p.get("minPages") || 2));
       return NextResponse.json({
         range,
-        rows: await cannibalization(token, property, range, searchType, minPages),
+        rows: await cannibalization(token, property, range, searchType, {
+          minPages: Math.max(2, Number(p.get("minPages") || 2)),
+          brandTerms: sc.config.brandTerms,
+        }),
       });
     }
 

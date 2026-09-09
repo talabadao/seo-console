@@ -21,7 +21,8 @@ const TABS: { id: Kind; label: string; blurb: string }[] = [
   {
     id: "cannibalization",
     label: "Keyword Cannibalization",
-    blurb: "Queries where 2+ of your URLs compete. Consolidate or differentiate them.",
+    blurb:
+      "Non-brand queries where 2+ of your URLs compete. Consolidate or differentiate them. (Brand terms are excluded — edit them in Settings.)",
   },
   {
     id: "low-hanging",
