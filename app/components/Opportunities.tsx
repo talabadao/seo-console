@@ -265,6 +265,12 @@ interface UnderRow {
   status: "critical" | "warning" | "ok";
 }
 
+function deltaColor(n: number): string {
+  if (n > 0.05) return "var(--good)";
+  if (n < -0.05) return "var(--bad)";
+  return "var(--muted)";
+}
+
 function path(u: string) {
   try {
     return new URL(u).pathname || "/";
@@ -434,15 +440,15 @@ function UnderperformingTable({ rows, months }: { rows: UnderRow[]; months: numb
                 ({r.siteSharePct >= 0.1 ? `${r.siteSharePct.toFixed(1)}% of site` : `${Math.round(r.lostPerMonth)}/mo`})
               </span>
             </td>
-            <td className="px-3 py-2 text-right tabular-nums text-bad">
+            <td className="px-3 py-2 text-right tabular-nums" style={{ color: deltaColor(r.deltaPrev) }}>
               {pctLabel(r.deltaPrev)}{" "}
               <span className="text-muted">({fmt(r.clicksPrev, "count")})</span>
             </td>
-            <td className="px-3 py-2 text-right tabular-nums text-bad">
+            <td className="px-3 py-2 text-right tabular-nums" style={{ color: deltaColor(r.deltaYoY) }}>
               {pctLabel(r.deltaYoY)}{" "}
               <span className="text-muted">({fmt(r.clicksYoY, "count")})</span>
             </td>
-            <td className="px-3 py-2 text-right tabular-nums">
+            <td className="px-3 py-2 text-right tabular-nums" style={{ color: deltaColor(r.top10Delta) }}>
               {r.top10Delta === 0 ? "0" : r.top10Delta > 0 ? `+${r.top10Delta}` : r.top10Delta}
               <span className="text-muted"> ({r.top10Now})</span>
             </td>
