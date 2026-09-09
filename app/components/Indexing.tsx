@@ -60,7 +60,14 @@ interface IndexData {
   job: { status: string; checked: number; message: string | null; finished_at: number | null } | null;
   quotaLeft: number;
   dailyCap: number;
-  indexing: { configured: boolean; serviceAccount: boolean; hasScope: boolean };
+  submitQuotaLeft: number;
+  indexing: {
+    configured: boolean;
+    serviceAccount: boolean;
+    hasScope: boolean;
+    permissionLevel: string | null;
+    isOwner: boolean;
+  };
 }
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -109,27 +116,63 @@ export function Indexing({ property }: { property: string }) {
     }
   }
 
-  async function submit(urls: string[]) {
+  async function submit(all: string[]) {
+    const urls = [...new Set(all)];
     if (!urls.length) return;
     setSubmitting(urls.length === 1 ? urls[0] : "bulk");
     setMsg(null);
+
+    // The API takes 100 URLs per request — send in chunks.
+    const chunks: string[][] = [];
+    for (let i = 0; i < urls.length; i += 100) chunks.push(urls.slice(i, i + 100));
+
+    let submitted = 0;
+    let failed = 0;
+    let skipped = 0;
+    let quotaLeft = data?.submitQuotaLeft ?? 0;
+    let firstFail = "";
+    let stopReason: "reconnect" | "owner" | "quota" | null = null;
+
     try {
-      const res = await fetch("/api/index/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ property, urls }),
-      });
-      const j = await res.json();
-      if (res.ok) {
-        setReconnect(Boolean(j.needsReconnect));
-        const firstFail = j.results?.find((r: { ok: boolean }) => !r.ok);
+      for (const chunk of chunks) {
+        const res = await fetch("/api/index/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ property, urls: chunk }),
+        });
+        const j = await res.json();
+        if (!res.ok) {
+          setMsg(j.error ?? "Submit failed");
+          break;
+        }
+        submitted += j.submitted ?? 0;
+        failed += j.failed ?? 0;
+        skipped += j.skipped ?? 0;
+        quotaLeft = j.quotaLeft ?? quotaLeft;
+        if (!firstFail) {
+          firstFail =
+            j.results?.find((r: { ok: boolean; message: string }) => !r.ok)?.message ?? "";
+        }
+        if (j.needsReconnect) stopReason = "reconnect";
+        else if (j.notOwner) stopReason = "owner";
+        else if (skipped > 0) stopReason = "quota";
+        if (stopReason) break;
+      }
+
+      setReconnect(stopReason === "reconnect");
+      if (stopReason === "reconnect") {
+        setMsg("Not authorised — reconnect Google to grant the Indexing permission.");
+      } else if (stopReason === "owner") {
+        setMsg(firstFail || "This Google account isn't an Owner of the property.");
+      } else {
         setMsg(
-          j.needsReconnect
-            ? "Google rejected the request — the indexing permission isn't granted yet."
-            : `Submitted ${j.submitted}${j.failed ? `, ${j.failed} failed: ${firstFail?.message ?? ""}` : " URL(s) to Google."}`,
+          `Submitted ${submitted}` +
+            (failed ? `, ${failed} failed (${firstFail})` : "") +
+            (skipped ? `, ${skipped} left for tomorrow (daily quota)` : "") +
+            `. Indexing quota left today: ${quotaLeft}.`,
         );
-        await load();
-      } else setMsg(j.error ?? "Submit failed");
+      }
+      await load();
     } finally {
       setSubmitting(null);
     }
@@ -158,6 +201,11 @@ export function Indexing({ property }: { property: string }) {
   const chartKeys = data?.stateBreakdown.length
     ? data.stateBreakdown.map((s) => s.label)
     : ["Indexed", "Not indexed"];
+
+  // Submit only makes sense with the scope granted AND Owner-level access.
+  const submitAllowed =
+    !data ||
+    (data.indexing.hasScope !== false && data.indexing.isOwner !== false);
 
   return (
     <div>
@@ -218,27 +266,35 @@ export function Indexing({ property }: { property: string }) {
                   .map((u) => u.url),
               )
             }
-            disabled={
-              submitting === "bulk" ||
-              !data?.submittableCount ||
-              data?.indexing.hasScope === false
-            }
+            disabled={submitting === "bulk" || !data?.submittableCount || !submitAllowed}
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            title={
+              submitAllowed
+                ? ""
+                : data?.indexing.hasScope === false
+                  ? "Reconnect Google to grant the Indexing permission"
+                  : "You must be an Owner of this property in Search Console"
+            }
           >
             {submitting === "bulk"
               ? "Submitting…"
-              : `Submit Index Now (${data?.submittableCount ?? 0})`}
+              : `Submit Index Now (${Math.min(data?.submittableCount ?? 0, data?.submitQuotaLeft ?? 0)}${
+                  (data?.submittableCount ?? 0) > (data?.submitQuotaLeft ?? 0)
+                    ? ` of ${data?.submittableCount}`
+                    : ""
+                })`}
           </button>
         </div>
       </div>
 
       {msg && <div className="mb-3 rounded-lg border bg-surface p-3 text-sm">{msg}</div>}
-      {(reconnect || data?.indexing.hasScope === false) && (
+
+      {data?.indexing.hasScope === false || reconnect ? (
         <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
           <span>
-            <strong>Submit to Index isn&apos;t authorised.</strong> Your Google sign-in was
-            created before the Indexing API permission existed. Enable{" "}
-            <strong>Web Search Indexing API</strong> in Google Cloud, then reconnect to grant it.
+            <strong>Submit to Index isn&apos;t authorised.</strong> Enable{" "}
+            <strong>Web Search Indexing API</strong> in Google Cloud and add the{" "}
+            <code>.../auth/indexing</code> scope on the OAuth consent screen, then reconnect.
           </span>
           <a
             href="/api/auth/google"
@@ -247,10 +303,20 @@ export function Indexing({ property }: { property: string }) {
             Reconnect Google
           </a>
         </div>
-      )}
+      ) : data && data.indexing.isOwner === false ? (
+        <div className="mb-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
+          <strong>Submit to Index needs Owner access.</strong> Your Search Console role for
+          this property is{" "}
+          <code>{data.indexing.permissionLevel ?? "unknown"}</code>, not{" "}
+          <code>siteOwner</code>. In Search Console → Settings → Users and permissions, have an
+          owner set your role to <strong>Owner</strong> — or add &amp; verify the site under
+          your own account. (Inspection and everything else still works.)
+        </div>
+      ) : null}
       {data && (
         <div className="mb-2 text-xs text-muted">
-          Inspection quota left today: {data.quotaLeft}/{data.dailyCap}
+          Inspection quota left today: {data.quotaLeft}/{data.dailyCap} · Indexing submissions
+          left: {data.submitQuotaLeft}
           {data.job?.finished_at
             ? ` · last check ${format(data.job.finished_at, "MMM d HH:mm")} (${data.job.checked} URLs)`
             : ""}
@@ -348,7 +414,7 @@ export function Indexing({ property }: { property: string }) {
                   onToggle={() => setExpanded(expanded === r.url ? null : r.url)}
                   onSubmit={() => submit([r.url])}
                   submitting={submitting === r.url}
-                  scopeOk={data?.indexing.hasScope !== false}
+                  scopeOk={submitAllowed}
                 />
               ))}
               {!shown.length && (

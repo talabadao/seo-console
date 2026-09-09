@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
 import { accessTokenFor, hasIndexingScope } from "@/lib/google/oauth";
-import { submitUrls, type SiteRow } from "@/lib/indexer";
+import { submitUrls, submitQuotaLeft, type SiteRow } from "@/lib/indexer";
 
 export const maxDuration = 120;
 
 const RECONNECT_MSG =
   "Your Google sign-in doesn't include the Indexing API permission yet. " +
   "Sign out and sign back in (approve the new permission), then retry.";
+
+const OWNER_MSG =
+  "The Indexing API only accepts a verified Owner of the property. Your role in " +
+  "Search Console → Settings → Users and permissions is not \"Owner\" — ask an owner " +
+  "to promote you, or add & verify the site yourself.";
 
 export async function POST(req: NextRequest) {
   const user = await currentUser();
@@ -19,7 +24,7 @@ export async function POST(req: NextRequest) {
     urls?: string[];
     url?: string;
   };
-  const urls = (body.urls ?? (body.url ? [body.url] : [])).filter(Boolean);
+  const urls = [...new Set((body.urls ?? (body.url ? [body.url] : [])).filter(Boolean))];
   if (!body.property || !urls.length) {
     return NextResponse.json({ error: "property and url(s) required" }, { status: 400 });
   }
@@ -28,43 +33,55 @@ export async function POST(req: NextRequest) {
   }
 
   const site = db
-    .prepare("SELECT id, user_id, source, property FROM sites WHERE user_id = ? AND property = ?")
-    .get(user.id, body.property) as SiteRow | undefined;
+    .prepare(
+      "SELECT id, user_id, source, property, permission_level FROM sites WHERE user_id = ? AND property = ?",
+    )
+    .get(user.id, body.property) as (SiteRow & { permission_level: string | null }) | undefined;
   if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+
+  const fail = (message: string, extra: Record<string, unknown> = {}) =>
+    NextResponse.json({
+      submitted: 0,
+      failed: urls.length,
+      skipped: 0,
+      quotaLeft: submitQuotaLeft(site.id),
+      message,
+      results: urls.map((url) => ({ url, ok: false, message })),
+      ...extra,
+    });
+
+  if (site.permission_level && site.permission_level !== "siteOwner") {
+    return fail(OWNER_MSG, { notOwner: true });
+  }
 
   let token: string;
   try {
-    token = await accessTokenFor(user); // refreshes google_scopes on `user`
+    token = await accessTokenFor(user);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 
-  // Don't even attempt if the grant is missing the scope — the API would just 403.
   const scopes =
     (db.prepare("SELECT google_scopes FROM users WHERE id = ?").get(user.id) as
       | { google_scopes: string | null }
       | undefined)?.google_scopes ?? user.google_scopes;
-  if (!hasIndexingScope(scopes)) {
-    return NextResponse.json({
-      submitted: 0,
-      failed: urls.length,
-      needsReconnect: true,
-      message: RECONNECT_MSG,
-      results: urls.map((url) => ({ url, ok: false, message: RECONNECT_MSG })),
-    });
-  }
+  if (!hasIndexingScope(scopes)) return fail(RECONNECT_MSG, { needsReconnect: true });
 
-  const results = await submitUrls(site, urls, token);
+  const { results, skipped, quotaLeft } = await submitUrls(site, urls, token);
   const failed = results.filter((r) => !r.ok);
   const needsReconnect = failed.some((r) =>
-    /insufficient.*scope|PERMISSION_DENIED|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(r.message),
+    /insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(r.message),
   );
+  const notOwner = failed.some((r) => /isn't an owner|verify.*ownership/i.test(r.message));
 
   return NextResponse.json({
     submitted: results.filter((r) => r.ok).length,
     failed: failed.length,
+    skipped,
+    quotaLeft,
     needsReconnect,
-    message: needsReconnect ? RECONNECT_MSG : undefined,
+    notOwner,
+    message: needsReconnect ? RECONNECT_MSG : notOwner ? OWNER_MSG : undefined,
     results,
   });
 }

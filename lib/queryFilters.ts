@@ -36,30 +36,77 @@ export const EMPTY_FILTER: FilterState = {
   trend: "all",
 };
 
-const QUESTION_WORDS = [
-  "what",
-  "whats",
-  "what's",
-  "when",
-  "where",
-  "which",
-  "who",
-  "whom",
-  "whose",
-  "why",
-  "how",
-  "can",
-  "does",
-  "do",
-  "is",
-  "are",
-  "will",
-  "should",
+// Interrogatives + question particles across the languages we support.
+// - Latin / Cyrillic single words: matched as whole tokens
+// - Latin / Cyrillic multi-word phrases: matched as consecutive tokens
+// - CJK (no word boundaries): matched as raw substrings
+const QUESTION_TERMS = [
+  // English
+  "what", "whats", "what's", "when", "where", "which", "who", "whom", "whose",
+  "why", "how", "how to", "how do", "how much", "how many",
+  // Vietnamese
+  "gì", "sao", "tại sao", "vì sao", "thế nào", "như thế nào", "ở đâu", "khi nào",
+  "bao giờ", "bao nhiêu", "làm sao", "có nên", "có phải", "là gì", "ra sao", "cách",
+  "cách đi", "có tốt",
+  // French
+  "quoi", "quel", "quelle", "quels", "quelles", "où", "quand", "comment",
+  "pourquoi", "combien", "est-ce que", "qu'est-ce", "ou aller", "ou est",
+  // German
+  "was", "wer", "wo", "wann", "warum", "wieso", "weshalb", "wie", "welche",
+  "welcher", "welches", "wieviel", "wie viel", "wie komme", "wie viele",
+  // Spanish
+  "qué", "cuál", "cuáles", "quién", "quiénes", "dónde", "cuándo", "cómo",
+  "por qué", "porqué", "cuánto", "cuánta", "cuántos", "cuántas", "para qué",
+  "que ver", "que hacer", "como llegar", "como ir", "cuanto cuesta", "donde esta",
+  // Russian
+  "что", "кто", "где", "когда", "почему", "зачем", "как", "какой", "какая",
+  "какое", "какие", "сколько", "куда", "чей", "чья", "чьё", "как добраться",
+  // Chinese (substring — bare 何 / 呢 omitted, too ambiguous)
+  "什么", "什麼", "为什么", "為什麼", "为何", "何时", "何處", "怎么", "怎麼", "怎样",
+  "怎樣", "如何", "哪里", "哪裡", "哪儿", "哪個", "哪个", "多少", "是否", "吗",
+  // Japanese (substring)
+  "なぜ", "どうして", "どうやって", "どこ", "いつ", "どれ", "どの", "いくら",
+  "いくつ", "ですか", "ますか", "でしょうか", "何時", "何が", "何を",
+  // Korean (substring)
+  "무엇", "왜", "어떻게", "어디에", "언제", "어느", "얼마", "누구", "인가요", "나요",
+  "까요", "은가요", "일까",
 ];
-const QUESTION_RE = new RegExp(`(^|\\s)(${QUESTION_WORDS.join("|")})(\\s|$)`, "i");
+
+const isCjk = (s: string) => /[぀-ヿ㐀-鿿가-힯ｦ-ﾟ]/.test(s);
+const tokenize = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+const Q_TOKENS = new Set<string>();
+const Q_PHRASES: string[] = []; // space-joined token sequences
+const Q_CJK: string[] = [];
+for (const raw of QUESTION_TERMS) {
+  const t = raw.toLowerCase();
+  if (isCjk(t)) {
+    Q_CJK.push(t);
+  } else {
+    const toks = tokenize(t);
+    if (toks.length === 1) Q_TOKENS.add(toks[0]);
+    else if (toks.length > 1) Q_PHRASES.push(toks.join(" "));
+  }
+}
+
+// 任何 = "any", 无论/無論 = "no matter" — 何 there isn't a question.
+const CJK_NEGATORS = new Set(["任", "无", "無"]);
 
 export function isQuestion(key: string): boolean {
-  return QUESTION_RE.test(key);
+  const k = key.toLowerCase();
+  for (const p of Q_CJK) {
+    for (let i = k.indexOf(p); i !== -1; i = k.indexOf(p, i + 1)) {
+      if (!CJK_NEGATORS.has(k[i - 1])) return true;
+    }
+  }
+  const tokens = tokenize(k);
+  const set = new Set(tokens);
+  for (const t of Q_TOKENS) if (set.has(t)) return true;
+  if (Q_PHRASES.length) {
+    const joined = ` ${tokens.join(" ")} `;
+    for (const p of Q_PHRASES) if (joined.includes(` ${p} `)) return true;
+  }
+  return false;
 }
 
 export function wordCount(key: string): number {

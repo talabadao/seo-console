@@ -179,6 +179,25 @@ function bumpQuota(siteId: number, n: number) {
   `).run(siteId, today, n);
 }
 
+// The Indexing API allows ~200 publish calls/day per project by default.
+const SUBMIT_DAILY_CAP = Number(process.env.INDEX_SUBMIT_DAILY_CAP || 190);
+
+export function submitQuotaLeft(siteId: number): number {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = db
+    .prepare("SELECT submissions FROM quota_usage WHERE site_id = ? AND usage_date = ?")
+    .get(siteId, today) as { submissions: number } | undefined;
+  return SUBMIT_DAILY_CAP - (row?.submissions ?? 0);
+}
+
+function bumpSubmitQuota(siteId: number, n: number) {
+  const today = new Date().toISOString().slice(0, 10);
+  db.prepare(`
+    INSERT INTO quota_usage (site_id, usage_date, submissions) VALUES (?, ?, ?)
+    ON CONFLICT(site_id, usage_date) DO UPDATE SET submissions = submissions + excluded.submissions
+  `).run(siteId, today, n);
+}
+
 export async function runIndexCheck(
   user: UserRow,
   site: SiteRow,
@@ -499,6 +518,9 @@ export function indexDashboard(siteId: number) {
   }));
 
   const job = db.prepare("SELECT * FROM index_jobs WHERE site_id = ?").get(siteId) ?? null;
+  const siteRow = db
+    .prepare("SELECT permission_level FROM sites WHERE id = ?")
+    .get(siteId) as { permission_level: string | null } | undefined;
 
   return {
     total: urls.length,
@@ -515,18 +537,30 @@ export function indexDashboard(siteId: number) {
     job,
     quotaLeft: quotaLeft(siteId),
     dailyCap: DAILY_CAP,
-    indexing: { configured: true, serviceAccount: serviceAccountConfigured() },
+    submitQuotaLeft: submitQuotaLeft(siteId),
+    indexing: {
+      configured: true,
+      serviceAccount: serviceAccountConfigured(),
+      permissionLevel: siteRow?.permission_level ?? null,
+      isOwner: siteRow?.permission_level === "siteOwner",
+    },
   };
 }
 
 // ---------- submit to Google Indexing API ----------
 
+export interface SubmitOutcome {
+  results: { url: string; ok: boolean; message: string }[];
+  skipped: number; // over daily quota
+  quotaLeft: number;
+}
+
 export async function submitUrls(
   site: SiteRow,
   urls: string[],
   userToken?: string,
-): Promise<{ url: string; ok: boolean; message: string }[]> {
-  const out: { url: string; ok: boolean; message: string }[] = [];
+): Promise<SubmitOutcome> {
+  const results: SubmitOutcome["results"] = [];
   const mark = db.prepare(
     "UPDATE url_inspections SET submitted_at = ?, submit_result = ? WHERE site_id = ? AND url = ?",
   );
@@ -534,20 +568,32 @@ export async function submitUrls(
     `INSERT INTO url_inspections (site_id, url, inspected_at, in_sitemap)
      VALUES (?, ?, 0, 1) ON CONFLICT(site_id, url) DO NOTHING`,
   );
-  for (const url of urls) {
+
+  const budget = Math.max(0, submitQuotaLeft(site.id));
+  const doNow = urls.slice(0, budget);
+  const skipped = urls.length - doNow.length;
+
+  let spent = 0;
+  for (const url of doNow) {
     try {
       await publishUrl(url, { userToken });
       ensureRow.run(site.id, url);
       mark.run(Date.now(), "ok", site.id, url);
-      out.push({ url, ok: true, message: "submitted" });
+      results.push({ url, ok: true, message: "submitted" });
+      spent++;
     } catch (e) {
       const message = cleanApiError(e instanceof Error ? e.message : String(e));
       ensureRow.run(site.id, url);
       mark.run(Date.now(), message, site.id, url);
-      out.push({ url, ok: false, message });
+      results.push({ url, ok: false, message });
+      // Auth/permission failures don't consume the publish quota; keep trying
+      // the rest so the user sees the real reason, but stop on a rate-limit.
+      if (/rate|RESOURCE_EXHAUSTED|quota/i.test(message)) break;
     }
   }
-  return out;
+  if (spent) bumpSubmitQuota(site.id, spent);
+
+  return { results, skipped, quotaLeft: submitQuotaLeft(site.id) };
 }
 
 /** Turn a raw "Indexing API 403: {json}" string into something readable. */

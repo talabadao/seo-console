@@ -29,7 +29,8 @@ Runs locally, stores data in a local SQLite file, and builds daily history over 
 ### Filter definitions (tune per property in **Settings**)
 
 - **Branded** — query contains any of your brand terms (seeded from the domain, editable).
-- **People Also Ask** — query contains a question word (what/when/where/why/how/who/which/…).
+- **People Also Ask** — query contains a question word / particle, in English, Vietnamese,
+  French, German, Spanish, Russian, Chinese, Japanese or Korean.
 - **Long-tail** — query has ≥ N words (default 4).
 - **AI search prompts** — position `=` 1.0 **and** impressions < 10 (operator, value and
   ceiling all configurable).
