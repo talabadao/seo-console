@@ -12,7 +12,6 @@ const DIMENSION_MAP: Record<string, string[]> = {
   page: ["date", "page"],
   country: ["date", "country"],
   device: ["date", "device"],
-  searchAppearance: ["date", "searchAppearance"],
 };
 
 function ymd(d: Date) {
@@ -101,9 +100,9 @@ export async function syncGoogleSite(user: UserRow, site: SiteRow) {
           throw e;
         }
       } catch (e) {
-        // searchAppearance often 400s on properties with no rich results — skip it.
-        if (dimension === "searchAppearance") continue;
-        throw e;
+        // A single dimension failing (e.g. a permissions quirk) shouldn't abort
+        // the whole sync — record and move on.
+        console.warn(`sync ${site.property} ${dimension}: ${e instanceof Error ? e.message : e}`);
       }
     }
 

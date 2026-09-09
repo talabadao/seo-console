@@ -7,6 +7,7 @@ import { BreakdownTable, type BreakdownRow } from "./BreakdownTable";
 import { DateRangePicker, type RangeValue } from "./DateRangePicker";
 import { FilterMenu } from "./FilterMenu";
 import { Indexing } from "./Indexing";
+import { Opportunities } from "./Opportunities";
 import { UrlInspector } from "./UrlInspector";
 import { SettingsPanel } from "./SettingsPanel";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
@@ -40,7 +41,6 @@ const DIMENSIONS = [
   { id: "page", label: "Pages" },
   { id: "country", label: "Countries" },
   { id: "device", label: "Devices" },
-  { id: "searchAppearance", label: "Search appearance" },
 ];
 
 const SEARCH_TYPES = [
@@ -79,7 +79,9 @@ export function Dashboard({
   const [data, setData] = useState<PerfResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [tab, setTab] = useState<"performance" | "indexing" | "inspect">("performance");
+  const [tab, setTab] = useState<
+    "performance" | "opportunities" | "indexing" | "inspect"
+  >("performance");
   const [showSettings, setShowSettings] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -264,6 +266,7 @@ export function Dashboard({
           {(
             [
               ["performance", "Performance"],
+              ["opportunities", "Opportunities"],
               ["indexing", "Indexing"],
               ["inspect", "URL Inspection"],
             ] as const
@@ -295,6 +298,9 @@ export function Dashboard({
 
         {tab === "inspect" && <UrlInspector property={property} />}
         {tab === "indexing" && <Indexing property={property} />}
+        {tab === "opportunities" && (
+          <Opportunities property={property} searchType={searchType} />
+        )}
 
         {tab === "performance" && (
           <>
@@ -361,6 +367,7 @@ export function Dashboard({
                 series={data?.series ?? []}
                 prevSeries={compareOn ? data?.prevSeries : null}
                 active={activeMetrics}
+                grain={range.grain}
               />
             </div>
 

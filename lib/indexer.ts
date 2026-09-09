@@ -128,6 +128,33 @@ function isIndexed(coverage: string | null, verdict: string | null): boolean {
   return verdict === "PASS";
 }
 
+// Fixed display order + colour for the coverage-state stacked chart.
+export const COVERAGE_STATES: { match: RegExp; label: string; color: string; indexed: boolean }[] = [
+  { match: /submitted and indexed/i, label: "Submitted and indexed", color: "#34a853", indexed: true },
+  { match: /indexed, not submitted/i, label: "Indexed, not in sitemap", color: "#81c995", indexed: true },
+  { match: /crawled - currently not indexed/i, label: "Crawled – not indexed", color: "#f9ab00", indexed: false },
+  { match: /discovered - currently not indexed/i, label: "Discovered – not indexed", color: "#ea4335", indexed: false },
+  { match: /alternate page with proper canonical/i, label: "Alternate w/ canonical", color: "#4285f4", indexed: false },
+  { match: /duplicate/i, label: "Duplicate / canonical", color: "#a142f4", indexed: false },
+  { match: /excluded by .?noindex/i, label: "Excluded by noindex", color: "#c5221f", indexed: false },
+  { match: /blocked by robots/i, label: "Blocked by robots.txt", color: "#5f6368", indexed: false },
+  { match: /redirect/i, label: "Page with redirect", color: "#9aa0a6", indexed: false },
+  { match: /soft 404/i, label: "Soft 404", color: "#795548", indexed: false },
+  { match: /not found|404/i, label: "Not found (404)", color: "#8d6e63", indexed: false },
+  { match: /server error|5xx/i, label: "Server error (5xx)", color: "#b71c1c", indexed: false },
+  { match: /unknown to google/i, label: "Unknown to Google", color: "#00acc1", indexed: false },
+];
+
+export function normalizeState(coverage: string | null): string {
+  if (!coverage) return "Not inspected";
+  const hit = COVERAGE_STATES.find((s) => s.match.test(coverage));
+  return hit ? hit.label : coverage;
+}
+
+export function stateColor(label: string): string {
+  return COVERAGE_STATES.find((s) => s.label === label)?.color ?? "#9aa0a6";
+}
+
 function quotaLeft(siteId: number): number {
   const today = new Date().toISOString().slice(0, 10);
   const row = db
@@ -186,19 +213,27 @@ export async function runIndexCheck(
     return { checked: 0, quotaLeft: quotaLeft(site.id), message: msg };
   }
 
+  const prior = db.prepare(
+    "SELECT coverage_state FROM url_inspections WHERE site_id = ? AND url = ?",
+  );
   const save = db.prepare(`
     INSERT INTO url_inspections
       (site_id, url, inspected_at, verdict, coverage_state, robots_txt_state, indexing_state,
        page_fetch_state, last_crawl_time, google_canonical, user_canonical, crawled_as,
-       rich_results, in_sitemap, raw_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+       rich_results, rich_verdict, in_sitemap, raw_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     ON CONFLICT(site_id, url) DO UPDATE SET
       inspected_at = excluded.inspected_at, verdict = excluded.verdict,
       coverage_state = excluded.coverage_state, robots_txt_state = excluded.robots_txt_state,
       indexing_state = excluded.indexing_state, page_fetch_state = excluded.page_fetch_state,
       last_crawl_time = excluded.last_crawl_time, google_canonical = excluded.google_canonical,
       user_canonical = excluded.user_canonical, crawled_as = excluded.crawled_as,
-      rich_results = excluded.rich_results, in_sitemap = 1, raw_json = excluded.raw_json
+      rich_results = excluded.rich_results, rich_verdict = excluded.rich_verdict,
+      in_sitemap = 1, raw_json = excluded.raw_json
+  `);
+  const logChange = db.prepare(`
+    INSERT INTO url_status_history (site_id, url, changed_at, before_state, after_state, indexing_change)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   let checked = 0;
@@ -207,17 +242,32 @@ export async function runIndexCheck(
     try {
       const r = await inspectUrl(token, site.property, t.url);
       const idx = r.indexStatusResult ?? {};
+      const newState = idx.coverageState ?? null;
       const rich =
         r.richResultsResult?.detectedItems
           ?.map((d) => d.richResultType)
           .filter(Boolean)
           .join(", ") || null;
+
+      const before = (prior.get(site.id, t.url) as { coverage_state: string | null } | undefined)
+        ?.coverage_state;
+      if (before !== undefined && before !== newState) {
+        logChange.run(
+          site.id,
+          t.url,
+          Date.now(),
+          before,
+          newState,
+          isIndexed(before, null) !== isIndexed(newState, idx.verdict ?? null) ? 1 : 0,
+        );
+      }
+
       save.run(
         site.id,
         t.url,
         Date.now(),
         idx.verdict ?? null,
-        idx.coverageState ?? null,
+        newState,
         idx.robotsTxtState ?? null,
         idx.indexingState ?? null,
         idx.pageFetchState ?? null,
@@ -226,6 +276,7 @@ export async function runIndexCheck(
         idx.userCanonical ?? null,
         idx.crawledAs ?? null,
         rich,
+        r.richResultsResult?.verdict ?? null,
         JSON.stringify(r),
       );
       checked++;
@@ -256,17 +307,23 @@ export function writeSnapshot(siteId: number) {
     )
     .all(siteId) as { c: string | null; v: string | null }[];
   let indexed = 0;
-  for (const r of rows) if (isIndexed(r.c, r.v)) indexed++;
+  const states: Record<string, number> = {};
+  for (const r of rows) {
+    if (isIndexed(r.c, r.v)) indexed++;
+    const label = normalizeState(r.c);
+    states[label] = (states[label] ?? 0) + 1;
+  }
   const total = db
     .prepare("SELECT COUNT(*) AS n FROM sitemap_urls WHERE site_id = ?")
     .get(siteId) as { n: number };
   const today = new Date().toISOString().slice(0, 10);
   db.prepare(`
-    INSERT INTO index_snapshots (site_id, snap_date, indexed, not_indexed, total_known)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO index_snapshots (site_id, snap_date, indexed, not_indexed, total_known, states_json)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(site_id, snap_date) DO UPDATE SET
-      indexed = excluded.indexed, not_indexed = excluded.not_indexed, total_known = excluded.total_known
-  `).run(siteId, today, indexed, rows.length - indexed, total.n);
+      indexed = excluded.indexed, not_indexed = excluded.not_indexed,
+      total_known = excluded.total_known, states_json = excluded.states_json
+  `).run(siteId, today, indexed, rows.length - indexed, total.n, JSON.stringify(states));
 }
 
 // ---------- dashboard data ----------
@@ -276,12 +333,19 @@ export interface IndexUrlRow {
   clicks: number;
   impressions: number;
   status: string | null;
+  stateLabel: string;
   indexed: boolean;
+  atRisk: boolean;
   lastCrawl: string | null;
   richResults: string | null;
+  richVerdict: string | null;
   lastInspection: number | null;
   robotsTxtState: string | null;
+  indexingState: string | null;
+  pageFetchState: string | null;
   googleCanonical: string | null;
+  userCanonical: string | null;
+  crawledAs: string | null;
   submittedAt: number | null;
   submitResult: string | null;
   submittable: boolean;
@@ -305,13 +369,28 @@ export function indexDashboard(siteId: number) {
     ? new Date(new Date(maxDate).getTime() - 30 * 86400000).toISOString().slice(0, 10)
     : "1970-01-01";
 
+  // URLs regressed from indexed -> not-indexed in the last 30 days and still down.
+  const atRiskSet = new Set(
+    (
+      db
+        .prepare(`
+          SELECT url FROM url_status_history
+           WHERE site_id = ? AND indexing_change = 1 AND changed_at > ?
+             AND after_state NOT LIKE '%indexed%'
+        `)
+        .all(siteId, Date.now() - 30 * 86400000) as { url: string }[]
+    ).map((r) => r.url),
+  );
+
   const rows = db
     .prepare(`
       SELECT s.url AS url,
              i.coverage_state AS status, i.verdict AS verdict,
-             i.last_crawl_time AS lastCrawl, i.rich_results AS richResults,
+             i.last_crawl_time AS lastCrawl, i.rich_results AS richResults, i.rich_verdict AS richVerdict,
              i.inspected_at AS lastInspection, i.robots_txt_state AS robotsTxtState,
-             i.google_canonical AS googleCanonical,
+             i.indexing_state AS indexingState, i.page_fetch_state AS pageFetchState,
+             i.google_canonical AS googleCanonical, i.user_canonical AS userCanonical,
+             i.crawled_as AS crawledAs,
              i.submitted_at AS submittedAt, i.submit_result AS submitResult,
              COALESCE((SELECT SUM(clicks) FROM perf_rows p
                         WHERE p.site_id = s.site_id AND p.dimension = 'page'
@@ -326,7 +405,7 @@ export function indexDashboard(siteId: number) {
     `)
     .all(since, since, siteId) as (Omit<
       IndexUrlRow,
-      "indexed" | "submittable" | "unknownToGoogle"
+      "indexed" | "stateLabel" | "atRisk" | "submittable" | "unknownToGoogle"
     > & { verdict: string | null })[];
 
   const urls: IndexUrlRow[] = rows.map((r) => {
@@ -334,6 +413,8 @@ export function indexDashboard(siteId: number) {
     return {
       ...r,
       indexed,
+      stateLabel: normalizeState(r.status),
+      atRisk: atRiskSet.has(r.url),
       submittable: isSubmittable(r.status, indexed, Boolean(r.lastInspection)),
       unknownToGoogle: /unknown to google/i.test(r.status ?? ""),
     };
@@ -342,12 +423,64 @@ export function indexDashboard(siteId: number) {
   const indexed = urls.filter((u) => u.indexed).length;
   const inspected = urls.filter((u) => u.lastInspection).length;
 
-  const history = db
-    .prepare(
-      `SELECT snap_date AS date, indexed, not_indexed AS notIndexed, total_known AS total
-         FROM index_snapshots WHERE site_id = ? ORDER BY snap_date`,
-    )
-    .all(siteId) as { date: string; indexed: number; notIndexed: number; total: number }[];
+  // Current state breakdown (for the donut / legend), in the fixed display order.
+  const counts: Record<string, number> = {};
+  for (const u of urls) counts[u.stateLabel] = (counts[u.stateLabel] ?? 0) + 1;
+  const stateBreakdown = [
+    ...COVERAGE_STATES.map((s) => s.label),
+    ...Object.keys(counts).filter(
+      (l) => !COVERAGE_STATES.some((s) => s.label === l) && l !== "Not inspected",
+    ),
+    "Not inspected",
+  ]
+    .filter((l, idx, arr) => arr.indexOf(l) === idx && counts[l])
+    .map((label) => ({ label, count: counts[label], color: stateColor(label) }));
+
+  const stateHistory = (
+    db
+      .prepare(
+        `SELECT snap_date AS date, states_json AS statesJson, indexed, not_indexed AS notIndexed
+           FROM index_snapshots WHERE site_id = ? ORDER BY snap_date`,
+      )
+      .all(siteId) as {
+      date: string;
+      statesJson: string | null;
+      indexed: number;
+      notIndexed: number;
+    }[]
+  ).map((r) => ({
+    date: r.date,
+    states: r.statesJson ? (JSON.parse(r.statesJson) as Record<string, number>) : null,
+    indexed: r.indexed,
+    notIndexed: r.notIndexed,
+  }));
+
+  const recentCutoff = Date.now() - 30 * 86400000;
+  const movements = (
+    db
+      .prepare(`
+        SELECT h.changed_at AS changedAt, h.url AS url, h.before_state AS before,
+               h.after_state AS after, h.indexing_change AS indexingChange,
+               s.first_seen AS firstSeen
+          FROM url_status_history h
+          LEFT JOIN sitemap_urls s ON s.site_id = h.site_id AND s.url = h.url
+         WHERE h.site_id = ?
+         ORDER BY h.changed_at DESC
+         LIMIT 500
+      `)
+      .all(siteId) as {
+      changedAt: number;
+      url: string;
+      before: string | null;
+      after: string | null;
+      indexingChange: number;
+      firstSeen: number | null;
+    }[]
+  ).map((m) => ({
+    ...m,
+    recentlyPublished:
+      Boolean(m.firstSeen && m.firstSeen > recentCutoff) && !/indexed/i.test(m.after ?? ""),
+  }));
 
   const job = db.prepare("SELECT * FROM index_jobs WHERE site_id = ?").get(siteId) ?? null;
 
@@ -358,16 +491,15 @@ export function indexDashboard(siteId: number) {
     notIndexed: inspected - indexed,
     pctIndexed: urls.length ? Math.round((indexed / urls.length) * 100) : 0,
     submittableCount: urls.filter((u) => u.submittable).length,
+    atRiskCount: urls.filter((u) => u.atRisk).length,
     urls,
-    history,
+    stateBreakdown,
+    stateHistory,
+    movements,
     job,
     quotaLeft: quotaLeft(siteId),
     dailyCap: DAILY_CAP,
-    indexing: {
-      // Available for any signed-in user (via OAuth); a service account is optional.
-      configured: true,
-      serviceAccount: serviceAccountConfigured(),
-    },
+    indexing: { configured: true, serviceAccount: serviceAccountConfigured() },
   };
 }
 

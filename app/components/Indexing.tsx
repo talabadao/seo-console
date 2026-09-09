@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -18,12 +18,19 @@ interface IndexUrlRow {
   clicks: number;
   impressions: number;
   status: string | null;
+  stateLabel: string;
   indexed: boolean;
+  atRisk: boolean;
   lastCrawl: string | null;
   richResults: string | null;
+  richVerdict: string | null;
   lastInspection: number | null;
   robotsTxtState: string | null;
+  indexingState: string | null;
+  pageFetchState: string | null;
   googleCanonical: string | null;
+  userCanonical: string | null;
+  crawledAs: string | null;
   submittedAt: number | null;
   submitResult: string | null;
   submittable: boolean;
@@ -37,22 +44,39 @@ interface IndexData {
   notIndexed: number;
   pctIndexed: number;
   submittableCount: number;
+  atRiskCount: number;
   urls: IndexUrlRow[];
-  history: { date: string; indexed: number; notIndexed: number; total: number }[];
+  stateBreakdown: { label: string; count: number; color: string }[];
+  stateHistory: { date: string; states: Record<string, number> | null; indexed: number; notIndexed: number }[];
+  movements: {
+    changedAt: number;
+    url: string;
+    before: string | null;
+    after: string | null;
+    indexingChange: number;
+    firstSeen: number | null;
+    recentlyPublished: boolean;
+  }[];
   job: { status: string; checked: number; message: string | null; finished_at: number | null } | null;
   quotaLeft: number;
   dailyCap: number;
   indexing: { configured: boolean; serviceAccount: boolean };
 }
 
+const PAGE_SIZES = [25, 50, 100, 250];
+
 export function Indexing({ property }: { property: string }) {
   const [data, setData] = useState<IndexData | null>(null);
-  const [tab, setTab] = useState<"all" | "indexed" | "not">("all");
+  const [tab, setTab] = useState<"all" | "indexed" | "not" | "risk">("all");
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [sitemapUrl, setSitemapUrl] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [reconnect, setReconnect] = useState(false);
   const [q, setQ] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     if (!property) return;
@@ -71,19 +95,15 @@ export function Indexing({ property }: { property: string }) {
       const res = await fetch("/api/index/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          property,
-          discover,
-          sitemapUrl: sitemapUrl.trim() || undefined,
-        }),
+        body: JSON.stringify({ property, discover, sitemapUrl: sitemapUrl.trim() || undefined }),
       });
       const j = await res.json();
-      if (res.ok) {
-        setMsg(
-          `${j.discovered != null ? `Discovered ${j.discovered} URLs. ` : ""}Inspected ${j.checked}. Quota left today: ${j.quotaLeft}.${j.message ? ` (${j.message})` : ""}`,
-        );
-        await load();
-      } else setMsg(j.error ?? "Failed");
+      setMsg(
+        res.ok
+          ? `${j.discovered != null ? `Discovered ${j.discovered} URLs. ` : ""}Inspected ${j.checked}. Quota left: ${j.quotaLeft}.${j.message ? ` (${j.message})` : ""}`
+          : (j.error ?? "Failed"),
+      );
+      await load();
     } finally {
       setBusy(false);
     }
@@ -101,15 +121,13 @@ export function Indexing({ property }: { property: string }) {
       });
       const j = await res.json();
       if (res.ok) {
-        if (j.needsReconnect) {
-          setMsg(
-            "Google rejected the request — your account was connected before the indexing permission existed. Sign out and sign back in, then retry.",
-          );
-        } else {
-          setMsg(
-            `Submitted ${j.submitted} URL(s) to the Indexing API${j.failed ? `, ${j.failed} failed (${j.results.find((r: { ok: boolean; message: string }) => !r.ok)?.message ?? ""})` : ""}.`,
-          );
-        }
+        setReconnect(Boolean(j.needsReconnect));
+        const firstFail = j.results?.find((r: { ok: boolean }) => !r.ok);
+        setMsg(
+          j.needsReconnect
+            ? "Google rejected the request — the indexing permission isn't granted yet."
+            : `Submitted ${j.submitted}${j.failed ? `, ${j.failed} failed: ${firstFail?.message ?? ""}` : " URL(s) to Google."}`,
+        );
         await load();
       } else setMsg(j.error ?? "Submit failed");
     } finally {
@@ -117,30 +135,41 @@ export function Indexing({ property }: { property: string }) {
     }
   }
 
-  const rows = useMemo(() => {
+  const filtered = useMemo(() => {
     let r = data?.urls ?? [];
     if (tab === "indexed") r = r.filter((x) => x.indexed);
     if (tab === "not") r = r.filter((x) => x.lastInspection && !x.indexed);
+    if (tab === "risk") r = r.filter((x) => x.atRisk);
     const needle = q.trim().toLowerCase();
     if (needle) r = r.filter((x) => x.url.toLowerCase().includes(needle));
     return r;
   }, [data, tab, q]);
 
-  const chartData = (data?.history ?? []).map((h) => ({
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const shown = filtered.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => {
+    setPage(1);
+  }, [tab, q, pageSize]);
+
+  const chartData = (data?.stateHistory ?? []).map((h) => ({
     label: format(parseISO(h.date), "MMM d"),
-    Indexed: h.indexed,
-    "Not indexed": h.notIndexed,
+    ...(h.states ?? { Indexed: h.indexed, "Not indexed": h.notIndexed }),
   }));
+  const chartKeys = data?.stateBreakdown.length
+    ? data.stateBreakdown.map((s) => s.label)
+    : ["Indexed", "Not indexed"];
 
   return (
     <div>
+      {/* controls */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex rounded-md border p-0.5 text-sm">
           {(
             [
-              ["all", `All`],
+              ["all", "All"],
               ["indexed", `${data?.indexed ?? 0} Indexed`],
               ["not", `${data?.notIndexed ?? 0} Not indexed`],
+              ["risk", `${data?.atRiskCount ?? 0} At risk`],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -152,18 +181,20 @@ export function Indexing({ property }: { property: string }) {
             </button>
           ))}
         </div>
+        <Donut pct={data?.pctIndexed ?? 0} />
         <span className="text-sm text-muted">
           {data ? `${data.pctIndexed}% of ${data.total} known URLs indexed` : "…"}
           {data && data.inspected < data.total
             ? ` · ${data.total - data.inspected} not yet inspected`
             : ""}
         </span>
+
         <div className="ml-auto flex items-center gap-2">
           <input
             value={sitemapUrl}
             onChange={(e) => setSitemapUrl(e.target.value)}
             placeholder="optional sitemap URL"
-            className="w-52 rounded-md border bg-background px-2 py-1.5 text-sm"
+            className="w-48 rounded-md border bg-background px-2 py-1.5 text-sm"
           />
           <button
             onClick={() => run(true)}
@@ -175,62 +206,83 @@ export function Indexing({ property }: { property: string }) {
           <button
             onClick={() => run(false)}
             disabled={busy || !property}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft disabled:opacity-50"
           >
             Run check
+          </button>
+          <button
+            onClick={() =>
+              submit(
+                (data?.urls ?? [])
+                  .filter((u) => u.submittable && u.submitResult !== "ok")
+                  .map((u) => u.url),
+              )
+            }
+            disabled={submitting === "bulk" || !data?.submittableCount}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {submitting === "bulk"
+              ? "Submitting…"
+              : `Submit Index Now (${data?.submittableCount ?? 0})`}
           </button>
         </div>
       </div>
 
       {msg && <div className="mb-3 rounded-lg border bg-surface p-3 text-sm">{msg}</div>}
+      {reconnect && (
+        <div className="mb-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
+          The Indexing API needs a permission your current login doesn&apos;t have. Enable
+          <strong> Web Search Indexing API</strong> in Google Cloud, then <strong>Sign out</strong> and
+          sign back in to grant it.
+        </div>
+      )}
       {data && (
-        <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-muted">
-          <span>
-            Inspection quota left today: {data.quotaLeft}/{data.dailyCap}
-            {data.job?.finished_at
-              ? ` · last run ${format(data.job.finished_at, "MMM d HH:mm")} (${data.job.checked} checked)`
-              : ""}
-          </span>
-          {data.submittableCount > 0 && (
-            <button
-              onClick={() =>
-                submit(data.urls.filter((u) => u.submittable && !u.submittedAt).map((u) => u.url))
-              }
-              disabled={submitting === "bulk"}
-              className="rounded-md border border-accent px-2 py-1 font-medium text-accent disabled:opacity-50"
-            >
-              {submitting === "bulk"
-                ? "Submitting…"
-                : `Submit ${data.submittableCount} not-indexed to Google`}
-            </button>
-          )}
-          <span className="text-muted">
-            Indexing API via your Google login{data.indexing.serviceAccount ? " + service account" : ""}
-          </span>
+        <div className="mb-2 text-xs text-muted">
+          Inspection quota left today: {data.quotaLeft}/{data.dailyCap}
+          {data.job?.finished_at
+            ? ` · last check ${format(data.job.finished_at, "MMM d HH:mm")} (${data.job.checked} URLs)`
+            : ""}
         </div>
       )}
 
+      {/* coverage-state stacked chart */}
       <div className="rounded-xl border bg-surface p-4">
         {chartData.length ? (
-          <div className="h-56 w-full">
-            <ResponsiveContainer>
-              <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 4, left: 4 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--muted)" }} />
-                <YAxis tick={{ fontSize: 12, fill: "var(--muted)" }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    fontSize: 13,
-                  }}
-                />
-                <Bar dataKey="Indexed" stackId="a" fill="var(--good)" />
-                <Bar dataKey="Not indexed" stackId="a" fill="var(--position)" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <>
+            <div className="h-64 w-full">
+              <ResponsiveContainer>
+                <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 4, left: 4 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--muted)" }} />
+                  <YAxis tick={{ fontSize: 12, fill: "var(--muted)" }} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  {chartKeys.map((k) => (
+                    <Bar
+                      key={k}
+                      dataKey={k}
+                      stackId="a"
+                      fill={data?.stateBreakdown.find((s) => s.label === k)?.color ?? "#9aa0a6"}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {(data?.stateBreakdown ?? []).map((s) => (
+                <span key={s.label} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
+                  {s.label} <span className="text-muted">{s.count}</span>
+                </span>
+              ))}
+            </div>
+          </>
         ) : (
           <p className="py-10 text-center text-sm text-muted">
             No index history yet. Run a check to start tracking.
@@ -238,16 +290,28 @@ export function Indexing({ property }: { property: string }) {
         )}
       </div>
 
+      {/* PAGES table */}
       <div className="mt-4 rounded-xl border bg-surface">
-        <div className="flex items-center gap-3 border-b px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
           <strong className="text-sm">PAGES</strong>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="filter URLs…"
-            className="min-w-48 flex-1 rounded-md border bg-background px-3 py-1.5 text-sm"
+            className="min-w-40 flex-1 rounded-md border bg-background px-3 py-1.5 text-sm"
           />
-          <span className="text-sm text-muted">{rows.length} URLs</span>
+          <span className="text-sm text-muted">{filtered.length} URLs</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="rounded-md border bg-background px-2 py-1.5 text-sm"
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n} / page
+              </option>
+            ))}
+          </select>
         </div>
         <div className="max-h-[36rem] overflow-auto">
           <table className="w-full border-collapse text-sm">
@@ -264,55 +328,17 @@ export function Indexing({ property }: { property: string }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.url} className="border-b border-border/60 hover:bg-accent-soft/40">
-                  <td className="max-w-sm truncate px-4 py-2">
-                    <a
-                      href={r.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-accent hover:underline"
-                      title={r.url}
-                    >
-                      {shortUrl(r.url)}
-                    </a>
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">{fmt(r.clicks, "count")}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{fmt(r.impressions, "count")}</td>
-                  <td className="px-4 py-2">
-                    <span className={r.indexed ? "text-good" : r.lastInspection ? "text-bad" : "text-muted"}>
-                      {r.status ?? (r.lastInspection ? "—" : "not inspected")}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-muted">{crawl(r.lastCrawl)}</td>
-                  <td className="px-4 py-2 text-muted">{r.richResults ?? "—"}</td>
-                  <td className="px-4 py-2 text-muted">
-                    {r.lastInspection ? format(r.lastInspection, "MMM d") : "—"}
-                  </td>
-                  <td className="px-4 py-2">
-                    {r.submittedAt ? (
-                      <span
-                        className={r.submitResult === "ok" ? "text-good" : "text-bad"}
-                        title={r.submitResult ?? ""}
-                      >
-                        {r.submitResult === "ok" ? "sent " : "failed "}
-                        {crawl(new Date(r.submittedAt).toISOString())}
-                      </span>
-                    ) : r.submittable && data?.indexing.configured ? (
-                      <button
-                        onClick={() => submit([r.url])}
-                        disabled={submitting === r.url}
-                        className="rounded border border-accent px-2 py-0.5 text-xs text-accent disabled:opacity-50"
-                      >
-                        {submitting === r.url ? "…" : "Submit"}
-                      </button>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                  </td>
-                </tr>
+              {shown.map((r) => (
+                <RowGroup
+                  key={r.url}
+                  r={r}
+                  open={expanded === r.url}
+                  onToggle={() => setExpanded(expanded === r.url ? null : r.url)}
+                  onSubmit={() => submit([r.url])}
+                  submitting={submitting === r.url}
+                />
               ))}
-              {!rows.length && (
+              {!shown.length && (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center text-muted">
                     No URLs. Click “Discover + check”.
@@ -322,6 +348,245 @@ export function Indexing({ property }: { property: string }) {
             </tbody>
           </table>
         </div>
+        {pageCount > 1 && (
+          <div className="flex items-center justify-end gap-2 border-t px-4 py-2 text-sm">
+            <span className="text-muted">
+              {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filtered.length)} of{" "}
+              {filtered.length}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="rounded border px-2 py-0.5 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <span>
+              {page} / {pageCount}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              disabled={page === pageCount}
+              className="rounded border px-2 py-0.5 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+
+      <RecentMovements movements={data?.movements ?? []} />
+    </div>
+  );
+}
+
+function Donut({ pct }: { pct: number }) {
+  const color = pct >= 80 ? "var(--good)" : pct >= 50 ? "var(--position)" : "var(--bad)";
+  return (
+    <div
+      className="grid h-9 w-9 place-items-center rounded-full text-[10px] font-semibold"
+      style={{ background: `conic-gradient(${color} ${pct * 3.6}deg, var(--border) 0deg)` }}
+    >
+      <span className="grid h-7 w-7 place-items-center rounded-full bg-surface">{pct}%</span>
+    </div>
+  );
+}
+
+function StatusPill({ r }: { r: IndexUrlRow }) {
+  const color = r.indexed ? "var(--good)" : r.lastInspection ? "var(--bad)" : "var(--muted)";
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+      <span style={{ color }}>{r.status ?? (r.lastInspection ? "—" : "not inspected")}</span>
+      {r.atRisk && (
+        <span className="rounded bg-bad/15 px-1 text-[10px] font-semibold text-bad">AT RISK</span>
+      )}
+    </span>
+  );
+}
+
+function RowGroup({
+  r,
+  open,
+  onToggle,
+  onSubmit,
+  submitting,
+}: {
+  r: IndexUrlRow;
+  open: boolean;
+  onToggle: () => void;
+  onSubmit: () => void;
+  submitting: boolean;
+}) {
+  const canSubmit = r.submittable && r.submitResult !== "ok";
+  return (
+    <>
+      <tr
+        className={`cursor-pointer border-b border-border/60 hover:bg-accent-soft/40 ${
+          !r.indexed && r.lastInspection ? "bg-bad/5" : ""
+        }`}
+        onClick={onToggle}
+      >
+        <td className="max-w-sm truncate px-4 py-2">
+          <span className="mr-1 text-muted">{open ? "▾" : "▸"}</span>
+          {shortUrl(r.url)}
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums">{fmt(r.clicks, "count")}</td>
+        <td className="px-4 py-2 text-right tabular-nums">{fmt(r.impressions, "count")}</td>
+        <td className="px-4 py-2">
+          <StatusPill r={r} />
+        </td>
+        <td className="px-4 py-2 text-muted">{crawl(r.lastCrawl)}</td>
+        <td className="px-4 py-2 text-muted">
+          {r.richResults || (r.richVerdict === "PASS" ? "OK" : "—")}
+        </td>
+        <td className="px-4 py-2 text-muted">
+          {r.lastInspection ? `${format(r.lastInspection, "MMM d")}` : "—"}
+        </td>
+        <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
+          {r.submitResult === "ok" && !canSubmit ? (
+            <span className="text-xs text-good">sent {crawl(iso(r.submittedAt))}</span>
+          ) : canSubmit ? (
+            <button
+              onClick={onSubmit}
+              disabled={submitting}
+              className="rounded border border-accent px-2 py-0.5 text-xs text-accent disabled:opacity-50"
+              title={r.submitResult && r.submitResult !== "ok" ? r.submitResult : ""}
+            >
+              {submitting ? "…" : r.submittedAt ? "Retry" : "Submit"}
+            </button>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+          {r.submitResult && r.submitResult !== "ok" && (
+            <div className="mt-0.5 max-w-[10rem] truncate text-[10px] text-bad" title={r.submitResult}>
+              {r.submitResult}
+            </div>
+          )}
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-b border-border/60 bg-background/50">
+          <td colSpan={8} className="px-8 py-3">
+            <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs md:grid-cols-3">
+              <Detail k="Full URL" v={<a href={r.url} target="_blank" rel="noreferrer" className="text-accent">{r.url}</a>} />
+              <Detail k="Coverage state" v={r.status} />
+              <Detail k="Indexing allowed" v={r.indexingState} />
+              <Detail k="robots.txt" v={r.robotsTxtState} />
+              <Detail k="Page fetch" v={r.pageFetchState} />
+              <Detail k="Crawled as" v={r.crawledAs} />
+              <Detail k="Google canonical" v={r.googleCanonical} />
+              <Detail k="Declared canonical" v={r.userCanonical} />
+              <Detail k="Rich results" v={r.richResults ? `${r.richResults} (${r.richVerdict ?? "?"})` : "none"} />
+              <Detail k="Last crawl" v={r.lastCrawl ? new Date(r.lastCrawl).toLocaleString() : "—"} />
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function Detail({ k, v }: { k: string; v: ReactNode }) {
+  return (
+    <div className="flex gap-2">
+      <span className="w-32 shrink-0 text-muted">{k}</span>
+      <span className="break-all">{v || "—"}</span>
+    </div>
+  );
+}
+
+function RecentMovements({
+  movements,
+}: {
+  movements: IndexData["movements"];
+}) {
+  const [onlyIndexing, setOnlyIndexing] = useState(false);
+  const [onlyNew, setOnlyNew] = useState(false);
+  const [page, setPage] = useState(1);
+  const size = 25;
+
+  const rows = useMemo(() => {
+    let r = movements;
+    if (onlyIndexing) r = r.filter((m) => m.indexingChange === 1);
+    if (onlyNew) r = r.filter((m) => m.recentlyPublished);
+    return r;
+  }, [movements, onlyIndexing, onlyNew]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / size));
+  const shown = rows.slice((page - 1) * size, page * size);
+
+  return (
+    <div className="mt-6">
+      <div className="mb-2 flex flex-wrap items-center gap-4">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">Recent movements</h3>
+        <label className="flex items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={onlyIndexing} onChange={(e) => setOnlyIndexing(e.target.checked)} />
+          Only indexing changes
+        </label>
+        <label className="flex items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
+          Recently published and not indexed
+        </label>
+      </div>
+      <div className="rounded-xl border bg-surface">
+        <table className="w-full border-collapse text-sm">
+          <thead className="text-left text-muted">
+            <tr className="border-b">
+              <th className="px-4 py-2.5 font-medium">Date</th>
+              <th className="px-4 py-2.5 font-medium">URL</th>
+              <th className="px-4 py-2.5 font-medium">Before</th>
+              <th className="px-4 py-2.5 font-medium">After</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((m, i) => (
+              <tr
+                key={`${m.url}-${m.changedAt}-${i}`}
+                className={`border-b border-border/60 ${m.indexingChange ? "bg-bad/5" : ""}`}
+              >
+                <td className="whitespace-nowrap px-4 py-2 text-muted">
+                  {format(m.changedAt, "MMM d, yyyy")}
+                </td>
+                <td className="max-w-sm truncate px-4 py-2">
+                  <a href={m.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                    {shortUrl(m.url)}
+                  </a>
+                </td>
+                <td className="px-4 py-2 text-muted">{m.before ?? "—"}</td>
+                <td className="px-4 py-2">{m.after ?? "—"}</td>
+              </tr>
+            ))}
+            {!shown.length && (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-muted">
+                  No status changes recorded yet — they appear after the second inspection of a URL.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {pageCount > 1 && (
+          <div className="flex items-center justify-end gap-2 border-t px-4 py-2 text-sm">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="rounded border px-2 py-0.5 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <span>
+              {page} / {pageCount}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              disabled={page === pageCount}
+              className="rounded border px-2 py-0.5 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -330,15 +595,16 @@ export function Indexing({ property }: { property: string }) {
 function shortUrl(u: string): string {
   try {
     const url = new URL(u);
-    return url.pathname + url.search || "/";
+    return (url.pathname + url.search) || "/";
   } catch {
     return u;
   }
 }
-
-function crawl(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  const days = Math.round((Date.now() - d.getTime()) / 86400000);
+function iso(ms: number | null): string | null {
+  return ms ? new Date(ms).toISOString() : null;
+}
+function crawl(isoStr: string | null): string {
+  if (!isoStr) return "—";
+  const days = Math.round((Date.now() - new Date(isoStr).getTime()) / 86400000);
   return days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
 }

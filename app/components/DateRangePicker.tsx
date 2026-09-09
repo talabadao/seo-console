@@ -27,11 +27,14 @@ export function DateRangePicker({
   resolvedRange,
   resolvedCompare,
   onChange,
+  simple = false,
 }: {
   value: RangeValue;
   resolvedRange: { start: string; end: string };
   resolvedCompare: { start: string; end: string } | null;
   onChange: (v: RangeValue) => void;
+  /** Hide the comparison column + grain toggle (for range-only pickers). */
+  simple?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -64,8 +67,11 @@ export function DateRangePicker({
       </button>
 
       {open && (
-        <div className="absolute left-0 z-40 mt-2 flex w-[560px] max-w-[calc(100vw-2rem)] rounded-xl border bg-surface shadow-xl">
+        <div
+          className={`absolute left-0 z-40 mt-2 flex ${simple ? "w-72" : "w-[560px]"} max-w-[calc(100vw-2rem)] rounded-xl border bg-surface shadow-xl`}
+        >
           {/* Left: comparison */}
+          {!simple && (
           <div className="w-1/2 border-r p-4">
             <p className="text-xs font-semibold uppercase text-muted">Comparison period</p>
             <div className="mt-2 space-y-1">
@@ -113,9 +119,11 @@ export function DateRangePicker({
               Match weekdays
             </label>
           </div>
+          )}
 
           {/* Right: grain + presets */}
-          <div className="w-1/2 p-4">
+          <div className={simple ? "w-full p-4" : "w-1/2 p-4"}>
+            {!simple && (
             <div className="mb-3 flex rounded-md border p-0.5 text-sm">
               {(["day", "week", "month"] as Grain[]).map((g) => (
                 <button
@@ -129,6 +137,7 @@ export function DateRangePicker({
                 </button>
               ))}
             </div>
+            )}
 
             <div className="max-h-72 space-y-0.5 overflow-auto">
               {PRESETS.map((p) => (

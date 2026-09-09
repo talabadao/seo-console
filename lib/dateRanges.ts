@@ -34,8 +34,6 @@ export type PresetId =
   | "8m"
   | "12m"
   | "16m"
-  | "2y"
-  | "3y"
   | "custom";
 
 export type CompareMode = "none" | "previous" | "yoy" | "prevMonth" | "custom";
@@ -62,8 +60,6 @@ export const PRESETS: { id: PresetId; label: string }[] = [
   { id: "8m", label: "Last 8 months" },
   { id: "12m", label: "Last 12 months" },
   { id: "16m", label: "Last 16 months" },
-  { id: "2y", label: "Last 2 years" },
-  { id: "3y", label: "Last 3 years" },
   { id: "custom", label: "Custom period" },
 ];
 
@@ -126,10 +122,6 @@ export function resolveRange(
       return { start: ymd(subMonths(end, 12)), end: e };
     case "16m":
       return { start: ymd(subMonths(end, 16)), end: e };
-    case "2y":
-      return { start: ymd(subYears(end, 2)), end: e };
-    case "3y":
-      return { start: ymd(subYears(end, 3)), end: e };
   }
 }
 

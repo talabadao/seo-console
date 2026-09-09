@@ -15,7 +15,7 @@ import type { SearchType } from "@/lib/google/searchconsole";
 
 export const maxDuration = 120;
 
-const DIMENSIONS = ["query", "page", "country", "device", "searchAppearance"];
+const DIMENSIONS = ["query", "page", "country", "device"];
 const SEARCH_TYPES: SearchType[] = ["web", "image", "video", "news", "discover"];
 
 function parseFilters(p: URLSearchParams): FilterState {

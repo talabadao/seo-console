@@ -157,6 +157,17 @@ function migrate(conn: DatabaseSync) {
       message     TEXT,
       checked     INTEGER DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS url_status_history (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      site_id       INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      url           TEXT NOT NULL,
+      changed_at    INTEGER NOT NULL,
+      before_state  TEXT,
+      after_state   TEXT,
+      indexing_change INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_status_hist ON url_status_history(site_id, changed_at DESC);
   `);
 
   // Additive migrations for databases created by an earlier version.
@@ -169,4 +180,6 @@ function migrate(conn: DatabaseSync) {
   ensureColumn(conn, "url_inspections", "in_sitemap", "INTEGER DEFAULT 0");
   ensureColumn(conn, "url_inspections", "submitted_at", "INTEGER");
   ensureColumn(conn, "url_inspections", "submit_result", "TEXT");
+  ensureColumn(conn, "url_inspections", "rich_verdict", "TEXT");
+  ensureColumn(conn, "index_snapshots", "states_json", "TEXT");
 }
