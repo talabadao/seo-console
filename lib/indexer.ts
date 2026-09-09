@@ -306,7 +306,7 @@ export async function runIndexCheck(
         idx.crawledAs ?? null,
         rich,
         r.richResultsResult?.verdict ?? null,
-        r.inspectionResultLink ?? null,
+        r.inspectionResultLink ?? "",
         JSON.stringify(r),
       );
       checked++;
@@ -386,19 +386,12 @@ export interface IndexUrlRow {
   submitResult: string | null;
   submittable: boolean;
   unknownToGoogle: boolean;
-  /** Deep link to this URL's inspection page in Search Console (for "Request indexing"). */
-  requestIndexingUrl: string;
-}
-
-/** Build the Search Console URL Inspection deep link for a URL. */
-export function inspectionDeepLink(property: string, url: string, apiLink?: string | null): string {
-  if (apiLink) return apiLink;
-  return (
-    "https://search.google.com/search-console/inspect?resource_id=" +
-    encodeURIComponent(property) +
-    "&id=" +
-    encodeURIComponent(url)
-  );
+  /**
+   * Deep link to this URL's inspection page in Search Console (for the manual
+   * "Request indexing" button). Only Google can mint the `id` token, so this is
+   * the API's `inspectionResultLink` verbatim — null until the URL is inspected.
+   */
+  requestIndexingUrl: string | null;
 }
 
 /** URLs Google doesn't know at all, or has crawled but not indexed — worth a nudge. */
@@ -409,7 +402,34 @@ function isSubmittable(status: string | null, indexed: boolean, inspected: boole
   return /unknown to google|not indexed|discovered|crawled/i.test(status);
 }
 
+/** Populate inspect_link from stored raw_json for rows saved before the column existed. */
+function backfillInspectLinks(siteId: number) {
+  const rows = db
+    .prepare(
+      "SELECT id, raw_json FROM url_inspections WHERE site_id = ? AND inspect_link IS NULL AND raw_json IS NOT NULL LIMIT 10000",
+    )
+    .all(siteId) as { id: number; raw_json: string }[];
+  if (!rows.length) return;
+  const upd = db.prepare("UPDATE url_inspections SET inspect_link = ? WHERE id = ?");
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) {
+      let link = "";
+      try {
+        link = JSON.parse(r.raw_json)?.inspectionResultLink ?? "";
+      } catch {
+        /* keep "" */
+      }
+      upd.run(link, r.id); // "" marks "checked, no link" so we don't re-scan
+    }
+    db.exec("COMMIT");
+  } catch {
+    db.exec("ROLLBACK");
+  }
+}
+
 export function indexDashboard(siteId: number) {
+  backfillInspectLinks(siteId);
   const maxDateRow = db
     .prepare("SELECT MAX(data_date) AS d FROM perf_rows WHERE site_id = ? AND dimension = 'page'")
     .get(siteId) as { d: string | null };
@@ -430,11 +450,6 @@ export function indexDashboard(siteId: number) {
         .all(siteId, Date.now() - 30 * 86400000) as { url: string }[]
     ).map((r) => r.url),
   );
-
-  const property =
-    (db.prepare("SELECT property FROM sites WHERE id = ?").get(siteId) as
-      | { property: string }
-      | undefined)?.property ?? "";
 
   const rows = db
     .prepare(`
@@ -471,7 +486,7 @@ export function indexDashboard(siteId: number) {
       atRisk: atRiskSet.has(r.url),
       submittable: isSubmittable(r.status, indexed, Boolean(r.lastInspection)),
       unknownToGoogle: /unknown to google/i.test(r.status ?? ""),
-      requestIndexingUrl: inspectionDeepLink(property, r.url, r.inspectLink),
+      requestIndexingUrl: r.inspectLink || null,
     };
   });
 

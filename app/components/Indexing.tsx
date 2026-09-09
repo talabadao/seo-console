@@ -35,7 +35,7 @@ interface IndexUrlRow {
   submitResult: string | null;
   submittable: boolean;
   unknownToGoogle: boolean;
-  requestIndexingUrl: string;
+  requestIndexingUrl: string | null;
 }
 
 interface IndexData {
@@ -483,7 +483,7 @@ function StatusPill({ r }: { r: IndexUrlRow }) {
           <span className="rounded bg-bad/15 px-1 text-[10px] font-semibold text-bad">AT RISK</span>
         )}
       </span>
-      {!r.indexed && (
+      {!r.indexed && r.requestIndexingUrl && (
         <a
           href={r.requestIndexingUrl}
           target="_blank"
