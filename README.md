@@ -24,7 +24,8 @@ Runs locally, stores data in a local SQLite file, and builds daily history over 
 | Sortable / filterable tables, **show-all rows**, CSV export | ✅ |
 | Light / dark / system theme | ✅ |
 | Daily snapshot storage + `npm run sync` (also runs the index check) | ✅ |
-| Bing Webmaster Tools (traffic + crawl) | ⚙️ wired, needs an API key in Settings |
+| **Analytics** tab — GA4: Organic vs AI Search sessions, Source/Medium, Key Events (+ per-event breakdown by referrer / landing page / page path), Revenue, Geo | ✅ needs the GA4 APIs enabled + reconnect |
+| Bing Webmaster Tools (traffic + crawl) | ⚙️ site list stored on connect; data panels not built yet |
 
 ### Filter definitions (tune per property in **Settings**)
 
@@ -117,6 +118,32 @@ npm run dev
 ```
 
 Open http://localhost:3000 → **Continue with Google** → pick a property → **Sync now**.
+
+## Analytics (GA4)
+
+The **Analytics** tab connects to your Google Analytics 4 properties.
+
+1. **Google Cloud Console → APIs & Services → Library** → enable **Google Analytics Admin API**
+   and **Google Analytics Data API**.
+2. In SEO Console: **Sign out → Sign in** and approve the new "See Google Analytics data"
+   permission (the tab shows a "Connect Google Analytics" button until you do).
+3. Pick a GA4 property (every property your Google account can access is listed).
+
+**AI Search** is not a native GA4 channel — it's defined by a list of source domains
+(`chatgpt.com`, `perplexity.ai`, `gemini.google.com`, `copilot.microsoft.com`, `claude.ai`, …),
+editable in **Settings**. Those sessions are removed from "Organic Search" so they don't
+double-count.
+
+### What GA4's API can't do
+
+- **Full user-journey sequence** (the internal page *before* an event, step-by-step paths) —
+  the Data API is aggregated. Per-event *referrer*, *landing page* and *fire page* are each
+  available; the raw sequence needs a **BigQuery export**.
+- **Raw event / user-level data** → BigQuery only.
+- **Search Console query data inside GA4** → use the Performance tab (Search Console API) instead.
+- `city` rows and any query with demographics are **thresholded** (small rows hidden) when
+  Google Signals is on; **sampling** kicks in above ~10M events on standard properties;
+  data is stable after 24–48h.
 
 ## Running it: localhost vs. a server
 
