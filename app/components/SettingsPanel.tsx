@@ -51,6 +51,33 @@ export function SettingsPanel({
   const [brandText, setBrandText] = useState("");
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
 
+  const [aiText, setAiText] = useState("");
+  const [aiMsg, setAiMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    fetch("/api/settings/ga")
+      .then((r) => r.json())
+      .then((j: { aiDomains?: string[] }) => {
+        if (!ignore && j.aiDomains) setAiText(j.aiDomains.join("\n"));
+      });
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function saveAi() {
+    setAiMsg(null);
+    const res = await fetch("/api/settings/ga", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        aiDomains: aiText.split(/[\s,\n]+/).map((s) => s.trim()).filter(Boolean),
+      }),
+    });
+    setAiMsg(res.ok ? "Saved. Reload the Analytics tab to apply." : "Save failed.");
+  }
+
   useEffect(() => {
     if (!property) return;
     let ignore = false;
@@ -264,6 +291,30 @@ export function SettingsPanel({
             {cfgMsg && <p className="mt-2 text-xs text-muted">{cfgMsg}</p>}
           </section>
         )}
+
+        <section className="mt-6">
+          <h3 className="text-sm font-medium">Analytics — AI Search sources</h3>
+          <p className="mt-1 text-xs text-muted">
+            One domain per line. A GA4 session counts as “AI Search” when its source matches
+            one of these; it&apos;s then removed from “Organic Search” so they don&apos;t
+            double-count.
+          </p>
+          <textarea
+            value={aiText}
+            onChange={(e) => setAiText(e.target.value)}
+            rows={5}
+            className="mt-2 w-full rounded-md border bg-background px-2 py-1.5 font-mono text-xs"
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              onClick={saveAi}
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+            >
+              Save
+            </button>
+            {aiMsg && <span className="text-xs text-muted">{aiMsg}</span>}
+          </div>
+        </section>
 
         <section className="mt-6 rounded-lg border bg-background p-3 text-xs text-muted">
           <p className="font-medium text-foreground">Scheduled daily sync (Windows)</p>

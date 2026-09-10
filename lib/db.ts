@@ -158,6 +158,17 @@ function migrate(conn: DatabaseSync) {
       checked     INTEGER DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS ga_properties (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      property_id   TEXT NOT NULL,          -- 'properties/123456789'
+      display_name  TEXT,
+      account_name  TEXT,
+      currency_code TEXT,
+      created_at    INTEGER NOT NULL,
+      UNIQUE(user_id, property_id)
+    );
+
     CREATE TABLE IF NOT EXISTS url_status_history (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       site_id       INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -184,5 +195,6 @@ function migrate(conn: DatabaseSync) {
   ensureColumn(conn, "url_inspections", "inspect_link", "TEXT");
   ensureColumn(conn, "index_snapshots", "states_json", "TEXT");
   ensureColumn(conn, "users", "google_scopes", "TEXT");
+  ensureColumn(conn, "users", "ga_ai_domains", "TEXT");
   ensureColumn(conn, "quota_usage", "submissions", "INTEGER NOT NULL DEFAULT 0");
 }

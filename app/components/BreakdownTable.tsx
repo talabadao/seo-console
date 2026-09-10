@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { METRIC_META, type MetricKey, fmtFull } from "./format";
+import { downloadCsv } from "./csv";
 import { country, deviceLabel } from "@/lib/geo";
 
 export interface BreakdownRow {
@@ -30,14 +31,6 @@ type SortKey = "key" | MetricKey;
 function pctChange(cur: number, prev: number): number | null {
   if (!prev) return cur > 0 ? Infinity : null;
   return ((cur - prev) / prev) * 100;
-}
-
-/** Quote/escape a CSV field and neutralise leading spreadsheet-formula characters. */
-function csvCell(v: string | number): string {
-  let s = String(v);
-  if (/^[=+@\t\r]/.test(s)) s = "'" + s;
-  if (/[",\r\n]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
-  return s;
 }
 
 function Delta({ cur, prev, invert }: { cur: number; prev: number; invert?: boolean }) {
@@ -141,30 +134,16 @@ export function BreakdownTable({
 
   function exportCsv() {
     const label = DIMENSION_LABELS[dimension] ?? dimension;
-    const header = [label, "Clicks", "Impressions", "CTR", "Position"];
-    const lines = [header.map(csvCell).join(",")];
-    for (const r of filtered) {
-      lines.push(
-        [
-          csvCell(r.key),
-          r.clicks,
-          r.impressions,
-          (r.ctr * 100).toFixed(2) + "%",
-          r.position.toFixed(1),
-        ].join(","),
-      );
-    }
-    // Prepend a UTF-8 BOM (U+FEFF) so Excel on Windows reads the file as UTF-8 —
-    // without it Excel uses the system codepage and mangles Korean / Japanese /
-    // Chinese / Cyrillic / accented text.
-    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${dimension}-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadCsv(`${dimension}-${new Date().toISOString().slice(0, 10)}.csv`, [
+      [label, "Clicks", "Impressions", "CTR", "Position"],
+      ...filtered.map((r) => [
+        r.key,
+        r.clicks,
+        r.impressions,
+        (r.ctr * 100).toFixed(2) + "%",
+        r.position.toFixed(1),
+      ]),
+    ]);
   }
 
   const arrow = (k: SortKey) => (sort === k ? (dir === "asc" ? " ▲" : " ▼") : "");

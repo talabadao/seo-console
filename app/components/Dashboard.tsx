@@ -8,6 +8,7 @@ import { DateRangePicker, type RangeValue } from "./DateRangePicker";
 import { FilterMenu } from "./FilterMenu";
 import { Indexing } from "./Indexing";
 import { Opportunities } from "./Opportunities";
+import { Analytics } from "./Analytics";
 import { UrlInspector } from "./UrlInspector";
 import { SettingsPanel } from "./SettingsPanel";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
@@ -80,7 +81,7 @@ export function Dashboard({
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState<
-    "performance" | "opportunities" | "indexing" | "inspect"
+    "performance" | "opportunities" | "analytics" | "indexing" | "inspect"
   >("performance");
   const [showSettings, setShowSettings] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -270,6 +271,7 @@ export function Dashboard({
             [
               ["performance", "Performance"],
               ["opportunities", "Opportunities"],
+              ["analytics", "Analytics"],
               ["indexing", "Indexing"],
               ["inspect", "URL Inspection"],
             ] as const
@@ -301,6 +303,7 @@ export function Dashboard({
 
         {tab === "inspect" && <UrlInspector property={property} />}
         {tab === "indexing" && <Indexing property={property} />}
+        {tab === "analytics" && <Analytics />}
         {tab === "opportunities" && (
           <Opportunities property={property} searchType={searchType} />
         )}

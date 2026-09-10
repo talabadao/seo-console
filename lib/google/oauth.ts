@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import type { UserRow } from "@/lib/session";
 
 export const INDEXING_SCOPE = "https://www.googleapis.com/auth/indexing";
+export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 
 export const SCOPES = [
   "openid",
@@ -13,12 +14,17 @@ export const SCOPES = [
   // Submit URLs to the Google Indexing API (works with user creds when the signed-in
   // account is an Owner of the property — no service-account key needed).
   INDEXING_SCOPE,
+  // Read GA4 properties (Admin API) + reports (Data API).
+  ANALYTICS_SCOPE,
 ];
 
-/** Whether a stored space-separated scope string includes the Indexing API scope. */
-export function hasIndexingScope(scopes: string | null | undefined): boolean {
-  return !!scopes && scopes.split(/\s+/).includes(INDEXING_SCOPE);
+/** Whether a stored space-separated scope string includes a given scope. */
+export function hasScope(scopes: string | null | undefined, scope: string): boolean {
+  return !!scopes && scopes.split(/\s+/).includes(scope);
 }
+
+export const hasIndexingScope = (s: string | null | undefined) => hasScope(s, INDEXING_SCOPE);
+export const hasAnalyticsScope = (s: string | null | undefined) => hasScope(s, ANALYTICS_SCOPE);
 
 export function oauthClient() {
   return new OAuth2Client({
