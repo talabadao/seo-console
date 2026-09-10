@@ -29,7 +29,7 @@ export async function GET() {
 
   const rows = db
     .prepare(
-      "SELECT id, source, property, permission_level FROM sites WHERE user_id = ? ORDER BY property",
+      "SELECT id, source, property, permission_level FROM sites WHERE user_id = ? AND source = 'google' ORDER BY property",
     )
     .all(user.id) as {
     id: number;

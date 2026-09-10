@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   const site = db
     .prepare(
-      "SELECT id, user_id, source, property, permission_level FROM sites WHERE user_id = ? AND property = ?",
+      "SELECT id, user_id, source, property, permission_level FROM sites WHERE user_id = ? AND property = ? AND source = 'google'",
     )
     .get(user.id, body.property) as (SiteRow & { permission_level: string | null }) | undefined;
   if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });

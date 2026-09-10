@@ -26,7 +26,7 @@ export function siteConfigFor(userId: number, property: string): {
   const row = db
     .prepare(
       `SELECT id, property, brand_terms, longtail_min_words, ai_pos_op, ai_pos_value, ai_impr_max
-         FROM sites WHERE user_id = ? AND property = ?`,
+         FROM sites WHERE user_id = ? AND property = ? AND source = 'google'`,
     )
     .get(userId, property) as SiteConfigRow | undefined;
   if (!row) return null;

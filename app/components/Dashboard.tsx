@@ -117,8 +117,11 @@ export function Dashboard({
     const res = await fetch("/api/sites");
     if (!res.ok) return;
     const json = await res.json();
-    setSites(json.sites);
-    setProperty((cur) => cur || json.sites[0]?.property || "");
+    const list: SiteMeta[] = json.sites ?? [];
+    setSites(list);
+    setProperty((cur) =>
+      cur && list.some((s) => s.property === cur) ? cur : (list[0]?.property ?? ""),
+    );
   }, []);
 
   useEffect(() => {

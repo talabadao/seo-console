@@ -17,7 +17,7 @@ export interface BreakdownRow extends Totals {
 
 export function siteIdFor(userId: number, property: string): number | null {
   const row = db
-    .prepare("SELECT id FROM sites WHERE user_id = ? AND property = ?")
+    .prepare("SELECT id FROM sites WHERE user_id = ? AND property = ? AND source = 'google'")
     .get(userId, property) as { id: number } | undefined;
   return row?.id ?? null;
 }
