@@ -65,14 +65,18 @@ export async function accessTokenFor(user: UserRow): Promise<string> {
   // Google echoes the granted scopes on refresh — keep our record current so the
   // UI knows whether the Indexing API is usable.
   if (credentials.scope) {
-    db.prepare(
-      "UPDATE users SET google_access_token = ?, google_token_expiry = ?, google_scopes = ?, updated_at = ? WHERE id = ?",
-    ).run(accessToken, expiry, credentials.scope, now, user.id);
+    await db
+      .prepare(
+        "UPDATE users SET google_access_token = ?, google_token_expiry = ?, google_scopes = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(accessToken, expiry, credentials.scope, now, user.id);
     user.google_scopes = credentials.scope;
   } else {
-    db.prepare(
-      "UPDATE users SET google_access_token = ?, google_token_expiry = ?, updated_at = ? WHERE id = ?",
-    ).run(accessToken, expiry, now, user.id);
+    await db
+      .prepare(
+        "UPDATE users SET google_access_token = ?, google_token_expiry = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(accessToken, expiry, now, user.id);
   }
   return accessToken;
 }

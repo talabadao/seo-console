@@ -32,19 +32,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "max 100 URLs per request" }, { status: 400 });
   }
 
-  const site = db
+  const site = (await db
     .prepare(
       "SELECT id, user_id, source, property, permission_level FROM sites WHERE user_id = ? AND property = ? AND source = 'google'",
     )
-    .get(user.id, body.property) as (SiteRow & { permission_level: string | null }) | undefined;
+    .get(user.id, body.property)) as (SiteRow & { permission_level: string | null }) | undefined;
   if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
-  const fail = (message: string, extra: Record<string, unknown> = {}) =>
+  const fail = async (message: string, extra: Record<string, unknown> = {}) =>
     NextResponse.json({
       submitted: 0,
       failed: urls.length,
       skipped: 0,
-      quotaLeft: submitQuotaLeft(site.id),
+      quotaLeft: await submitQuotaLeft(site.id),
       message,
       results: urls.map((url) => ({ url, ok: false, message })),
       ...extra,
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   }
 
   const scopes =
-    (db.prepare("SELECT google_scopes FROM users WHERE id = ?").get(user.id) as
+    ((await db.prepare("SELECT google_scopes FROM users WHERE id = ?").get(user.id)) as
       | { google_scopes: string | null }
       | undefined)?.google_scopes ?? user.google_scopes;
   if (!hasIndexingScope(scopes)) return fail(RECONNECT_MSG, { needsReconnect: true });

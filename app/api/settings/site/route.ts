@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const property = req.nextUrl.searchParams.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
-  const sc = siteConfigFor(user.id, property);
+  const sc = await siteConfigFor(user.id, property);
   if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
   return NextResponse.json(sc.config);
 }
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   if (typeof body.aiPosValue === "number") patch.aiPosValue = body.aiPosValue;
   if (typeof body.aiImprMax === "number") patch.aiImprMax = Math.max(1, Math.round(body.aiImprMax));
 
-  const merged = saveSiteConfig(user.id, body.property, patch);
+  const merged = await saveSiteConfig(user.id, body.property, patch);
   if (!merged) return NextResponse.json({ error: "unknown property" }, { status: 404 });
   return NextResponse.json(merged);
 }

@@ -10,10 +10,10 @@ export async function GET(req: NextRequest) {
 
   const property = req.nextUrl.searchParams.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
-  const sc = siteConfigFor(user.id, property);
+  const sc = await siteConfigFor(user.id, property);
   if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
-  const data = indexDashboard(sc.siteId);
+  const data = await indexDashboard(sc.siteId);
   return NextResponse.json({
     ...data,
     indexing: { ...data.indexing, hasScope: hasIndexingScope(user.google_scopes) },

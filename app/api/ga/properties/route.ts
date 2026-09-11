@@ -25,18 +25,17 @@ export async function GET() {
         display_name = excluded.display_name, account_name = excluded.account_name
     `);
     for (const p of remote) {
-      upsert.run(user.id, p.propertyId, p.displayName, p.accountName, now);
+      await upsert.run(user.id, p.propertyId, p.displayName, p.accountName, now);
     }
     // Drop properties the user no longer has access to.
     const keep = new Set(remote.map((p) => p.propertyId));
-    for (const row of db
+    for (const row of (await db
       .prepare("SELECT property_id FROM ga_properties WHERE user_id = ?")
-      .all(user.id) as { property_id: string }[]) {
+      .all(user.id)) as { property_id: string }[]) {
       if (!keep.has(row.property_id)) {
-        db.prepare("DELETE FROM ga_properties WHERE user_id = ? AND property_id = ?").run(
-          user.id,
-          row.property_id,
-        );
+        await db
+          .prepare("DELETE FROM ga_properties WHERE user_id = ? AND property_id = ?")
+          .run(user.id, row.property_id);
       }
     }
   } catch (e) {
@@ -45,7 +44,7 @@ export async function GET() {
     enableUrl = cleaned.enableUrl;
   }
 
-  const properties = db
+  const properties = await db
     .prepare(
       "SELECT property_id AS propertyId, display_name AS displayName, account_name AS accountName FROM ga_properties WHERE user_id = ? ORDER BY account_name, display_name",
     )

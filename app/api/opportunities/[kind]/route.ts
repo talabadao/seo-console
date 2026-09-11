@@ -26,7 +26,7 @@ export async function GET(
   const p = req.nextUrl.searchParams;
   const property = p.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
-  const sc = siteConfigFor(user.id, property);
+  const sc = await siteConfigFor(user.id, property);
   if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   const searchType = (p.get("searchType") || "web") as SearchType;

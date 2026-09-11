@@ -15,10 +15,10 @@ export interface BreakdownRow extends Totals {
   key: string;
 }
 
-export function siteIdFor(userId: number, property: string): number | null {
-  const row = db
+export async function siteIdFor(userId: number, property: string): Promise<number | null> {
+  const row = (await db
     .prepare("SELECT id FROM sites WHERE user_id = ? AND property = ? AND source = 'google'")
-    .get(userId, property) as { id: number } | undefined;
+    .get(userId, property)) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
@@ -40,36 +40,36 @@ function fold(rows: { clicks: number; impressions: number; position: number }[])
   };
 }
 
-export function totalsSeries(siteId: number, start: string, end: string): SeriesPoint[] {
-  const rows = db
+export async function totalsSeries(siteId: number, start: string, end: string): Promise<SeriesPoint[]> {
+  const rows = (await db
     .prepare(
       `SELECT data_date AS date, clicks, impressions, ctr, position
          FROM perf_rows
         WHERE site_id = ? AND dimension = 'total' AND data_date BETWEEN ? AND ?
         ORDER BY data_date`,
     )
-    .all(siteId, start, end) as unknown as SeriesPoint[];
+    .all(siteId, start, end)) as unknown as SeriesPoint[];
   return rows;
 }
 
-export function rangeTotals(siteId: number, start: string, end: string): Totals {
-  const rows = db
+export async function rangeTotals(siteId: number, start: string, end: string): Promise<Totals> {
+  const rows = (await db
     .prepare(
       `SELECT clicks, impressions, position FROM perf_rows
         WHERE site_id = ? AND dimension = 'total' AND data_date BETWEEN ? AND ?`,
     )
-    .all(siteId, start, end) as { clicks: number; impressions: number; position: number }[];
+    .all(siteId, start, end)) as { clicks: number; impressions: number; position: number }[];
   return fold(rows);
 }
 
-export function breakdown(
+export async function breakdown(
   siteId: number,
   dimension: string,
   start: string,
   end: string,
   limit = 1000,
-): BreakdownRow[] {
-  const rows = db
+): Promise<BreakdownRow[]> {
+  const rows = (await db
     .prepare(
       `SELECT key,
               SUM(clicks)      AS clicks,
@@ -82,7 +82,7 @@ export function breakdown(
         ORDER BY clicks DESC, impressions DESC
         LIMIT ?`,
     )
-    .all(siteId, dimension, start, end, limit) as {
+    .all(siteId, dimension, start, end, limit)) as {
     key: string;
     clicks: number;
     impressions: number;
@@ -94,20 +94,20 @@ export function breakdown(
   }));
 }
 
-export function availableDimensions(siteId: number): string[] {
-  const rows = db
+export async function availableDimensions(siteId: number): Promise<string[]> {
+  const rows = (await db
     .prepare("SELECT DISTINCT dimension FROM perf_rows WHERE site_id = ?")
-    .all(siteId) as { dimension: string }[];
+    .all(siteId)) as { dimension: string }[];
   return rows.map((r) => r.dimension);
 }
 
-export function lastSync(siteId: number) {
-  return db
+export async function lastSync(siteId: number) {
+  return (await db
     .prepare(
       `SELECT started_at, finished_at, status, message, rows_written
          FROM sync_log WHERE site_id = ? ORDER BY id DESC LIMIT 1`,
     )
-    .get(siteId) as
+    .get(siteId)) as
     | {
         started_at: number;
         finished_at: number | null;
@@ -118,11 +118,11 @@ export function lastSync(siteId: number) {
     | undefined;
 }
 
-export function dataDateRange(siteId: number) {
-  return db
+export async function dataDateRange(siteId: number) {
+  return (await db
     .prepare(
       `SELECT MIN(data_date) AS min, MAX(data_date) AS max
          FROM perf_rows WHERE site_id = ? AND dimension = 'total'`,
     )
-    .get(siteId) as { min: string | null; max: string | null };
+    .get(siteId)) as { min: string | null; max: string | null };
 }

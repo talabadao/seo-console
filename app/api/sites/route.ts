@@ -21,28 +21,30 @@ export async function GET() {
     );
     for (const s of remote) {
       if (s.permissionLevel === "siteUnverifiedUser") continue;
-      upsert.run(user.id, s.siteUrl, s.permissionLevel, now);
+      await upsert.run(user.id, s.siteUrl, s.permissionLevel, now);
     }
   } catch (e) {
     refreshError = e instanceof Error ? e.message : String(e);
   }
 
-  const rows = db
+  const rows = (await db
     .prepare(
       "SELECT id, source, property, permission_level FROM sites WHERE user_id = ? AND source = 'google' ORDER BY property",
     )
-    .all(user.id) as {
+    .all(user.id)) as {
     id: number;
     source: string;
     property: string;
     permission_level: string | null;
   }[];
 
-  const sites = rows.map((r) => ({
-    ...r,
-    dataRange: dataDateRange(r.id),
-    lastSync: lastSync(r.id) ?? null,
-  }));
+  const sites = await Promise.all(
+    rows.map(async (r) => ({
+      ...r,
+      dataRange: await dataDateRange(r.id),
+      lastSync: (await lastSync(r.id)) ?? null,
+    })),
+  );
 
   return NextResponse.json({ sites, refreshError });
 }

@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   const key = (apiKey ?? "").trim();
 
   if (!key) {
-    db.prepare("UPDATE users SET bing_api_key = NULL WHERE id = ?").run(user.id);
+    await db.prepare("UPDATE users SET bing_api_key = NULL WHERE id = ?").run(user.id);
     return NextResponse.json({ ok: true, connected: false });
   }
 
@@ -23,12 +23,10 @@ export async function POST(req: NextRequest) {
        VALUES (?, 'bing', ?, 'owner', ?)
        ON CONFLICT(user_id, source, property) DO NOTHING`,
     );
-    for (const s of sites) upsert.run(user.id, s, now);
-    db.prepare("UPDATE users SET bing_api_key = ?, updated_at = ? WHERE id = ?").run(
-      key,
-      now,
-      user.id,
-    );
+    for (const s of sites) await upsert.run(user.id, s, now);
+    await db
+      .prepare("UPDATE users SET bing_api_key = ?, updated_at = ? WHERE id = ?")
+      .run(key, now, user.id);
     return NextResponse.json({ ok: true, connected: true, sites });
   } catch (e) {
     return NextResponse.json(

@@ -39,8 +39,8 @@ export interface UserRow {
 export async function currentUser(): Promise<UserRow | null> {
   const session = await getSession();
   if (!session.userId) return null;
-  const row = db
-    .prepare("SELECT * FROM users WHERE id = ?")
-    .get(session.userId) as UserRow | undefined;
+  const row = (await db.prepare("SELECT * FROM users WHERE id = ?").get(session.userId)) as
+    | UserRow
+    | undefined;
   return row ?? null;
 }

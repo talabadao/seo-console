@@ -17,9 +17,9 @@ export async function POST(req: NextRequest) {
   };
   if (!body.property) return NextResponse.json({ error: "property required" }, { status: 400 });
 
-  const site = db
+  const site = (await db
     .prepare("SELECT id, user_id, source, property FROM sites WHERE user_id = ? AND property = ? AND source = 'google'")
-    .get(user.id, body.property) as SiteRow | undefined;
+    .get(user.id, body.property)) as SiteRow | undefined;
   if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   let discovered: number | undefined;

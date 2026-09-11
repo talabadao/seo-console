@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     if (!email) return NextResponse.redirect(`${origin}/?error=no_email`);
 
     const now = Date.now();
-    const existing = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as
+    const existing = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as
       | { id: number; google_refresh_token: string | null }
       | undefined;
 
@@ -41,23 +41,25 @@ export async function GET(req: NextRequest) {
 
     let userId: number;
     if (existing) {
-      db.prepare(
-        `UPDATE users SET name = ?, picture = ?, google_access_token = ?,
+      await db
+        .prepare(
+          `UPDATE users SET name = ?, picture = ?, google_access_token = ?,
            google_refresh_token = ?, google_token_expiry = ?, google_scopes = ?, updated_at = ? WHERE id = ?`,
-      ).run(
-        name ?? null,
-        picture ?? null,
-        tokens.access_token ?? null,
-        refresh,
-        tokens.expiry_date ?? now + 3500_000,
-        scope,
-        now,
-        existing.id,
-      );
+        )
+        .run(
+          name ?? null,
+          picture ?? null,
+          tokens.access_token ?? null,
+          refresh,
+          tokens.expiry_date ?? now + 3500_000,
+          scope,
+          now,
+          existing.id,
+        );
       userId = existing.id;
     } else {
       userId = (
-        db
+        (await db
           .prepare(
             `INSERT INTO users (email, name, picture, google_access_token, google_refresh_token,
                google_token_expiry, google_scopes, created_at, updated_at)
@@ -73,7 +75,7 @@ export async function GET(req: NextRequest) {
             scope,
             now,
             now,
-          ) as { id: number }
+          )) as { id: number }
       ).id;
     }
 

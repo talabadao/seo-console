@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, rawSql } from "@/lib/db";
 import { accessTokenFor } from "@/lib/google/oauth";
 import { searchAnalytics } from "@/lib/google/searchconsole";
 import { discoverSitemapUrls, runIndexCheck } from "@/lib/indexer";
@@ -25,31 +25,55 @@ export interface SiteRow {
   property: string;
 }
 
-const upsertPerf = db.prepare(`
-  INSERT INTO perf_rows (site_id, data_date, dimension, key, clicks, impressions, ctr, position)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(site_id, data_date, dimension, key) DO UPDATE SET
-    clicks = excluded.clicks,
-    impressions = excluded.impressions,
-    ctr = excluded.ctr,
-    position = excluded.position
-`);
+interface PerfRowValue {
+  site_id: number;
+  data_date: string;
+  dimension: string;
+  key: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+const UPSERT_CHUNK = 500;
+
+/** Bulk upsert into perf_rows — a handful of round trips instead of one per row. */
+async function upsertPerfRows(values: PerfRowValue[]): Promise<number> {
+  if (!values.length) return 0;
+  const sql = await rawSql();
+  let written = 0;
+  for (let i = 0; i < values.length; i += UPSERT_CHUNK) {
+    const chunk = values.slice(i, i + UPSERT_CHUNK);
+    await sql`
+      INSERT INTO perf_rows (site_id, data_date, dimension, key, clicks, impressions, ctr, position)
+      VALUES ${sql(chunk, "site_id", "data_date", "dimension", "key", "clicks", "impressions", "ctr", "position")}
+      ON CONFLICT (site_id, data_date, dimension, key) DO UPDATE SET
+        clicks = EXCLUDED.clicks,
+        impressions = EXCLUDED.impressions,
+        ctr = EXCLUDED.ctr,
+        position = EXCLUDED.position
+    `;
+    written += chunk.length;
+  }
+  return written;
+}
 
 export async function syncGoogleSite(user: UserRow, site: SiteRow) {
   const started = Date.now();
   const logId = (
-    db
+    (await db
       .prepare(
         "INSERT INTO sync_log (site_id, source, started_at, status) VALUES (?, 'google', ?, 'running') RETURNING id",
       )
-      .get(site.id, started) as { id: number }
+      .get(site.id, started)) as { id: number }
   ).id;
 
   const DAILY_ROW_LIMIT = Number(process.env.SYNC_DAILY_ROW_LIMIT || 2000);
   // Incremental syncs re-pull a short window (GSC keeps refining recent days).
   // The very first sync of a property backfills as far as GSC allows (~16 months).
   const hasData = (
-    db.prepare("SELECT COUNT(*) AS n FROM perf_rows WHERE site_id = ?").get(site.id) as {
+    (await db.prepare("SELECT COUNT(*) AS n FROM perf_rows WHERE site_id = ?").get(site.id)) as {
       n: number;
     }
   ).n;
@@ -75,30 +99,23 @@ export async function syncGoogleSite(user: UserRow, site: SiteRow) {
           rowLimit,
           dataState: "all",
         });
-        const tx = db.prepare("BEGIN");
-        tx.run();
-        try {
-          for (const r of rows) {
-            const dataDate = r.keys?.[0] ?? "";
-            const key = dimension === "total" ? "" : (r.keys?.[1] ?? "");
-            if (!dataDate) continue;
-            upsertPerf.run(
-              site.id,
-              dataDate,
-              dimension,
-              key,
-              r.clicks ?? 0,
-              r.impressions ?? 0,
-              r.ctr ?? 0,
-              r.position ?? 0,
-            );
-            written++;
-          }
-          db.prepare("COMMIT").run();
-        } catch (e) {
-          db.prepare("ROLLBACK").run();
-          throw e;
+        const values: PerfRowValue[] = [];
+        for (const r of rows) {
+          const dataDate = r.keys?.[0] ?? "";
+          const key = dimension === "total" ? "" : (r.keys?.[1] ?? "");
+          if (!dataDate) continue;
+          values.push({
+            site_id: site.id,
+            data_date: dataDate,
+            dimension,
+            key,
+            clicks: r.clicks ?? 0,
+            impressions: r.impressions ?? 0,
+            ctr: r.ctr ?? 0,
+            position: r.position ?? 0,
+          });
         }
+        written += await upsertPerfRows(values);
       } catch (e) {
         // A single dimension failing (e.g. a permissions quirk) shouldn't abort
         // the whole sync — record and move on.
@@ -106,23 +123,25 @@ export async function syncGoogleSite(user: UserRow, site: SiteRow) {
       }
     }
 
-    db.prepare(
-      "UPDATE sync_log SET finished_at = ?, status = 'ok', rows_written = ? WHERE id = ?",
-    ).run(Date.now(), written, logId);
+    await db
+      .prepare("UPDATE sync_log SET finished_at = ?, status = 'ok', rows_written = ? WHERE id = ?")
+      .run(Date.now(), written, logId);
     return { ok: true as const, rowsWritten: written, startDate, endDate };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    db.prepare(
-      "UPDATE sync_log SET finished_at = ?, status = 'error', message = ?, rows_written = ? WHERE id = ?",
-    ).run(Date.now(), message, written, logId);
+    await db
+      .prepare(
+        "UPDATE sync_log SET finished_at = ?, status = 'error', message = ?, rows_written = ? WHERE id = ?",
+      )
+      .run(Date.now(), message, written, logId);
     return { ok: false as const, error: message, rowsWritten: written };
   }
 }
 
 export async function syncAllForUser(user: UserRow, opts: { index?: boolean } = {}) {
-  const sites = db
+  const sites = (await db
     .prepare("SELECT id, user_id, source, property FROM sites WHERE user_id = ? AND source = 'google'")
-    .all(user.id) as unknown as SiteRow[];
+    .all(user.id)) as unknown as SiteRow[];
   const results = [];
   for (const site of sites) {
     const perf = await syncGoogleSite(user, site);

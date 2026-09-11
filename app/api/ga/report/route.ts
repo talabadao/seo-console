@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   const p = req.nextUrl.searchParams;
   const propertyId = p.get("propertyId");
-  if (!propertyId || !ownsGaProperty(user.id, propertyId)) {
+  if (!propertyId || !(await ownsGaProperty(user.id, propertyId))) {
     return NextResponse.json({ error: "unknown or unlinked GA property" }, { status: 404 });
   }
 
@@ -75,16 +75,16 @@ export async function GET(req: NextRequest) {
 
   // Resolve + cache the property's reporting currency.
   let currency =
-    (db.prepare("SELECT currency_code FROM ga_properties WHERE user_id = ? AND property_id = ?").get(
-      user.id,
-      propertyId,
-    ) as { currency_code: string | null } | undefined)?.currency_code ?? null;
+    ((await db
+      .prepare("SELECT currency_code FROM ga_properties WHERE user_id = ? AND property_id = ?")
+      .get(user.id, propertyId)) as { currency_code: string | null } | undefined)?.currency_code ??
+    null;
   if (!currency) {
     currency = await getPropertyCurrency(token, propertyId);
     if (currency) {
-      db.prepare(
-        "UPDATE ga_properties SET currency_code = ? WHERE user_id = ? AND property_id = ?",
-      ).run(currency, user.id, propertyId);
+      await db
+        .prepare("UPDATE ga_properties SET currency_code = ? WHERE user_id = ? AND property_id = ?")
+        .run(currency, user.id, propertyId);
     }
   }
 

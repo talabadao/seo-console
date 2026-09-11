@@ -19,16 +19,16 @@ function seedBrandTerms(property: string): string[] {
   return [...new Set([joined, spaced, ...core].filter((t) => t.length > 2))];
 }
 
-export function siteConfigFor(userId: number, property: string): {
-  siteId: number;
-  config: SiteFilterConfig;
-} | null {
-  const row = db
+export async function siteConfigFor(
+  userId: number,
+  property: string,
+): Promise<{ siteId: number; config: SiteFilterConfig } | null> {
+  const row = (await db
     .prepare(
       `SELECT id, property, brand_terms, longtail_min_words, ai_pos_op, ai_pos_value, ai_impr_max
          FROM sites WHERE user_id = ? AND property = ? AND source = 'google'`,
     )
-    .get(userId, property) as SiteConfigRow | undefined;
+    .get(userId, property)) as SiteConfigRow | undefined;
   if (!row) return null;
 
   let brandTerms: string[];
@@ -50,25 +50,27 @@ export function siteConfigFor(userId: number, property: string): {
   };
 }
 
-export function saveSiteConfig(
+export async function saveSiteConfig(
   userId: number,
   property: string,
   patch: Partial<SiteFilterConfig>,
 ) {
-  const cur = siteConfigFor(userId, property);
+  const cur = await siteConfigFor(userId, property);
   if (!cur) return null;
   const merged = { ...cur.config, ...patch };
-  db.prepare(
-    `UPDATE sites SET brand_terms = ?, longtail_min_words = ?, ai_pos_op = ?, ai_pos_value = ?, ai_impr_max = ?
+  await db
+    .prepare(
+      `UPDATE sites SET brand_terms = ?, longtail_min_words = ?, ai_pos_op = ?, ai_pos_value = ?, ai_impr_max = ?
        WHERE id = ?`,
-  ).run(
-    JSON.stringify(merged.brandTerms),
-    merged.longtailMinWords,
-    merged.aiPosOp,
-    merged.aiPosValue,
-    merged.aiImprMax,
-    cur.siteId,
-  );
+    )
+    .run(
+      JSON.stringify(merged.brandTerms),
+      merged.longtailMinWords,
+      merged.aiPosOp,
+      merged.aiPosValue,
+      merged.aiImprMax,
+      cur.siteId,
+    );
   return merged;
 }
 

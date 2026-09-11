@@ -15,18 +15,20 @@ export function aiDomainsFor(user: Pick<UserRow, "ga_ai_domains">): string[] {
   }
 }
 
-export function saveAiDomains(userId: number, domains: string[]) {
-  db.prepare("UPDATE users SET ga_ai_domains = ?, updated_at = ? WHERE id = ?").run(
-    JSON.stringify(domains.map((d) => d.trim().toLowerCase()).filter(Boolean)),
-    Date.now(),
-    userId,
-  );
+export async function saveAiDomains(userId: number, domains: string[]) {
+  await db
+    .prepare("UPDATE users SET ga_ai_domains = ?, updated_at = ? WHERE id = ?")
+    .run(
+      JSON.stringify(domains.map((d) => d.trim().toLowerCase()).filter(Boolean)),
+      Date.now(),
+      userId,
+    );
 }
 
 /** Verify the user has this GA property linked (they picked it), returns its id. */
-export function ownsGaProperty(userId: number, propertyId: string): boolean {
+export async function ownsGaProperty(userId: number, propertyId: string): Promise<boolean> {
   return Boolean(
-    db
+    await db
       .prepare("SELECT 1 FROM ga_properties WHERE user_id = ? AND property_id = ?")
       .get(userId, propertyId),
   );

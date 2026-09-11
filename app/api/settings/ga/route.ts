@@ -15,6 +15,6 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(body.aiDomains)) {
     return NextResponse.json({ error: "aiDomains array required" }, { status: 400 });
   }
-  saveAiDomains(user.id, body.aiDomains);
+  await saveAiDomains(user.id, body.aiDomains);
   return NextResponse.json({ aiDomains: aiDomainsFor({ ga_ai_domains: JSON.stringify(body.aiDomains) }) });
 }

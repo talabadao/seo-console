@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const propertyId = p.get("propertyId");
   const eventName = p.get("eventName");
   const by = DIM[p.get("by") || ""] ? (p.get("by") as string) : "pagePath";
-  if (!propertyId || !ownsGaProperty(user.id, propertyId) || !eventName) {
+  if (!propertyId || !(await ownsGaProperty(user.id, propertyId)) || !eventName) {
     return NextResponse.json({ error: "propertyId, eventName required" }, { status: 400 });
   }
 
