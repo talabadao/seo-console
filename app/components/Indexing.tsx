@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -85,6 +85,7 @@ export function Indexing({ property }: { property: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
+  const autoRunFor = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!property) return;
@@ -95,6 +96,18 @@ export function Indexing({ property }: { property: string }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Discovery already pulls the sitemap straight from Search Console's API
+  // (falling back to robots.txt / sitemap.xml) — no manual URL needed. Kick
+  // it off automatically the first time a property has never been checked,
+  // instead of requiring a click. `job` is persisted server-side, so this
+  // fires at most once per property, ever, even across reloads.
+  useEffect(() => {
+    if (!property || !data || data.job || busy || autoRunFor.current === property) return;
+    autoRunFor.current = property;
+    run(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [property, data, busy]);
 
   async function run(discover: boolean) {
     setBusy(true);
