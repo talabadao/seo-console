@@ -474,12 +474,12 @@ export async function indexDashboard(siteId: number) {
     .prepare(`
       SELECT s.url AS url,
              i.coverage_state AS status, i.verdict AS verdict,
-             i.last_crawl_time AS lastCrawl, i.rich_results AS richResults, i.rich_verdict AS richVerdict,
-             i.inspected_at AS lastInspection, i.robots_txt_state AS robotsTxtState,
-             i.indexing_state AS indexingState, i.page_fetch_state AS pageFetchState,
-             i.google_canonical AS googleCanonical, i.user_canonical AS userCanonical,
-             i.crawled_as AS crawledAs, i.inspect_link AS inspectLink,
-             i.submitted_at AS submittedAt, i.submit_result AS submitResult,
+             i.last_crawl_time AS "lastCrawl", i.rich_results AS "richResults", i.rich_verdict AS "richVerdict",
+             i.inspected_at AS "lastInspection", i.robots_txt_state AS "robotsTxtState",
+             i.indexing_state AS "indexingState", i.page_fetch_state AS "pageFetchState",
+             i.google_canonical AS "googleCanonical", i.user_canonical AS "userCanonical",
+             i.crawled_as AS "crawledAs", i.inspect_link AS "inspectLink",
+             i.submitted_at AS "submittedAt", i.submit_result AS "submitResult",
              COALESCE((SELECT SUM(clicks) FROM perf_rows p
                         WHERE p.site_id = s.site_id AND p.dimension = 'page'
                           AND p.key = s.url AND p.data_date >= ?), 0) AS clicks,
@@ -528,7 +528,7 @@ export async function indexDashboard(siteId: number) {
   const stateHistory = (
     (await db
       .prepare(
-        `SELECT snap_date AS date, states_json AS statesJson, indexed, not_indexed AS notIndexed
+        `SELECT snap_date AS date, states_json AS "statesJson", indexed, not_indexed AS "notIndexed"
            FROM index_snapshots WHERE site_id = ? ORDER BY snap_date`,
       )
       .all(siteId)) as {
@@ -548,9 +548,9 @@ export async function indexDashboard(siteId: number) {
   const movements = (
     (await db
       .prepare(`
-        SELECT h.changed_at AS changedAt, h.url AS url, h.before_state AS before,
-               h.after_state AS after, h.indexing_change AS indexingChange,
-               s.first_seen AS firstSeen
+        SELECT h.changed_at AS "changedAt", h.url AS url, h.before_state AS before,
+               h.after_state AS after, h.indexing_change AS "indexingChange",
+               s.first_seen AS "firstSeen"
           FROM url_status_history h
           LEFT JOIN sitemap_urls s ON s.site_id = h.site_id AND s.url = h.url
          WHERE h.site_id = ?

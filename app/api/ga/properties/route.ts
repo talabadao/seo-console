@@ -46,7 +46,7 @@ export async function GET() {
 
   const properties = await db
     .prepare(
-      "SELECT property_id AS propertyId, display_name AS displayName, account_name AS accountName FROM ga_properties WHERE user_id = ? ORDER BY account_name, display_name",
+      'SELECT property_id AS "propertyId", display_name AS "displayName", account_name AS "accountName" FROM ga_properties WHERE user_id = ? ORDER BY account_name, display_name',
     )
     .all(user.id);
 
