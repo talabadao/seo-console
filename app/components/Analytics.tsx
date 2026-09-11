@@ -80,6 +80,8 @@ export function Analytics() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [needsReconnect, setNeedsReconnect] = useState(false);
+  const [propsError, setPropsError] = useState<string | null>(null);
+  const [propsLoaded, setPropsLoaded] = useState(false);
 
   const resolved = useMemo(() => {
     const r = resolveRange(range.preset, { customStart: range.start, customEnd: range.end });
@@ -107,10 +109,12 @@ export function Analytics() {
   const loadProps = useCallback(async () => {
     const res = await fetch("/api/ga/properties");
     const j = await res.json();
+    setPropsLoaded(true);
     if (j.needsReconnect) {
       setNeedsReconnect(true);
       return;
     }
+    setPropsError(j.refreshError ?? null);
     setProps(j.properties ?? []);
     setPropertyId((cur) =>
       cur && (j.properties ?? []).some((p: GaProperty) => p.propertyId === cur)
@@ -214,6 +218,18 @@ export function Analytics() {
 
       {err && (
         <div className="mb-4 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">{err}</div>
+      )}
+      {propsError && (
+        <div className="mb-4 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">
+          Couldn&apos;t list Google Analytics properties: {propsError}
+        </div>
+      )}
+      {propsLoaded && !propsError && !props.length && (
+        <div className="mb-4 rounded-lg border bg-surface p-3 text-sm text-muted">
+          No GA4 properties found for this Google account. Confirm you signed in with the
+          account that has access to your GA4 properties (Admin → Property access
+          management), and that it&apos;s at least a <strong>Viewer</strong> on the property.
+        </div>
       )}
 
       {/* metric cards */}
