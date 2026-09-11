@@ -6,6 +6,7 @@ import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
 import {
   KEY_EVENT_FILTER,
   classifyTraffic,
+  cleanGaError,
   getPropertyCurrency,
   runReport,
   trendBreakdown,
@@ -185,6 +186,10 @@ export async function GET(req: NextRequest) {
       aiDomains,
     });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    const cleaned = cleanGaError(e instanceof Error ? e.message : String(e));
+    return NextResponse.json(
+      { error: cleaned.message, enableUrl: cleaned.enableUrl },
+      { status: 502 },
+    );
   }
 }

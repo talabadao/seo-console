@@ -79,8 +79,10 @@ export function Analytics() {
   const [geo, setGeo] = useState<{ dim: string; currency: string | null; rows: TrendRow[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [enableUrl, setEnableUrl] = useState<string | null>(null);
   const [needsReconnect, setNeedsReconnect] = useState(false);
   const [propsError, setPropsError] = useState<string | null>(null);
+  const [propsEnableUrl, setPropsEnableUrl] = useState<string | null>(null);
   const [propsLoaded, setPropsLoaded] = useState(false);
 
   const resolved = useMemo(() => {
@@ -115,6 +117,7 @@ export function Analytics() {
       return;
     }
     setPropsError(j.refreshError ?? null);
+    setPropsEnableUrl(j.enableUrl ?? null);
     setProps(j.properties ?? []);
     setPropertyId((cur) =>
       cur && (j.properties ?? []).some((p: GaProperty) => p.propertyId === cur)
@@ -131,12 +134,15 @@ export function Analytics() {
     if (!propertyId) return;
     setLoading(true);
     setErr(null);
+    setEnableUrl(null);
     try {
       const res = await fetch(`/api/ga/report?${qs()}`);
       const j = await res.json();
       if (j.needsReconnect) setNeedsReconnect(true);
-      else if (j.error) setErr(j.error);
-      else setData(j);
+      else if (j.error) {
+        setErr(j.error);
+        setEnableUrl(j.enableUrl ?? null);
+      } else setData(j);
     } finally {
       setLoading(false);
     }
@@ -216,13 +222,13 @@ export function Analytics() {
         </span>
       </div>
 
-      {err && (
-        <div className="mb-4 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">{err}</div>
-      )}
+      {err && <ErrorBanner message={err} enableUrl={enableUrl} onRetry={loadMain} />}
       {propsError && (
-        <div className="mb-4 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">
-          Couldn&apos;t list Google Analytics properties: {propsError}
-        </div>
+        <ErrorBanner
+          message={`Couldn't list Google Analytics properties: ${propsError}`}
+          enableUrl={propsEnableUrl}
+          onRetry={loadProps}
+        />
       )}
       {propsLoaded && !propsError && !props.length && (
         <div className="mb-4 rounded-lg border bg-surface p-3 text-sm text-muted">
@@ -384,6 +390,38 @@ export function Analytics() {
 function cardDelta(cur?: number, prev?: number) {
   if (cur == null || prev == null || !prev) return null;
   return ((cur - prev) / prev) * 100;
+}
+
+function ErrorBanner({
+  message,
+  enableUrl,
+  onRetry,
+}: {
+  message: string;
+  enableUrl: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">
+      <span className="flex-1">{message}</span>
+      {enableUrl && (
+        <a
+          href={enableUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-md bg-bad px-3 py-1.5 text-xs font-semibold text-white"
+        >
+          Enable in Google Cloud
+        </a>
+      )}
+      <button
+        onClick={onRetry}
+        className="rounded-md border border-bad/40 px-3 py-1.5 text-xs font-medium"
+      >
+        Retry
+      </button>
+    </div>
+  );
 }
 
 function Card({

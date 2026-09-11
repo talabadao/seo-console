@@ -12,7 +12,9 @@ async function gfetch(url: string, token: string, init?: RequestInit) {
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`GA4 API ${res.status}: ${body.slice(0, 500)}`);
+    // Keep enough of the body that the "API not enabled" enable-URL survives
+    // truncation — Google's error payloads (with `details`) can run long.
+    throw new Error(`GA4 API ${res.status}: ${body.slice(0, 2000)}`);
   }
   return res.json();
 }
@@ -207,4 +209,34 @@ export async function trendBreakdown(
   }
   const out = [...map.values()].sort((a, b) => (b.cur[0] ?? 0) - (a.cur[0] ?? 0));
   return { rows: out, sampled, total: rowCount };
+}
+
+// ---------- error cleanup ----------
+
+/**
+ * Turn a raw "GA4 API 403: {json}" string into a short message, and — for the
+ * common "API not enabled" case — the exact Google Cloud Console URL to fix it.
+ */
+export function cleanGaError(raw: string): { message: string; enableUrl: string | null } {
+  const m = /GA4 API (\d+):\s*([\s\S]*)/.exec(raw);
+  const code = m?.[1] ?? "";
+  const body = m?.[2] ?? raw;
+
+  // The "enable this API" URL is a plain substring — look for it whether or
+  // not the JSON parses cleanly (Google's error bodies get long and our
+  // truncated fetch body can cut the JSON off mid-object).
+  const urlMatch = /(https:\/\/console\.developers\.google\.com\/apis\/api\/\S+)/.exec(body);
+  if (urlMatch) {
+    const enableUrl = urlMatch[1].replace(/[.,)\\"]+$/, "");
+    const api = /apis\/api\/([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*)\//.exec(enableUrl)?.[1] ?? "This API";
+    return { message: `${api} isn't enabled for this Google Cloud project yet.`, enableUrl };
+  }
+
+  try {
+    const j = JSON.parse(body);
+    const msg: string = j?.error?.message ?? body;
+    return { message: code ? `${code}: ${msg.slice(0, 200)}` : msg.slice(0, 200), enableUrl: null };
+  } catch {
+    return { message: (code ? `${code}: ` : "") + body.slice(0, 250), enableUrl: null };
+  }
 }

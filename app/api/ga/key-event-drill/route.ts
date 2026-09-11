@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { ownsGaProperty } from "@/lib/gaConfig";
-import { eqFilter, trendBreakdown, type DateRange } from "@/lib/ga4";
+import { cleanGaError, eqFilter, trendBreakdown, type DateRange } from "@/lib/ga4";
 import {
   resolveComparison,
   resolveRange,
@@ -64,6 +64,10 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ by, eventName, rows: res.rows, sampled: res.sampled });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    const cleaned = cleanGaError(e instanceof Error ? e.message : String(e));
+    return NextResponse.json(
+      { error: cleaned.message, enableUrl: cleaned.enableUrl },
+      { status: 502 },
+    );
   }
 }
