@@ -127,9 +127,15 @@ export async function discoverSitemapUrls(
     const CHUNK = 500;
     for (let i = 0; i < values.length; i += CHUNK) {
       const chunk = values.slice(i, i + CHUNK);
+      // No explicit "VALUES" keyword here — postgres.js picks which of its
+      // sql(...) helper behaviors to use by scanning the SQL text immediately
+      // before the placeholder for the rightmost keyword match. Writing
+      // "VALUES" ourselves makes it match the plain `values` builder (which
+      // expects an array of row-tuples), not `insert` (which expects an
+      // array of row-objects, what `chunk` actually is) — every column then
+      // silently resolved to undefined and got written as NULL.
       await sql`
-        INSERT INTO sitemap_urls (site_id, url, source, first_seen, last_seen)
-        VALUES ${sql(chunk, "site_id", "url", "source", "first_seen", "last_seen")}
+        INSERT INTO sitemap_urls ${sql(chunk, "site_id", "url", "source", "first_seen", "last_seen")}
         ON CONFLICT (site_id, url) DO UPDATE SET last_seen = EXCLUDED.last_seen
       `;
     }

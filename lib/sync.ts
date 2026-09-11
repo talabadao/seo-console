@@ -45,9 +45,11 @@ async function upsertPerfRows(values: PerfRowValue[]): Promise<number> {
   let written = 0;
   for (let i = 0; i < values.length; i += UPSERT_CHUNK) {
     const chunk = values.slice(i, i + UPSERT_CHUNK);
+    // See the matching comment in lib/indexer.ts's sitemap_urls insert — no
+    // explicit "VALUES" keyword here, or postgres.js picks the wrong sql(...)
+    // helper behavior and every column silently resolves to NULL.
     await sql`
-      INSERT INTO perf_rows (site_id, data_date, dimension, key, clicks, impressions, ctr, position)
-      VALUES ${sql(chunk, "site_id", "data_date", "dimension", "key", "clicks", "impressions", "ctr", "position")}
+      INSERT INTO perf_rows ${sql(chunk, "site_id", "data_date", "dimension", "key", "clicks", "impressions", "ctr", "position")}
       ON CONFLICT (site_id, data_date, dimension, key) DO UPDATE SET
         clicks = EXCLUDED.clicks,
         impressions = EXCLUDED.impressions,
