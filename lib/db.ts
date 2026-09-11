@@ -26,13 +26,10 @@ const globalForDb = globalThis as unknown as { __seoSql?: postgres.Sql };
 
 function open(): postgres.Sql {
   const url = connectionString();
-  return postgres(url, {
+  const options: postgres.Options<Record<string, postgres.PostgresType>> = {
     max: 5,
     idle_timeout: 20,
     connect_timeout: 10,
-    // Neon/Supabase connection strings already carry `sslmode=require`; this
-    // covers providers whose URL doesn't specify it.
-    ssl: /sslmode=/.test(url) ? undefined : "require",
     // postgres.js returns BIGINT (our ids + epoch-ms timestamps) as strings by
     // default to avoid precision loss. Every value we store in a bigint column
     // is well under Number.MAX_SAFE_INTEGER, and the whole app types ids and
@@ -45,7 +42,13 @@ function open(): postgres.Sql {
         parse: (x: string) => Number(x),
       },
     },
-  });
+  };
+  // postgres.js only reads `sslmode` out of the connection string itself when
+  // the `ssl` key is absent from this options object entirely — passing
+  // `ssl: undefined` still counts as present and silently disables SSL. So
+  // only set it here for providers whose URL doesn't already carry sslmode.
+  if (!/sslmode=/.test(url)) options.ssl = "require";
+  return postgres(url, options);
 }
 
 function getSql(): postgres.Sql {
