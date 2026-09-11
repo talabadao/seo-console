@@ -30,6 +30,11 @@ function open(): postgres.Sql {
     max: 5,
     idle_timeout: 20,
     connect_timeout: 10,
+    // SQLite silently bound a JS `undefined` parameter as NULL; postgres.js
+    // throws UNDEFINED_VALUE instead. Every call site here was written under
+    // the old SQLite assumption, so restore that behavior globally rather
+    // than auditing every `?? null` by hand.
+    transform: { undefined: null },
     // postgres.js returns BIGINT (our ids + epoch-ms timestamps) as strings by
     // default to avoid precision loss. Every value we store in a bigint column
     // is well under Number.MAX_SAFE_INTEGER, and the whole app types ids and
