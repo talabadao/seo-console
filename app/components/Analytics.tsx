@@ -258,13 +258,13 @@ export function Analytics() {
         />
         <Card
           label="Key events"
-          color="var(--good)"
+          color="var(--position)"
           value={fmt(data?.totals.keyEvents ?? 0, "count")}
           delta={cardDelta(data?.totals.keyEvents, data?.prevTotals?.keyEvents)}
         />
         <Card
           label="Revenue"
-          color="var(--position)"
+          color="var(--good)"
           value={money(data?.totals.revenue ?? 0, data?.currency ?? null)}
           delta={cardDelta(data?.totals.revenue, data?.prevTotals?.revenue)}
         />
@@ -734,7 +734,8 @@ function KeyEventsTable({
                 {open === r.key && (
                   <tr className="border-b border-border/60 bg-background/50">
                     <td colSpan={4} className="px-6 py-3">
-                      <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="grid gap-4 lg:grid-cols-4">
+                        <Drill title="By source / medium" by="sourceMedium" eventName={r.key} currency={currency} qs={qs} />
                         <Drill title="By referral page" by="referrer" eventName={r.key} currency={currency} qs={qs} />
                         <Drill title="By landing page (+ string)" by="landing" eventName={r.key} currency={currency} qs={qs} />
                         <Drill title="By page path (+ string)" by="pagePath" eventName={r.key} currency={currency} qs={qs} />
@@ -766,7 +767,7 @@ function Drill({
   qs,
 }: {
   title: string;
-  by: "referrer" | "landing" | "pagePath";
+  by: "sourceMedium" | "referrer" | "landing" | "pagePath";
   eventName: string;
   currency: string | null;
   qs: (extra?: Record<string, string>) => string;

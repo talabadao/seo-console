@@ -10,7 +10,7 @@ export interface SiteFilterConfig {
 
 export const DEFAULT_FILTER_CONFIG: SiteFilterConfig = {
   brandTerms: [],
-  longtailMinWords: 4,
+  longtailMinWords: 7,
   aiPosOp: "=",
   aiPosValue: 1.0,
   aiImprMax: 10,

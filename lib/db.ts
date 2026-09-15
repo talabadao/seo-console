@@ -154,10 +154,12 @@ async function migrate(): Promise<void> {
       permission_level    TEXT,
       created_at          BIGINT NOT NULL,
       brand_terms         TEXT,
-      longtail_min_words  INTEGER DEFAULT 4,
+      longtail_min_words  INTEGER DEFAULT 7,
       ai_pos_op           TEXT DEFAULT '=',
       ai_pos_value        DOUBLE PRECISION DEFAULT 1.0,
       ai_impr_max         INTEGER DEFAULT 10,
+      auto_index_enabled  BOOLEAN NOT NULL DEFAULT false,
+      auto_index_cap      INTEGER NOT NULL DEFAULT 100,
       UNIQUE(user_id, source, property)
     );
 
@@ -270,8 +272,28 @@ async function migrate(): Promise<void> {
       indexing_change INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_status_hist ON url_status_history(site_id, changed_at DESC);
+
+    -- One row per URL per calendar day it was inspected — a daily indexing
+    -- history per URL, distinct from url_status_history (which only logs
+    -- on a state change) and index_snapshots (site-level daily aggregate).
+    CREATE TABLE IF NOT EXISTS url_daily_index_log (
+      site_id        BIGINT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      url            TEXT NOT NULL,
+      log_date       TEXT NOT NULL,
+      coverage_state TEXT,
+      verdict        TEXT,
+      indexed        INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (site_id, url, log_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_log_site_date ON url_daily_index_log(site_id, log_date);
   `);
 
   // Additive safety net for columns added after a table's first release.
   await ensureColumn(sql, "url_inspections", "in_sitemap", "INTEGER DEFAULT 0");
+  await ensureColumn(sql, "sites", "auto_index_enabled", "BOOLEAN NOT NULL DEFAULT false");
+  await ensureColumn(sql, "sites", "auto_index_cap", "INTEGER NOT NULL DEFAULT 100");
+
+  // longtailMinWords' configuration UI was removed in favor of a fixed
+  // default — correct any site still sitting at the old default of 4.
+  await sql.unsafe(`UPDATE sites SET longtail_min_words = 7 WHERE longtail_min_words = 4`);
 }

@@ -12,6 +12,11 @@ interface SiteConfig {
   aiImprMax: number;
 }
 
+interface AutoIndexConfig {
+  autoIndexEnabled: boolean;
+  autoIndexCap: number;
+}
+
 function initialTheme(): Theme {
   if (typeof window === "undefined") return "system";
   try {
@@ -50,6 +55,9 @@ export function SettingsPanel({
   const [cfg, setCfg] = useState<SiteConfig | null>(null);
   const [brandText, setBrandText] = useState("");
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
+
+  const [idxCfg, setIdxCfg] = useState<AutoIndexConfig | null>(null);
+  const [idxMsg, setIdxMsg] = useState<string | null>(null);
 
   const [aiText, setAiText] = useState("");
   const [aiMsg, setAiMsg] = useState<string | null>(null);
@@ -112,6 +120,35 @@ export function SettingsPanel({
       setCfgMsg("Saved. Reload the dashboard filters to apply.");
       onChanged();
     } else setCfgMsg("Save failed.");
+  }
+
+  useEffect(() => {
+    if (!property) return;
+    let ignore = false;
+    fetch(`/api/settings/indexing?property=${encodeURIComponent(property)}`)
+      .then((r) => r.json())
+      .then((j: AutoIndexConfig) => {
+        if (ignore || !j || j.autoIndexCap == null) return;
+        setIdxCfg(j);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [property]);
+
+  async function saveIdxCfg() {
+    if (!idxCfg) return;
+    setIdxMsg(null);
+    const res = await fetch("/api/settings/indexing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        property,
+        autoIndexEnabled: idxCfg.autoIndexEnabled,
+        autoIndexCap: idxCfg.autoIndexCap,
+      }),
+    });
+    setIdxMsg(res.ok ? "Saved." : "Save failed.");
   }
 
   async function saveBing() {
@@ -236,51 +273,6 @@ export function SettingsPanel({
               className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
             />
             <div className="mt-3 flex flex-wrap items-end gap-4 text-sm">
-              <label className="flex flex-col">
-                <span className="text-xs text-muted">Long-tail: min words</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={cfg.longtailMinWords}
-                  onChange={(e) =>
-                    setCfg({ ...cfg, longtailMinWords: Number(e.target.value) })
-                  }
-                  className="mt-1 w-20 rounded-md border bg-background px-2 py-1"
-                />
-              </label>
-              <label className="flex flex-col">
-                <span className="text-xs text-muted">AI prompt: position</span>
-                <span className="mt-1 flex gap-1">
-                  <select
-                    value={cfg.aiPosOp}
-                    onChange={(e) =>
-                      setCfg({ ...cfg, aiPosOp: e.target.value as SiteConfig["aiPosOp"] })
-                    }
-                    className="rounded-md border bg-background px-1 py-1"
-                  >
-                    <option value="=">=</option>
-                    <option value="<=">&le;</option>
-                    <option value=">=">&ge;</option>
-                  </select>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={cfg.aiPosValue}
-                    onChange={(e) => setCfg({ ...cfg, aiPosValue: Number(e.target.value) })}
-                    className="w-16 rounded-md border bg-background px-2 py-1"
-                  />
-                </span>
-              </label>
-              <label className="flex flex-col">
-                <span className="text-xs text-muted">AI prompt: impressions &lt;</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={cfg.aiImprMax}
-                  onChange={(e) => setCfg({ ...cfg, aiImprMax: Number(e.target.value) })}
-                  className="mt-1 w-20 rounded-md border bg-background px-2 py-1"
-                />
-              </label>
               <button
                 onClick={saveSiteCfg}
                 className="rounded-md bg-accent px-3 py-1.5 font-medium text-white"
@@ -289,6 +281,47 @@ export function SettingsPanel({
               </button>
             </div>
             {cfgMsg && <p className="mt-2 text-xs text-muted">{cfgMsg}</p>}
+          </section>
+        )}
+
+        {idxCfg && (
+          <section className="mt-6">
+            <h3 className="text-sm font-medium">Indexing automation — {property}</h3>
+            <p className="mt-1 text-xs text-muted">
+              Runs once a day: pulls the sitemap from Search Console, inspects any URL not
+              checked in the last 3 days, and logs each URL&apos;s indexing status for the day.
+              Not every site needs this — leave it off for low-priority properties to save
+              your daily URL Inspection quota (2,000/day, shared across the whole property).
+            </p>
+            <div className="mt-3 flex flex-wrap items-end gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={idxCfg.autoIndexEnabled}
+                  onChange={(e) => setIdxCfg({ ...idxCfg, autoIndexEnabled: e.target.checked })}
+                />
+                Auto-inspect this site daily
+              </label>
+              <label className="flex flex-col">
+                <span className="text-xs text-muted">Max URLs per daily run</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={idxCfg.autoIndexCap}
+                  onChange={(e) =>
+                    setIdxCfg({ ...idxCfg, autoIndexCap: Number(e.target.value) })
+                  }
+                  className="mt-1 w-24 rounded-md border bg-background px-2 py-1"
+                />
+              </label>
+              <button
+                onClick={saveIdxCfg}
+                className="rounded-md bg-accent px-3 py-1.5 font-medium text-white"
+              >
+                Save
+              </button>
+            </div>
+            {idxMsg && <p className="mt-2 text-xs text-muted">{idxMsg}</p>}
           </section>
         )}
 

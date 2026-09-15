@@ -60,7 +60,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-good: var(--good);
   --color-bad: var(--bad);
-  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-sans: var(--font-euclid-circular-a), system-ui, sans-serif;
 }
 
 html,

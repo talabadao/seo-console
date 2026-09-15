@@ -276,7 +276,7 @@ export function Indexing({ property }: { property: string }) {
             onClick={() =>
               submit(
                 (data?.urls ?? [])
-                  .filter((u) => u.submittable && u.submitResult !== "ok")
+                  .filter((u) => u.submittable)
                   .map((u) => u.url),
               )
             }
@@ -527,7 +527,7 @@ function RowGroup({
   submitting: boolean;
   scopeOk: boolean;
 }) {
-  const canSubmit = r.submittable && r.submitResult !== "ok" && scopeOk;
+  const canSubmit = r.submittable && scopeOk;
   return (
     <>
       <tr

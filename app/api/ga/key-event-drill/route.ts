@@ -13,6 +13,7 @@ import {
 export const maxDuration = 120;
 
 const DIM: Record<string, string> = {
+  sourceMedium: "sessionSourceMedium",
   referrer: "pageReferrer",
   landing: "landingPagePlusQueryString",
   pagePath: "pagePathPlusQueryString",

@@ -289,6 +289,13 @@ export async function runIndexCheck(
     INSERT INTO url_status_history (site_id, url, changed_at, before_state, after_state, indexing_change)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
+  const dailyLog = db.prepare(`
+    INSERT INTO url_daily_index_log (site_id, url, log_date, coverage_state, verdict, indexed)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(site_id, url, log_date) DO UPDATE SET
+      coverage_state = excluded.coverage_state, verdict = excluded.verdict, indexed = excluded.indexed
+  `);
+  const today = new Date().toISOString().slice(0, 10);
 
   let checked = 0;
   let lastError: string | undefined;
@@ -336,6 +343,7 @@ export async function runIndexCheck(
         r.inspectionResultLink ?? "",
         JSON.stringify(r),
       );
+      await dailyLog.run(site.id, t.url, today, newState, idx.verdict ?? null, isIndexed(newState, idx.verdict ?? null) ? 1 : 0);
       checked++;
       await bumpQuota(site.id, 1);
       await db.prepare("UPDATE index_jobs SET checked = ? WHERE site_id = ?").run(checked, site.id);
@@ -425,10 +433,24 @@ export interface IndexUrlRow {
   requestIndexingUrl: string | null;
 }
 
+// Google's own Indexing API has no cooldown, but re-submitting the instant a
+// prior submission lands would just spam it — wait a few days for a
+// still-not-indexed URL to become resubmittable again.
+const RESUBMIT_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
+
 /** URLs Google doesn't know at all, or has crawled but not indexed — worth a nudge. */
-function isSubmittable(status: string | null, indexed: boolean, inspected: boolean): boolean {
+function isSubmittable(
+  status: string | null,
+  indexed: boolean,
+  inspected: boolean,
+  submittedAt: number | null,
+  submitResult: string | null,
+): boolean {
   if (indexed) return false;
   if (!inspected) return false;
+  if (submitResult === "ok" && submittedAt && Date.now() - submittedAt < RESUBMIT_COOLDOWN_MS) {
+    return false;
+  }
   if (!status) return true;
   return /unknown to google|not indexed|discovered|crawled/i.test(status);
 }
@@ -509,7 +531,13 @@ export async function indexDashboard(siteId: number) {
       indexed,
       stateLabel: normalizeState(r.status),
       atRisk: atRiskSet.has(r.url),
-      submittable: isSubmittable(r.status, indexed, Boolean(r.lastInspection)),
+      submittable: isSubmittable(
+        r.status,
+        indexed,
+        Boolean(r.lastInspection),
+        r.submittedAt,
+        r.submitResult,
+      ),
       unknownToGoogle: /unknown to google/i.test(r.status ?? ""),
       requestIndexingUrl: r.inspectLink || null,
     };

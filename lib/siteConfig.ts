@@ -74,4 +74,42 @@ export async function saveSiteConfig(
   return merged;
 }
 
+export interface AutoIndexConfig {
+  autoIndexEnabled: boolean;
+  autoIndexCap: number;
+}
+
+export async function autoIndexConfigFor(
+  userId: number,
+  property: string,
+): Promise<{ siteId: number; config: AutoIndexConfig } | null> {
+  const row = (await db
+    .prepare(
+      `SELECT id, auto_index_enabled, auto_index_cap
+         FROM sites WHERE user_id = ? AND property = ? AND source = 'google'`,
+    )
+    .get(userId, property)) as
+    | { id: number; auto_index_enabled: boolean; auto_index_cap: number }
+    | undefined;
+  if (!row) return null;
+  return {
+    siteId: row.id,
+    config: { autoIndexEnabled: row.auto_index_enabled, autoIndexCap: row.auto_index_cap },
+  };
+}
+
+export async function saveAutoIndexConfig(
+  userId: number,
+  property: string,
+  patch: Partial<AutoIndexConfig>,
+): Promise<AutoIndexConfig | null> {
+  const cur = await autoIndexConfigFor(userId, property);
+  if (!cur) return null;
+  const merged = { ...cur.config, ...patch };
+  await db
+    .prepare(`UPDATE sites SET auto_index_enabled = ?, auto_index_cap = ? WHERE id = ?`)
+    .run(merged.autoIndexEnabled, merged.autoIndexCap, cur.siteId);
+  return merged;
+}
+
 export { seedBrandTerms };
