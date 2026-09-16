@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
-import { fmt, fmtFull, pctLabel } from "./format";
+import { fmtFull, pctLabel } from "./format";
 import {
   buildInsights,
   type DailyPoint,
@@ -270,12 +270,12 @@ function KpiTile({
       <div className="mt-3 flex items-end justify-between gap-2">
         <div>
           <div className="text-xs text-muted">Current</div>
-          <div className="text-xl font-semibold tabular-nums">{fmt(kpi.actualMtd, "count")}</div>
+          <div className="text-xl font-semibold tabular-nums">{fmtFull(kpi.actualMtd, "count")}</div>
         </div>
         <div className="text-right">
           <div className="text-xs text-muted">Target</div>
           <div className="text-sm font-medium tabular-nums">
-            {hasTarget ? `≥ ${fmt(kpi.target, "count")}` : "not set"}
+            {hasTarget ? `≥ ${fmtFull(kpi.target, "count")}` : "not set"}
           </div>
         </div>
       </div>
@@ -294,7 +294,7 @@ function KpiTile({
             {kpi.paceDeltaPct.toFixed(0)}% {kpi.paceDeltaPct >= 0 ? "better" : "worse"} than
             expected
           </span>
-          <span className="text-muted">proj. {fmt(kpi.projected, "count")}</span>
+          <span className="text-muted">proj. {fmtFull(kpi.projected, "count")}</span>
         </div>
       ) : (
         <div className="mt-1.5 text-xs text-muted">Set a monthly target in Configure KPIs.</div>
@@ -388,7 +388,7 @@ function MiniCard({
         {label}
       </div>
       <div className="mt-1 flex items-baseline gap-2">
-        <span className="text-lg font-semibold tabular-nums">{fmt(cur, "count")}</span>
+        <span className="text-lg font-semibold tabular-nums">{fmtFull(cur, "count")}</span>
         {delta != null && (
           <span
             className="text-xs font-medium"
