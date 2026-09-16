@@ -9,6 +9,7 @@ import { FilterMenu } from "./FilterMenu";
 import { Indexing } from "./Indexing";
 import { Opportunities } from "./Opportunities";
 import { Analytics } from "./Analytics";
+import { WeeklyReport } from "./WeeklyReport";
 import { SettingsPanel } from "./SettingsPanel";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
 import { EMPTY_FILTER, filterActive, type FilterState } from "@/lib/queryFilters";
@@ -80,7 +81,7 @@ export function Dashboard({
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState<
-    "performance" | "opportunities" | "analytics" | "indexing"
+    "performance" | "opportunities" | "analytics" | "indexing" | "weekly-report"
   >("performance");
   const [showSettings, setShowSettings] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -271,6 +272,7 @@ export function Dashboard({
               ["performance", "Performance"],
               ["opportunities", "Opportunities"],
               ["analytics", "Analytics"],
+              ["weekly-report", "Weekly Report"],
               ["indexing", "Indexing"],
             ] as const
           ).map(([t, label]) => (
@@ -301,6 +303,7 @@ export function Dashboard({
 
         {tab === "indexing" && <Indexing property={property} />}
         {tab === "analytics" && <Analytics />}
+        {tab === "weekly-report" && <WeeklyReport />}
         {tab === "opportunities" && (
           <Opportunities property={property} searchType={searchType} />
         )}

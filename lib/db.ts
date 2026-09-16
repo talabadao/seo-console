@@ -286,6 +286,23 @@ async function migrate(): Promise<void> {
       PRIMARY KEY (site_id, url, log_date)
     );
     CREATE INDEX IF NOT EXISTS idx_daily_log_site_date ON url_daily_index_log(site_id, log_date);
+
+    -- Manually-set monthly KPI targets + which GA4 events count as "leads",
+    -- for the Weekly Report dashboard. Scoped to a GA4 property (not a GSC
+    -- sites row) since every Weekly Report metric comes from GA4.
+    CREATE TABLE IF NOT EXISTS weekly_kpi_config (
+      id                      BIGSERIAL PRIMARY KEY,
+      user_id                 BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      property_id             TEXT NOT NULL,
+      year_month              TEXT NOT NULL,
+      traffic_organic_target  DOUBLE PRECISION NOT NULL DEFAULT 0,
+      traffic_ai_target       DOUBLE PRECISION NOT NULL DEFAULT 0,
+      lead_organic_target     DOUBLE PRECISION NOT NULL DEFAULT 0,
+      lead_ai_target          DOUBLE PRECISION NOT NULL DEFAULT 0,
+      lead_events             TEXT NOT NULL DEFAULT '[]',
+      updated_at              BIGINT NOT NULL,
+      UNIQUE(user_id, property_id, year_month)
+    );
   `);
 
   // Additive safety net for columns added after a table's first release.

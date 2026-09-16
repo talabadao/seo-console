@@ -125,6 +125,9 @@ export async function runReport(
 export function eqFilter(fieldName: string, value: string) {
   return { filter: { fieldName, stringFilter: { matchType: "EXACT", value } } };
 }
+export function inFilter(fieldName: string, values: string[]) {
+  return { filter: { fieldName, inListFilter: { values } } };
+}
 export const KEY_EVENT_FILTER = { filter: { fieldName: "isKeyEvent", stringFilter: { value: "true" } } };
 
 /** Combine multiple dimensionFilter expressions with AND. */
