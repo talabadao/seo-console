@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
-import { cleanGaError } from "@/lib/ga4";
+import { cleanGaError, Semaphore } from "@/lib/ga4";
 import {
   availableEvents,
   buildKpiCard,
@@ -40,6 +40,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // Fired as up to 3 at a time rather than one big Promise.all — GA4's
+    // per-property concurrent-request quota ("Exhausted concurrent requests
+    // quota") is easy to trip with 10 simultaneous queries for one page load.
+    const sem = new Semaphore(3);
     const [
       last7Traffic,
       last7Leads,
@@ -52,16 +56,16 @@ export async function GET(req: NextRequest) {
       events,
       urls,
     ] = await Promise.all([
-      trafficPair(token, propertyId, w.last7, w.prev7, aiDomains),
-      leadsPair(token, propertyId, w.last7, w.prev7, aiDomains, config.leadEvents),
-      trafficPair(token, propertyId, w.mtd, w.mtdPrev, aiDomains),
-      leadsPair(token, propertyId, w.mtd, w.mtdPrev, aiDomains, config.leadEvents),
-      trafficPair(token, propertyId, w.mtd, w.mtdYoy, aiDomains),
-      leadsPair(token, propertyId, w.mtd, w.mtdYoy, aiDomains, config.leadEvents),
-      trafficPair(token, propertyId, w.last30, w.prev30, aiDomains),
-      leadsPair(token, propertyId, w.last30, w.prev30, aiDomains, config.leadEvents),
-      availableEvents(token, propertyId, w.last30),
-      topBottomUrls(token, propertyId, w.last7, w.prev7, aiDomains),
+      sem.run(() => trafficPair(token, propertyId, w.last7, w.prev7, aiDomains)),
+      sem.run(() => leadsPair(token, propertyId, w.last7, w.prev7, aiDomains, config.leadEvents)),
+      sem.run(() => trafficPair(token, propertyId, w.mtd, w.mtdPrev, aiDomains)),
+      sem.run(() => leadsPair(token, propertyId, w.mtd, w.mtdPrev, aiDomains, config.leadEvents)),
+      sem.run(() => trafficPair(token, propertyId, w.mtd, w.mtdYoy, aiDomains)),
+      sem.run(() => leadsPair(token, propertyId, w.mtd, w.mtdYoy, aiDomains, config.leadEvents)),
+      sem.run(() => trafficPair(token, propertyId, w.last30, w.prev30, aiDomains)),
+      sem.run(() => leadsPair(token, propertyId, w.last30, w.prev30, aiDomains, config.leadEvents)),
+      sem.run(() => availableEvents(token, propertyId, w.last30)),
+      sem.run(() => topBottomUrls(token, propertyId, w.last7, w.prev7, aiDomains)),
     ]);
 
     const kpis = {

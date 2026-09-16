@@ -1,22 +1,40 @@
 const ADMIN = "https://analyticsadmin.googleapis.com/v1beta";
 const DATA = "https://analyticsdata.googleapis.com/v1beta";
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// GA4's Data API caps how many requests a property can have in flight at
+// once ("Exhausted concurrent requests quota") — easy to hit here since
+// several dashboards (Analytics, Opportunities, Weekly Report) issue their
+// own batch of requests in parallel. Retry 429s with backoff instead of
+// surfacing the raw error, honoring Retry-After when Google sends one.
+const MAX_429_RETRIES = 4;
+
 async function gfetch(url: string, token: string, init?: RequestInit) {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-  if (!res.ok) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+    });
+    if (res.ok) return res.json();
+
     const body = await res.text();
+    if (res.status === 429 && attempt < MAX_429_RETRIES) {
+      const retryAfter = Number(res.headers.get("Retry-After"));
+      const delay = isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 500 * 2 ** attempt + Math.random() * 250;
+      await sleep(delay);
+      continue;
+    }
     // Keep enough of the body that the "API not enabled" enable-URL survives
     // truncation — Google's error payloads (with `details`) can run long.
     throw new Error(`GA4 API ${res.status}: ${body.slice(0, 2000)}`);
   }
-  return res.json();
 }
 
 // ---------- Admin API: property discovery ----------
@@ -120,6 +138,43 @@ export async function runReport(
   const sampled =
     Array.isArray(data.metadata?.samplingMetadatas) && data.metadata.samplingMetadatas.length > 0;
   return { rows, metricHeaders, sampled, rowCount: Number(data.rowCount ?? rows.length) };
+}
+
+/**
+ * Caps how many tasks run at once. GA4's per-property concurrent-request
+ * quota ("Exhausted concurrent requests quota") is easy to blow through when
+ * a dashboard fires a wide Promise.all of its own queries — routing each
+ * query through `sem.run(...)` (still inside a Promise.all, so tuple typing
+ * and result ordering are unaffected) keeps a caller's own burst small
+ * instead of relying solely on gfetch's 429 retry.
+ */
+export class Semaphore {
+  private active = 0;
+  private queue: (() => void)[] = [];
+  constructor(private limit: number) {}
+
+  private async acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active++;
+      return;
+    }
+    await new Promise<void>((resolve) => this.queue.push(resolve));
+    this.active++;
+  }
+
+  private release(): void {
+    this.active--;
+    this.queue.shift()?.();
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
 }
 
 export function eqFilter(fieldName: string, value: string) {
