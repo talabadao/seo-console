@@ -109,6 +109,17 @@ async function queryPageRows(
   );
 }
 
+/** The property's total clicks in range — the denominator for cannibalization severity. */
+async function totalClicksFor(
+  token: string,
+  property: string,
+  range: Range,
+  type: SearchType,
+): Promise<number> {
+  const rows = await pageRows(token, property, range, type);
+  return rows.reduce((a, r) => a + r.clicks, 0);
+}
+
 // ---------- 1. Keyword cannibalization ----------
 
 export interface CannibalRow extends RowStat {
@@ -146,6 +157,8 @@ export async function cannibalization(
 
 // ---------- 1b. Cannibalization, grouped into topics ----------
 
+export type CannibalSeverity = "critical" | "warning" | "low";
+
 export interface CannibalTopicRow extends RowStat {
   /** The highest-impression keyword in the cluster — stands in for the group. */
   parentQuery: string;
@@ -153,8 +166,17 @@ export interface CannibalTopicRow extends RowStat {
   topUrl: string;
   keywordCount: number;
   pageCount: number;
+  /** This topic's clicks as a % of the property's total clicks in range. */
+  clicksSharePct: number;
+  severity: CannibalSeverity;
   /** Member keywords, sorted by impressions desc — [0] is the parent. */
   keywords: CannibalRow[];
+}
+
+function severityFor(clicksSharePct: number): CannibalSeverity {
+  if (clicksSharePct > 10) return "critical";
+  if (clicksSharePct > 5) return "warning";
+  return "low";
 }
 
 /**
@@ -164,7 +186,7 @@ export interface CannibalTopicRow extends RowStat {
  * highest-impression page matches into one topic per page, and surface the
  * highest-impression keyword in each cluster as the representative.
  */
-function groupCannibalByTopUrl(rows: CannibalRow[]): CannibalTopicRow[] {
+function groupCannibalByTopUrl(rows: CannibalRow[], totalClicks: number): CannibalTopicRow[] {
   const byUrl = new Map<string, CannibalRow[]>();
   for (const r of rows) {
     const topUrl = r.pages[0]?.url;
@@ -179,13 +201,17 @@ function groupCannibalByTopUrl(rows: CannibalRow[]): CannibalTopicRow[] {
     members.sort((a, b) => b.impressions - a.impressions);
     const urls = new Set<string>();
     for (const m of members) for (const p of m.pages) urls.add(p.url);
+    const agg = foldWeighted(members);
+    const clicksSharePct = totalClicks ? (agg.clicks / totalClicks) * 100 : 0;
     out.push({
       parentQuery: members[0].query,
       topUrl,
       keywordCount: members.length,
       pageCount: urls.size,
+      clicksSharePct,
+      severity: severityFor(clicksSharePct),
       keywords: members,
-      ...foldWeighted(members),
+      ...agg,
     });
   }
   out.sort((a, b) => b.impressions - a.impressions);
@@ -199,7 +225,11 @@ export async function cannibalizationTopics(
   type: SearchType,
   opts: { minPages?: number; brandTerms?: string[] } = {},
 ): Promise<CannibalTopicRow[]> {
-  return groupCannibalByTopUrl(await cannibalization(token, property, range, type, opts));
+  const [rows, totalClicks] = await Promise.all([
+    cannibalization(token, property, range, type, opts),
+    totalClicksFor(token, property, range, type),
+  ]);
+  return groupCannibalByTopUrl(rows, totalClicks);
 }
 
 // ---------- 1c. Parent Keywords — every query grouped by its top page ----------
@@ -297,6 +327,59 @@ export async function lowHangingFruit(
   }
   out.sort((a, b) => b.impressions - a.impressions);
   return out;
+}
+
+// ---------- 2b. Low-hanging fruit, grouped by Parent Keyword ----------
+
+export interface LowHangingTopicRow extends RowStat {
+  parentQuery: string;
+  topUrl: string;
+  keywordCount: number;
+  expectedCtr: number;
+  ctrGap: number;
+  /** Member keywords, sorted by impressions desc — [0] is the parent. */
+  keywords: LowHangingRow[];
+}
+
+function groupLowHangingByTopUrl(rows: LowHangingRow[]): LowHangingTopicRow[] {
+  const byUrl = new Map<string, LowHangingRow[]>();
+  for (const r of rows) {
+    const topUrl = r.topPage ?? r.pages[0]?.url;
+    if (!topUrl) continue;
+    const arr = byUrl.get(topUrl);
+    if (arr) arr.push(r);
+    else byUrl.set(topUrl, [r]);
+  }
+
+  const out: LowHangingTopicRow[] = [];
+  for (const [topUrl, members] of byUrl) {
+    members.sort((a, b) => b.impressions - a.impressions);
+    const agg = foldWeighted(members);
+    const exp = expectedCtr(agg.position);
+    const gap = exp - agg.ctr;
+    if (gap <= 0) continue; // the group as a whole no longer under-clicks
+    out.push({
+      parentQuery: members[0].query,
+      topUrl,
+      keywordCount: members.length,
+      expectedCtr: exp,
+      ctrGap: gap,
+      keywords: members,
+      ...agg,
+    });
+  }
+  out.sort((a, b) => b.impressions - a.impressions);
+  return out;
+}
+
+export async function lowHangingFruitTopics(
+  token: string,
+  property: string,
+  range: Range,
+  type: SearchType,
+  opts: { posFrom?: number; posTo?: number; minImpr?: number } = {},
+): Promise<LowHangingTopicRow[]> {
+  return groupLowHangingByTopUrl(await lowHangingFruit(token, property, range, type, opts));
 }
 
 // ---------- 3. Underperforming pages ----------

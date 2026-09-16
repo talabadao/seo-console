@@ -110,20 +110,10 @@ export async function GET(req: NextRequest) {
     const keSourceMedium = p.get("sourceMedium") || null;
 
     // --- main view ---
-    const [seriesRep, usersRep, sourceMedium, keyEvents] = await Promise.all([
+    const [seriesRep, sourceMedium, keyEvents] = await Promise.all([
       runReport(token, propertyId, {
         dimensions: ["date", "sessionSource", "sessionDefaultChannelGroup"],
         metrics: ["sessions"],
-        dateRanges: previous ? [current, previous] : [current],
-        limit: 100000,
-      }),
-      // Total Users isn't meaningfully summable across the source/channel
-      // breakdown above (a user visiting via two channels would be double
-      // counted), so it's queried separately with only "date" — GA4's own
-      // per-row dedup keeps this sum accurate.
-      runReport(token, propertyId, {
-        dimensions: ["date"],
-        metrics: ["totalUsers"],
         dateRanges: previous ? [current, previous] : [current],
         limit: 100000,
       }),
@@ -174,9 +164,6 @@ export async function GET(req: NextRequest) {
     const series = build(0, currentSpan);
     const prevSeries = previousSpan ? build(1, previousSpan) : null;
 
-    const sumUsers = (range: number) =>
-      usersRep.rows.filter((r) => r.range === range).reduce((a, r) => a + (r.metrics[0] ?? 0), 0);
-
     const sum = (s: Bucket[] | null) =>
       (s ?? []).reduce(
         (a, x) => ({
@@ -209,10 +196,8 @@ export async function GET(req: NextRequest) {
             label: series[i]?.label ?? pt.label,
           }))
         : null,
-      totals: { ...sum(series), users: sumUsers(0), ...totalsFromKe(false) },
-      prevTotals: previous
-        ? { ...sum(prevSeries), users: sumUsers(1), ...totalsFromKe(true) }
-        : null,
+      totals: { ...sum(series), ...totalsFromKe(false) },
+      prevTotals: previous ? { ...sum(prevSeries), ...totalsFromKe(true) } : null,
       sourceMedium: sourceMedium.rows,
       keyEvents: keyEvents.rows,
       keySourceMedium: keSourceMedium,

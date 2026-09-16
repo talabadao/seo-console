@@ -40,7 +40,6 @@ interface MainData {
     ai: number;
     other: number;
     sessions: number;
-    users: number;
     keyEvents: number;
     revenue: number;
   };
@@ -250,7 +249,7 @@ export function Analytics() {
       )}
 
       {/* metric cards */}
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Card
           label="Organic Search sessions"
           color={COLORS.organic}
@@ -266,12 +265,6 @@ export function Analytics() {
           delta={cardDelta(data?.totals.ai, data?.prevTotals?.ai)}
           on={active.includes("ai")}
           onClick={() => toggle("ai")}
-        />
-        <Card
-          label="Total Users"
-          color="var(--ctr)"
-          value={fmt(data?.totals.users ?? 0, "count")}
-          delta={cardDelta(data?.totals.users, data?.prevTotals?.users)}
         />
         <Card
           label="Key events"

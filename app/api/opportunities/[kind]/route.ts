@@ -7,7 +7,7 @@ import { resolveRange, type PresetId, type Range } from "@/lib/dateRanges";
 import {
   cannibalizationTopics,
   keywordTopics,
-  lowHangingFruit,
+  lowHangingFruitTopics,
   underperformingPages,
 } from "@/lib/opportunities";
 import type { SearchType } from "@/lib/google/searchconsole";
@@ -67,7 +67,7 @@ export async function GET(
     if (kind === "low-hanging") {
       return NextResponse.json({
         range,
-        rows: await lowHangingFruit(token, property, range, searchType, {
+        rows: await lowHangingFruitTopics(token, property, range, searchType, {
           posFrom: Number(p.get("posFrom") || 4),
           posTo: Number(p.get("posTo") || 10),
           minImpr: Number(p.get("minImpr") || 100),
