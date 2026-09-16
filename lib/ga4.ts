@@ -127,6 +127,11 @@ export function eqFilter(fieldName: string, value: string) {
 }
 export const KEY_EVENT_FILTER = { filter: { fieldName: "isKeyEvent", stringFilter: { value: "true" } } };
 
+/** Combine multiple dimensionFilter expressions with AND. */
+export function andFilter(...filters: unknown[]) {
+  return { andGroup: { expressions: filters } };
+}
+
 // ---------- AI-source classification ----------
 
 export const DEFAULT_AI_DOMAINS = [

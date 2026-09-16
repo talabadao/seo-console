@@ -171,6 +171,30 @@ export function bucketOf(dateStr: string, grain: Grain): string {
   return format(startOfWeek(d, { weekStartsOn: 1 }), "yyyy-MM-dd");
 }
 
+/**
+ * Every bucket key a range spans at the given grain, in chronological order —
+ * including ones with no data. GA4 omits a day's row entirely when every
+ * metric for it is zero (keepEmptyRows defaults to false), so building a
+ * time-series chart purely from returned rows leaves gaps; walking the full
+ * range day-by-day here guarantees the chart covers exactly the selected
+ * range with no missing days, and that a "current vs previous" pair always
+ * has the same number of buckets to overlay index-for-index.
+ */
+export function enumerateBuckets(range: Range, grain: Grain): string[] {
+  const start = parseISO(range.start);
+  const days = spanDays(range);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (let i = 0; i < days; i++) {
+    const b = bucketOf(ymd(addDays(start, i)), grain);
+    if (!seen.has(b)) {
+      seen.add(b);
+      out.push(b);
+    }
+  }
+  return out;
+}
+
 export function bucketLabel(bucket: string, grain: Grain): string {
   if (grain === "month") return format(parseISO(bucket + "-01"), "MMM yyyy");
   if (grain === "week") return "Wk " + format(parseISO(bucket), "MMM d");

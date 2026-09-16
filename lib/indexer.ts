@@ -14,9 +14,15 @@ export interface SiteRow {
 // URL Inspection API limit is 2,000 queries/day per property (600/min).
 // https://developers.google.com/webmaster-tools/limits
 const DAILY_CAP = Number(process.env.INDEX_DAILY_CAP || 2000);
-// One interactive "Run check" click stays well under the route timeout; the
-// nightly `npm run sync` uses the full daily budget.
-const PER_RUN_CAP = Number(process.env.INDEX_PER_RUN_CAP || 500);
+// Each inspection is a real Google API round trip (~200-500ms) plus
+// INSPECT_DELAY_MS, so a request full of these can run for minutes — kept
+// modest here so one HTTP request reliably finishes inside a serverless
+// function's time budget. The Indexing tab auto-continues across several
+// such requests (see the CONTINUE_MESSAGE handling in Indexing.tsx) rather
+// than raising this, which would risk the request getting killed mid-batch
+// with no clean "done" response. The nightly cron/`npm run sync` job passes
+// its own `max` explicitly and isn't bound by this default.
+const PER_RUN_CAP = Number(process.env.INDEX_PER_RUN_CAP || 150);
 const INSPECT_DELAY_MS = Number(process.env.INDEX_INSPECT_DELAY_MS || 40); // ~<600/min
 const STALE_MS = 3 * 24 * 60 * 60 * 1000; // re-inspect after 3 days
 const MAX_SITEMAP_FETCHES = 50;

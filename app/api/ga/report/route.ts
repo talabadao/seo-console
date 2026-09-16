@@ -5,8 +5,10 @@ import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
 import {
   KEY_EVENT_FILTER,
+  andFilter,
   classifyTraffic,
   cleanGaError,
+  eqFilter,
   getPropertyCurrency,
   runReport,
   trendBreakdown,
@@ -15,11 +17,13 @@ import {
 import {
   bucketLabel,
   bucketOf,
+  enumerateBuckets,
   resolveComparison,
   resolveRange,
   type CompareMode,
   type Grain,
   type PresetId,
+  type Range,
 } from "@/lib/dateRanges";
 
 export const maxDuration = 120;
@@ -93,7 +97,7 @@ export async function GET(req: NextRequest) {
       const dim = p.get("geoDim") === "city" ? "city" : "country";
       const geo = await trendBreakdown(token, propertyId, {
         dimensions: [dim],
-        metrics: ["sessions", "totalRevenue", "keyEvents"],
+        metrics: ["sessions", "totalUsers", "totalRevenue", "keyEvents"],
         current,
         previous,
         limit: 5000,
@@ -101,17 +105,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ dim, currency, rows: geo.rows, sampled: geo.sampled });
     }
 
+    // Optional global filter for the Key Events breakdown, set from the
+    // "Source / Medium" dropdown in the Key Events toolbar.
+    const keSourceMedium = p.get("sourceMedium") || null;
+
     // --- main view ---
-    const [seriesRep, sourceMedium, keyEvents] = await Promise.all([
+    const [seriesRep, usersRep, sourceMedium, keyEvents] = await Promise.all([
       runReport(token, propertyId, {
         dimensions: ["date", "sessionSource", "sessionDefaultChannelGroup"],
         metrics: ["sessions"],
         dateRanges: previous ? [current, previous] : [current],
         limit: 100000,
       }),
+      // Total Users isn't meaningfully summable across the source/channel
+      // breakdown above (a user visiting via two channels would be double
+      // counted), so it's queried separately with only "date" — GA4's own
+      // per-row dedup keeps this sum accurate.
+      runReport(token, propertyId, {
+        dimensions: ["date"],
+        metrics: ["totalUsers"],
+        dateRanges: previous ? [current, previous] : [current],
+        limit: 100000,
+      }),
       trendBreakdown(token, propertyId, {
         dimensions: ["sessionSourceMedium"],
-        metrics: ["sessions", "totalRevenue", "keyEvents"],
+        metrics: ["sessions", "totalUsers", "totalRevenue", "keyEvents"],
         current,
         previous,
         limit: 5000,
@@ -121,30 +139,43 @@ export async function GET(req: NextRequest) {
         metrics: ["keyEvents", "totalRevenue", "eventValue"],
         current,
         previous,
-        dimensionFilter: KEY_EVENT_FILTER,
+        dimensionFilter: keSourceMedium
+          ? andFilter(KEY_EVENT_FILTER, eqFilter("sessionSourceMedium", keSourceMedium))
+          : KEY_EVENT_FILTER,
         limit: 2000,
       }),
     ]);
 
-    // Bucket the time series into organic / ai / other.
+    // Bucket the time series into organic / ai / other, zero-filled across
+    // every day in range so current/previous always have equal-length,
+    // index-aligned buckets (see enumerateBuckets' doc comment) and the
+    // chart shows the full selected range instead of stopping at the last
+    // day with nonzero traffic.
     type Bucket = { bucket: string; label: string; organic: number; ai: number; other: number };
-    const build = (range: number) => {
+    const build = (range: number, span: Range) => {
       const m = new Map<string, Bucket>();
+      for (const b of enumerateBuckets(span, grain)) {
+        m.set(b, { bucket: b, label: bucketLabel(b, grain), organic: 0, ai: 0, other: 0 });
+      }
       for (const r of seriesRep.rows) {
         if (r.range !== range) continue;
         const [dateRaw, source, channel] = r.dims;
         const b = bucketOf(iso(dateRaw), grain);
-        let row = m.get(b);
-        if (!row) {
-          row = { bucket: b, label: bucketLabel(b, grain), organic: 0, ai: 0, other: 0 };
-          m.set(b, row);
-        }
+        const row = m.get(b);
+        if (!row) continue; // outside the requested span — shouldn't happen
         row[classifyTraffic(source, channel, aiDomains)] += r.metrics[0] ?? 0;
       }
-      return [...m.values()].sort((a, b) => (a.bucket < b.bucket ? -1 : 1));
+      return [...m.values()];
     };
-    const series = build(0);
-    const prevSeries = previous ? build(1) : null;
+    const currentSpan: Range = { start: current.startDate, end: current.endDate };
+    const previousSpan: Range | null = previous
+      ? { start: previous.startDate, end: previous.endDate }
+      : null;
+    const series = build(0, currentSpan);
+    const prevSeries = previousSpan ? build(1, previousSpan) : null;
+
+    const sumUsers = (range: number) =>
+      usersRep.rows.filter((r) => r.range === range).reduce((a, r) => a + (r.metrics[0] ?? 0), 0);
 
     const sum = (s: Bucket[] | null) =>
       (s ?? []).reduce(
@@ -178,10 +209,13 @@ export async function GET(req: NextRequest) {
             label: series[i]?.label ?? pt.label,
           }))
         : null,
-      totals: { ...sum(series), ...totalsFromKe(false) },
-      prevTotals: previous ? { ...sum(prevSeries), ...totalsFromKe(true) } : null,
+      totals: { ...sum(series), users: sumUsers(0), ...totalsFromKe(false) },
+      prevTotals: previous
+        ? { ...sum(prevSeries), users: sumUsers(1), ...totalsFromKe(true) }
+        : null,
       sourceMedium: sourceMedium.rows,
       keyEvents: keyEvents.rows,
+      keySourceMedium: keSourceMedium,
       sampled: seriesRep.sampled || sourceMedium.sampled || keyEvents.sampled,
       aiDomains,
     });

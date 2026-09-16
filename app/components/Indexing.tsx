@@ -109,22 +109,62 @@ export function Indexing({ property }: { property: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [property, data, busy]);
 
+  // A single /api/index/check request only inspects up to PER_RUN_CAP URLs —
+  // kept modest server-side so one request finishes comfortably inside
+  // Vercel's function time budget. A big sitemap (hundreds of URLs) needs
+  // several such requests, so auto-continue here instead of making the user
+  // click "Run check" repeatedly: the server tells us via `message` whether
+  // there's more to do ("Run-limit reached — click again to keep going.").
+  const CONTINUE_MESSAGE = "Run-limit reached — click again to keep going.";
+  const MAX_ROUNDS = 20;
+
   async function run(discover: boolean) {
     setBusy(true);
     setMsg(null);
     try {
-      const res = await fetch("/api/index/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ property, discover, sitemapUrl: sitemapUrl.trim() || undefined }),
-      });
-      const j = await res.json();
+      let discoveredTotal: number | undefined;
+      let checkedTotal = 0;
+      let quota = 0;
+      let lastMessage: string | undefined;
+      let round = 0;
+      while (round < MAX_ROUNDS) {
+        round++;
+        let res: Response;
+        let j: { discovered?: number; checked?: number; quotaLeft?: number; message?: string; error?: string };
+        try {
+          res = await fetch("/api/index/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              property,
+              discover: round === 1 ? discover : false,
+              sitemapUrl: round === 1 ? sitemapUrl.trim() || undefined : undefined,
+            }),
+          });
+          j = await res.json();
+        } catch {
+          // Likely the function got killed mid-run (large batch, platform time
+          // limit) rather than a real failure — each URL it did reach was
+          // already saved server-side, so just try another round.
+          await load();
+          continue;
+        }
+        if (!res.ok) {
+          setMsg(j.error ?? "Failed");
+          break;
+        }
+        if (j.discovered != null && discoveredTotal == null) discoveredTotal = j.discovered;
+        checkedTotal += j.checked ?? 0;
+        quota = j.quotaLeft ?? quota;
+        lastMessage = j.message;
+        await load(); // refresh counts live between rounds
+        if (lastMessage !== CONTINUE_MESSAGE) break;
+      }
       setMsg(
-        res.ok
-          ? `${j.discovered != null ? `Discovered ${j.discovered} URLs. ` : ""}Inspected ${j.checked}. Quota left: ${j.quotaLeft}.${j.message ? ` (${j.message})` : ""}`
-          : (j.error ?? "Failed"),
+        `${discoveredTotal != null ? `Discovered ${discoveredTotal} URLs. ` : ""}Inspected ${checkedTotal}. Quota left: ${quota}.${
+          lastMessage && lastMessage !== CONTINUE_MESSAGE ? ` (${lastMessage})` : ""
+        }`,
       );
-      await load();
     } finally {
       setBusy(false);
     }

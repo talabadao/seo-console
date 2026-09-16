@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CartesianGrid,
   Line,
@@ -35,7 +35,15 @@ interface MainData {
   currency: string | null;
   series: { bucket: string; label: string; organic: number; ai: number; other: number }[];
   prevSeries: MainData["series"] | null;
-  totals: { organic: number; ai: number; other: number; sessions: number; keyEvents: number; revenue: number };
+  totals: {
+    organic: number;
+    ai: number;
+    other: number;
+    sessions: number;
+    users: number;
+    keyEvents: number;
+    revenue: number;
+  };
   prevTotals: MainData["totals"] | null;
   sourceMedium: TrendRow[];
   keyEvents: TrendRow[];
@@ -74,6 +82,7 @@ export function Analytics() {
   const [geoDim, setGeoDim] = useState<"country" | "city">("country");
   const [trend, setTrend] = useState<"all" | "growing" | "decaying" | "new">("all");
   const [q, setQ] = useState("");
+  const [keSourceMedium, setKeSourceMedium] = useState("");
   const [active, setActive] = useState<("organic" | "ai" | "other")[]>(["organic", "ai"]);
   const [data, setData] = useState<MainData | null>(null);
   const [geo, setGeo] = useState<{ dim: string; currency: string | null; rows: TrendRow[] } | null>(null);
@@ -136,7 +145,9 @@ export function Analytics() {
     setErr(null);
     setEnableUrl(null);
     try {
-      const res = await fetch(`/api/ga/report?${qs()}`);
+      const res = await fetch(
+        `/api/ga/report?${qs(keSourceMedium ? { sourceMedium: keSourceMedium } : {})}`,
+      );
       const j = await res.json();
       if (j.needsReconnect) setNeedsReconnect(true);
       else if (j.error) {
@@ -146,7 +157,7 @@ export function Analytics() {
     } finally {
       setLoading(false);
     }
-  }, [propertyId, qs]);
+  }, [propertyId, qs, keSourceMedium]);
 
   useEffect(() => {
     loadMain();
@@ -239,7 +250,7 @@ export function Analytics() {
       )}
 
       {/* metric cards */}
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Card
           label="Organic Search sessions"
           color={COLORS.organic}
@@ -255,6 +266,12 @@ export function Analytics() {
           delta={cardDelta(data?.totals.ai, data?.prevTotals?.ai)}
           on={active.includes("ai")}
           onClick={() => toggle("ai")}
+        />
+        <Card
+          label="Total Users"
+          color="var(--ctr)"
+          value={fmt(data?.totals.users ?? 0, "count")}
+          delta={cardDelta(data?.totals.users, data?.prevTotals?.users)}
         />
         <Card
           label="Key events"
@@ -298,7 +315,7 @@ export function Analytics() {
             [
               ["sourceMedium", "Source / Medium"],
               ["keyEvents", "Key Events"],
-              ["geo", "Geo"],
+              ["geo", "Demographic"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -333,6 +350,7 @@ export function Analytics() {
             keyLabel="Source / Medium"
             metrics={[
               { label: "Sessions", kind: "count" },
+              { label: "Users", kind: "count" },
               { label: "Revenue", kind: "money" },
               { label: "Key events", kind: "count" },
             ]}
@@ -344,12 +362,18 @@ export function Analytics() {
             q={q}
             onQ={setQ}
             csvName="ga-source-medium"
+            drill={(key) => (
+              <SourceMediumDrill sourceMedium={key} currency={data?.currency ?? null} qs={qs} />
+            )}
           />
         )}
 
         {sub === "keyEvents" && (
           <KeyEventsTable
             rows={data?.keyEvents ?? []}
+            sourceMediumOptions={data?.sourceMedium.map((r) => r.key) ?? []}
+            sourceMedium={keSourceMedium}
+            onSourceMedium={setKeSourceMedium}
             currency={data?.currency ?? null}
             compareOn={compareOn}
             trend={trend}
@@ -365,6 +389,7 @@ export function Analytics() {
             keyLabel={geoDim === "city" ? "City" : "Country"}
             metrics={[
               { label: "Sessions", kind: "count" },
+              { label: "Users", kind: "count" },
               { label: "Revenue", kind: "money" },
               { label: "Key events", kind: "count" },
             ]}
@@ -574,6 +599,7 @@ function TrendTable({
   q,
   onQ,
   csvName,
+  drill,
 }: {
   keyLabel: string;
   metrics: MetricSpec[];
@@ -585,8 +611,11 @@ function TrendTable({
   q: string;
   onQ: (s: string) => void;
   csvName: string;
+  /** When set, each row expands on click to show this drill-down content. */
+  drill?: (rowKey: string) => ReactNode;
 }) {
   const [limit, setLimit] = useState(50);
+  const [open, setOpen] = useState<string | null>(null);
   const filtered = useMemo(() => trendFilter(rows, trend, q), [rows, trend, q]);
   const shown = filtered.slice(0, limit);
 
@@ -623,22 +652,35 @@ function TrendTable({
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.key} className="border-b border-border/60 hover:bg-accent-soft/40">
-                <td className="max-w-md truncate px-4 py-2" title={r.key}>
-                  {r.key || <span className="text-muted">(not set)</span>}
-                  {r.isNew && (
-                    <span className="ml-1.5 rounded bg-good/15 px-1 text-[10px] font-semibold text-good">
-                      NEW
-                    </span>
-                  )}
-                </td>
-                {metrics.map((m, i) => (
-                  <td key={m.label} className="whitespace-nowrap px-4 py-2 text-right tabular-nums">
-                    {fmtMetric(r.cur[i] ?? 0, m.kind, currency)}
-                    {compareOn && <Delta cur={r.cur[i] ?? 0} prev={r.prev[i] ?? 0} />}
+              <Fragment key={r.key}>
+                <tr
+                  className={`border-b border-border/60 hover:bg-accent-soft/40 ${drill ? "cursor-pointer" : ""}`}
+                  onClick={drill ? () => setOpen(open === r.key ? null : r.key) : undefined}
+                >
+                  <td className="max-w-md truncate px-4 py-2" title={r.key}>
+                    {drill && <span className="mr-1 text-muted">{open === r.key ? "▾" : "▸"}</span>}
+                    {r.key || <span className="text-muted">(not set)</span>}
+                    {r.isNew && (
+                      <span className="ml-1.5 rounded bg-good/15 px-1 text-[10px] font-semibold text-good">
+                        NEW
+                      </span>
+                    )}
                   </td>
-                ))}
-              </tr>
+                  {metrics.map((m, i) => (
+                    <td key={m.label} className="whitespace-nowrap px-4 py-2 text-right tabular-nums">
+                      {fmtMetric(r.cur[i] ?? 0, m.kind, currency)}
+                      {compareOn && <Delta cur={r.cur[i] ?? 0} prev={r.prev[i] ?? 0} />}
+                    </td>
+                  ))}
+                </tr>
+                {drill && open === r.key && (
+                  <tr className="border-b border-border/60 bg-background/50">
+                    <td colSpan={metrics.length + 1} className="px-6 py-3">
+                      {drill(r.key)}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
             {!shown.length && (
               <tr>
@@ -656,6 +698,9 @@ function TrendTable({
 
 function KeyEventsTable({
   rows,
+  sourceMediumOptions,
+  sourceMedium,
+  onSourceMedium,
   currency,
   compareOn,
   trend,
@@ -665,6 +710,9 @@ function KeyEventsTable({
   qs,
 }: {
   rows: TrendRow[];
+  sourceMediumOptions: string[];
+  sourceMedium: string;
+  onSourceMedium: (v: string) => void;
   currency: string | null;
   compareOn: boolean;
   trend: "all" | "growing" | "decaying" | "new";
@@ -693,6 +741,21 @@ function KeyEventsTable({
             ["Key event", "Count", "Revenue", "Event value"],
             ...filtered.map((r) => [r.key, String(r.cur[0] ?? 0), (r.cur[1] ?? 0).toFixed(2), (r.cur[2] ?? 0).toFixed(2)]),
           ])
+        }
+        right={
+          <select
+            value={sourceMedium}
+            onChange={(e) => onSourceMedium(e.target.value)}
+            className="rounded-md border bg-background px-2 py-1.5 text-sm"
+            title="Filter key events to sessions from one Source / Medium"
+          >
+            <option value="">All source / medium</option>
+            {sourceMediumOptions.map((s) => (
+              <option key={s} value={s}>
+                {s || "(not set)"}
+              </option>
+            ))}
+          </select>
         }
       />
       <div className="max-h-[34rem] overflow-auto">
@@ -734,8 +797,7 @@ function KeyEventsTable({
                 {open === r.key && (
                   <tr className="border-b border-border/60 bg-background/50">
                     <td colSpan={4} className="px-6 py-3">
-                      <div className="grid gap-4 lg:grid-cols-4">
-                        <Drill title="By source / medium" by="sourceMedium" eventName={r.key} currency={currency} qs={qs} />
+                      <div className="grid gap-4 lg:grid-cols-3">
                         <Drill title="By referral page" by="referrer" eventName={r.key} currency={currency} qs={qs} />
                         <Drill title="By landing page (+ string)" by="landing" eventName={r.key} currency={currency} qs={qs} />
                         <Drill title="By page path (+ string)" by="pagePath" eventName={r.key} currency={currency} qs={qs} />
@@ -767,7 +829,7 @@ function Drill({
   qs,
 }: {
   title: string;
-  by: "sourceMedium" | "referrer" | "landing" | "pagePath";
+  by: "referrer" | "landing" | "pagePath";
   eventName: string;
   currency: string | null;
   qs: (extra?: Record<string, string>) => string;
@@ -805,6 +867,77 @@ function Drill({
   );
 }
 
+/** Drill-down under a Source/Medium row: which key events it drove, with revenue/sessions/users. */
+function SourceMediumDrill({
+  sourceMedium,
+  currency,
+  qs,
+}: {
+  sourceMedium: string;
+  currency: string | null;
+  qs: (extra?: Record<string, string>) => string;
+}) {
+  const [rows, setRows] = useState<TrendRow[] | null>(null);
+  useEffect(() => {
+    let ignore = false;
+    setRows(null);
+    fetch(`/api/ga/source-medium-drill?${qs({ sourceMedium })}`)
+      .then((r) => r.json())
+      .then((j) => !ignore && setRows(j.rows ?? []));
+    return () => {
+      ignore = true;
+    };
+  }, [sourceMedium, qs]);
+
+  return (
+    <div className="max-w-2xl rounded-lg border bg-surface">
+      <div className="border-b px-3 py-1.5 text-xs font-semibold uppercase text-muted">
+        Key events from {sourceMedium || "(not set)"}
+      </div>
+      <div className="max-h-72 overflow-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-surface text-left text-muted">
+            <tr className="border-b">
+              <th className="px-3 py-1.5 font-medium">Key event</th>
+              <th className="px-3 py-1.5 text-right font-medium">Count</th>
+              <th className="px-3 py-1.5 text-right font-medium">Revenue</th>
+              <th className="px-3 py-1.5 text-right font-medium">Sessions</th>
+              <th className="px-3 py-1.5 text-right font-medium">Users</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows === null && (
+              <tr>
+                <td colSpan={5} className="px-3 py-3 text-muted">
+                  Loading…
+                </td>
+              </tr>
+            )}
+            {rows?.map((r) => (
+              <tr key={r.key} className="border-b border-border/40">
+                <td className="max-w-[12rem] truncate px-3 py-1" title={r.key}>
+                  {r.key || "(not set)"}
+                </td>
+                <td className="px-3 py-1 text-right tabular-nums">{fmt(r.cur[0] ?? 0, "count")}</td>
+                <td className="px-3 py-1 text-right tabular-nums">{money(r.cur[1] ?? 0, currency)}</td>
+                <td className="px-3 py-1 text-right tabular-nums">{fmt(r.cur[2] ?? 0, "count")}</td>
+                <td className="px-3 py-1 text-right tabular-nums">{fmt(r.cur[3] ?? 0, "count")}</td>
+              </tr>
+            ))}
+            {rows?.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-3 py-3 text-muted">
+                  No key events from this source in range.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Delta({ cur, prev }: { cur: number; prev: number }) {
   if (!prev) return cur > 0 ? <span className="ml-1 text-[11px] text-good">new</span> : null;
   const pc = ((cur - prev) / prev) * 100;
@@ -820,6 +953,8 @@ function Delta({ cur, prev }: { cur: number; prev: number }) {
   );
 }
 
+const LIMIT_OPTIONS = [25, 50, 100, 250, 1000, 5000, Infinity];
+
 function TableToolbar({
   trend,
   onTrend,
@@ -829,6 +964,7 @@ function TableToolbar({
   limit,
   onLimit,
   onExport,
+  right,
 }: {
   trend: "all" | "growing" | "decaying" | "new";
   onTrend: (t: "all" | "growing" | "decaying" | "new") => void;
@@ -838,6 +974,7 @@ function TableToolbar({
   limit: number;
   onLimit: (n: number) => void;
   onExport: () => void;
+  right?: ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
@@ -871,12 +1008,13 @@ function TableToolbar({
         onChange={(e) => onLimit(Number(e.target.value))}
         className="rounded-md border bg-background px-2 py-1.5 text-sm"
       >
-        {[25, 50, 100, 250, 1000].map((n) => (
+        {LIMIT_OPTIONS.map((n) => (
           <option key={n} value={n}>
-            Show {n}
+            {isFinite(n) ? `Show ${n}` : "Show all"}
           </option>
         ))}
       </select>
+      {right}
       <button
         onClick={onExport}
         className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft"
