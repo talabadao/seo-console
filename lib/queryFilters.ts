@@ -119,15 +119,18 @@ export function isBranded(key: string, terms: string[]): boolean {
   return terms.some((t) => t && k.includes(t.toLowerCase()));
 }
 
-export function matchesAi(row: BreakdownRow, cfg: SiteFilterConfig): boolean {
+// A query matches if it satisfies either branch (OR, not AND):
+//   1. Position ~1.0 and impressions < 10 — ranking #1 but barely getting
+//      shown, a classic sign an AI Overview/answer box is absorbing the
+//      impression instead of a standard blue link.
+//   2. Impressions = 1 and position 2.0-20.0 — a single, oddly-precise
+//      impression at a non-top position, typical of an AI assistant citing
+//      the page once rather than organic search traffic.
+export function matchesAi(row: BreakdownRow): boolean {
   const p = row.position;
-  const okPos =
-    cfg.aiPosOp === "="
-      ? Math.abs(p - cfg.aiPosValue) < 0.05
-      : cfg.aiPosOp === "<="
-        ? p <= cfg.aiPosValue + 1e-9
-        : p >= cfg.aiPosValue - 1e-9;
-  return okPos && row.impressions < cfg.aiImprMax;
+  const branch1 = Math.abs(p - 1) < 0.05 && row.impressions < 10;
+  const branch2 = row.impressions === 1 && p >= 2 - 1e-9 && p <= 20 + 1e-9;
+  return branch1 || branch2;
 }
 
 export function filterActive(f: FilterState): boolean {
@@ -166,7 +169,7 @@ export function applyFilters(
       if (f.branded === "nonbranded" && isBranded(r.key, cfg.brandTerms)) return false;
       if (f.question && !isQuestion(r.key)) return false;
       if (f.longtail && wordCount(r.key) < cfg.longtailMinWords) return false;
-      if (f.ai && !matchesAi(r, cfg)) return false;
+      if (f.ai && !matchesAi(r)) return false;
     }
     return true;
   });

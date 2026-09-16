@@ -5,7 +5,8 @@ import { accessTokenFor } from "@/lib/google/oauth";
 import { siteConfigFor } from "@/lib/siteConfig";
 import { resolveRange, type PresetId, type Range } from "@/lib/dateRanges";
 import {
-  cannibalization,
+  cannibalizationTopics,
+  keywordTopics,
   lowHangingFruit,
   underperformingPages,
 } from "@/lib/opportunities";
@@ -47,8 +48,17 @@ export async function GET(
     if (kind === "cannibalization") {
       return NextResponse.json({
         range,
-        rows: await cannibalization(token, property, range, searchType, {
+        rows: await cannibalizationTopics(token, property, range, searchType, {
           minPages: Math.max(2, Number(p.get("minPages") || 2)),
+          brandTerms: sc.config.brandTerms,
+        }),
+      });
+    }
+
+    if (kind === "keyword-topics") {
+      return NextResponse.json({
+        range,
+        rows: await keywordTopics(token, property, range, searchType, {
           brandTerms: sc.config.brandTerms,
         }),
       });

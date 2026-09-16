@@ -6,7 +6,7 @@ import { DateRangePicker, type RangeValue } from "./DateRangePicker";
 import { resolveRange } from "@/lib/dateRanges";
 import { fmt, pctLabel } from "./format";
 
-type Kind = "cannibalization" | "low-hanging" | "underperforming";
+type Kind = "cannibalization" | "keyword-topics" | "low-hanging" | "underperforming";
 
 const INITIAL_RANGE: RangeValue = {
   preset: "3m",
@@ -22,7 +22,13 @@ const TABS: { id: Kind; label: string; blurb: string }[] = [
     id: "cannibalization",
     label: "Keyword Cannibalization",
     blurb:
-      "Non-brand queries where 2+ of your URLs compete. Consolidate or differentiate them. (Brand terms are excluded — edit them in Settings.)",
+      "Non-brand queries where 2+ of your URLs compete, grouped into topics by shared top-ranking page — the keyword with the most impressions in each group is the Parent Keyword. Consolidate or differentiate them. (Brand terms are excluded — edit them in Settings.)",
+  },
+  {
+    id: "keyword-topics",
+    label: "Parent Keywords",
+    blurb:
+      "Every non-brand query grouped by the page it ranks best for, with the highest-impression keyword in each group standing in as the Parent Keyword — a topical view of what each page is really ranking for.",
   },
   {
     id: "low-hanging",
@@ -221,7 +227,12 @@ export function Opportunities({
         <div className="mb-4 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">{err}</div>
       )}
 
-      {kind === "cannibalization" && <CannibalTable rows={(data?.rows as CannibalRow[]) ?? []} />}
+      {kind === "cannibalization" && (
+        <CannibalTable rows={(data?.rows as CannibalTopicRow[]) ?? []} />
+      )}
+      {kind === "keyword-topics" && (
+        <KeywordTopicsTable rows={(data?.rows as KeywordTopicRow[]) ?? []} />
+      )}
       {kind === "low-hanging" && <LowHangingTable rows={(data?.rows as LowHangingRow[]) ?? []} />}
       {kind === "underperforming" && (
         <UnderperformingTable rows={(data?.rows as UnderRow[]) ?? []} months={months} />
@@ -242,6 +253,19 @@ interface CannibalRow extends Stat {
   query: string;
   pageCount: number;
   pages: (Stat & { url: string })[];
+}
+interface CannibalTopicRow extends Stat {
+  parentQuery: string;
+  topUrl: string;
+  keywordCount: number;
+  pageCount: number;
+  keywords: CannibalRow[];
+}
+interface KeywordTopicRow extends Stat {
+  parentQuery: string;
+  url: string;
+  keywordCount: number;
+  keywords: (Stat & { query: string })[];
 }
 interface LowHangingRow extends Stat {
   query: string;
@@ -303,13 +327,14 @@ function Shell({ children, count }: { children: ReactNode; count: number }) {
 
 // ---------- cannibalization ----------
 
-function CannibalTable({ rows }: { rows: CannibalRow[] }) {
+function CannibalTable({ rows }: { rows: CannibalTopicRow[] }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <Shell count={rows.length}>
       <thead className="sticky top-0 bg-surface text-left text-muted">
         <tr className="border-b">
-          <th className="px-3 py-2.5 font-medium">Query</th>
+          <th className="px-3 py-2.5 font-medium">Parent Keyword</th>
+          <th className="px-3 py-2.5 text-right font-medium">Keywords</th>
           <th className="px-3 py-2.5 text-right font-medium">Pages</th>
           <th className="px-3 py-2.5 text-right font-medium">Clicks</th>
           <th className="px-3 py-2.5 text-right font-medium">Impr</th>
@@ -319,30 +344,141 @@ function CannibalTable({ rows }: { rows: CannibalRow[] }) {
       </thead>
       <tbody>
         {rows.map((r) => (
-          <Fragment key={r.query}>
+          <Fragment key={r.topUrl}>
             <tr
               className="cursor-pointer border-b border-border/60 hover:bg-accent-soft/40"
-              onClick={() => setOpen(open === r.query ? null : r.query)}
+              onClick={() => setOpen(open === r.topUrl ? null : r.topUrl)}
             >
               <td className="px-3 py-2">
-                <span className="mr-1 text-muted">{open === r.query ? "▾" : "▸"}</span>
-                {r.query}
+                <span className="mr-1 text-muted">{open === r.topUrl ? "▾" : "▸"}</span>
+                {r.parentQuery}
               </td>
+              <td className="px-3 py-2 text-right font-medium">{r.keywordCount}</td>
               <td className="px-3 py-2 text-right font-medium">{r.pageCount}</td>
               <StatCells s={r} />
             </tr>
-            {open === r.query &&
-              r.pages.map((p) => (
-                <tr key={r.query + p.url} className="border-b border-border/50 bg-background/50 text-xs">
-                  <td className="py-1.5 pl-8 pr-3">
-                    <a href={p.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                      {path(p.url)}
-                    </a>
-                  </td>
-                  <td />
-                  <StatCells s={p} />
-                </tr>
-              ))}
+            {open === r.topUrl && (
+              <tr className="border-b border-border/50 bg-background/50">
+                <td colSpan={7} className="px-3 py-3">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div>
+                      <div className="mb-1 text-xs font-semibold uppercase text-muted">
+                        Keywords in this topic
+                      </div>
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {r.keywords.map((k) => (
+                            <tr key={k.query} className="border-b border-border/40">
+                              <td className="max-w-[14rem] truncate py-1 pr-2" title={k.query}>
+                                {k.query}
+                                {k.query === r.parentQuery && (
+                                  <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] font-semibold text-accent">
+                                    PARENT
+                                  </span>
+                                )}
+                              </td>
+                              <StatCells s={k} />
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs font-semibold uppercase text-muted">
+                        Competing pages (parent keyword)
+                      </div>
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {(r.keywords[0]?.pages ?? []).map((p) => (
+                            <tr key={p.url} className="border-b border-border/40">
+                              <td className="max-w-[14rem] truncate py-1 pr-2">
+                                <a
+                                  href={p.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent hover:underline"
+                                  title={p.url}
+                                >
+                                  {path(p.url)}
+                                </a>
+                              </td>
+                              <StatCells s={p} />
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </Fragment>
+        ))}
+        {!rows.length && <EmptyRow cols={7} />}
+      </tbody>
+    </Shell>
+  );
+}
+
+// ---------- parent keywords ----------
+
+function KeywordTopicsTable({ rows }: { rows: KeywordTopicRow[] }) {
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <Shell count={rows.length}>
+      <thead className="sticky top-0 bg-surface text-left text-muted">
+        <tr className="border-b">
+          <th className="px-3 py-2.5 font-medium">Parent Keyword</th>
+          <th className="px-3 py-2.5 text-right font-medium">Keywords</th>
+          <th className="px-3 py-2.5 text-right font-medium">Clicks</th>
+          <th className="px-3 py-2.5 text-right font-medium">Impr</th>
+          <th className="px-3 py-2.5 text-right font-medium">Position</th>
+          <th className="px-3 py-2.5 text-right font-medium">CTR</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <Fragment key={r.url}>
+            <tr
+              className="cursor-pointer border-b border-border/60 hover:bg-accent-soft/40"
+              onClick={() => setOpen(open === r.url ? null : r.url)}
+            >
+              <td className="px-3 py-2">
+                <span className="mr-1 text-muted">{open === r.url ? "▾" : "▸"}</span>
+                {r.parentQuery}
+              </td>
+              <td className="px-3 py-2 text-right font-medium">{r.keywordCount}</td>
+              <StatCells s={r} />
+            </tr>
+            {open === r.url && (
+              <tr className="border-b border-border/50 bg-background/50 text-xs">
+                <td colSpan={6} className="px-3 py-3">
+                  <div className="mb-1 text-xs font-semibold uppercase text-muted">
+                    <a href={r.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                      {path(r.url)}
+                    </a>{" "}
+                    — {r.keywordCount} keyword{r.keywordCount === 1 ? "" : "s"}
+                  </div>
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {r.keywords.map((k) => (
+                        <tr key={k.query} className="border-b border-border/40">
+                          <td className="max-w-sm truncate py-1 pr-2" title={k.query}>
+                            {k.query}
+                            {k.query === r.parentQuery && (
+                              <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] font-semibold text-accent">
+                                PARENT
+                              </span>
+                            )}
+                          </td>
+                          <StatCells s={k} />
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+            )}
           </Fragment>
         ))}
         {!rows.length && <EmptyRow cols={6} />}

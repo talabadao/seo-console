@@ -144,6 +144,116 @@ export async function cannibalization(
   return out;
 }
 
+// ---------- 1b. Cannibalization, grouped into topics ----------
+
+export interface CannibalTopicRow extends RowStat {
+  /** The highest-impression keyword in the cluster — stands in for the group. */
+  parentQuery: string;
+  /** The shared top-ranking URL that defines this topic. */
+  topUrl: string;
+  keywordCount: number;
+  pageCount: number;
+  /** Member keywords, sorted by impressions desc — [0] is the parent. */
+  keywords: CannibalRow[];
+}
+
+/**
+ * Near-duplicate queries ("halong bay" / "ha long bay") almost always share
+ * the same top-ranking page, and each shows up as its own cannibalization
+ * row — noisy when a site has lots of these variants. Cluster rows whose
+ * highest-impression page matches into one topic per page, and surface the
+ * highest-impression keyword in each cluster as the representative.
+ */
+function groupCannibalByTopUrl(rows: CannibalRow[]): CannibalTopicRow[] {
+  const byUrl = new Map<string, CannibalRow[]>();
+  for (const r of rows) {
+    const topUrl = r.pages[0]?.url;
+    if (!topUrl) continue; // shouldn't happen — cannibalization rows always have pages
+    const arr = byUrl.get(topUrl);
+    if (arr) arr.push(r);
+    else byUrl.set(topUrl, [r]);
+  }
+
+  const out: CannibalTopicRow[] = [];
+  for (const [topUrl, members] of byUrl) {
+    members.sort((a, b) => b.impressions - a.impressions);
+    const urls = new Set<string>();
+    for (const m of members) for (const p of m.pages) urls.add(p.url);
+    out.push({
+      parentQuery: members[0].query,
+      topUrl,
+      keywordCount: members.length,
+      pageCount: urls.size,
+      keywords: members,
+      ...foldWeighted(members),
+    });
+  }
+  out.sort((a, b) => b.impressions - a.impressions);
+  return out;
+}
+
+export async function cannibalizationTopics(
+  token: string,
+  property: string,
+  range: Range,
+  type: SearchType,
+  opts: { minPages?: number; brandTerms?: string[] } = {},
+): Promise<CannibalTopicRow[]> {
+  return groupCannibalByTopUrl(await cannibalization(token, property, range, type, opts));
+}
+
+// ---------- 1c. Parent Keywords — every query grouped by its top page ----------
+
+export interface KeywordTopicRow extends RowStat {
+  parentQuery: string;
+  url: string;
+  keywordCount: number;
+  /** Member keywords, sorted by impressions desc — [0] is the parent. */
+  keywords: (RowStat & { query: string })[];
+}
+
+/**
+ * Site-wide version of the cannibalization grouping: every (non-branded)
+ * query grouped by its own top-ranking page — one topic per page that has
+ * any ranking keywords, not just pages with 2+ competing queries. Useful as
+ * a general "what keyword theme is each page really about" view.
+ */
+export async function keywordTopics(
+  token: string,
+  property: string,
+  range: Range,
+  type: SearchType,
+  opts: { brandTerms?: string[] } = {},
+): Promise<KeywordTopicRow[]> {
+  const brandTerms = opts.brandTerms ?? [];
+  const rows = await queryPageRows(token, property, range, type);
+  const byQuery = groupQueryPages(rows, (q) => !isBranded(q, brandTerms));
+
+  const byUrl = new Map<string, (RowStat & { query: string })[]>();
+  for (const [query, pages] of byQuery) {
+    const top = pages[0]; // groupQueryPages already sorts desc by impressions
+    if (!top || top.impressions <= 0) continue;
+    const entry = { query, ...foldWeighted(pages) };
+    const arr = byUrl.get(top.url);
+    if (arr) arr.push(entry);
+    else byUrl.set(top.url, [entry]);
+  }
+
+  const out: KeywordTopicRow[] = [];
+  for (const [url, keywords] of byUrl) {
+    keywords.sort((a, b) => b.impressions - a.impressions);
+    out.push({
+      url,
+      parentQuery: keywords[0].query,
+      keywordCount: keywords.length,
+      keywords,
+      ...foldWeighted(keywords),
+    });
+  }
+  out.sort((a, b) => b.impressions - a.impressions);
+  return out;
+}
+
 // ---------- 2. Low-hanging fruit ----------
 
 export interface LowHangingRow extends RowStat {
