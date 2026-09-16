@@ -127,8 +127,12 @@ export function Indexing({ property }: { property: string }) {
       let quota = 0;
       let lastMessage: string | undefined;
       let round = 0;
+      // Discovery (up to 50 sitemap fetches) runs as its own round, separate
+      // from inspection — combining it with a full inspection batch in one
+      // request pushed close to the platform's time limit.
       while (round < MAX_ROUNDS) {
         round++;
+        const doDiscoverOnly = round === 1 && discover;
         let res: Response;
         let j: { discovered?: number; checked?: number; quotaLeft?: number; message?: string; error?: string };
         try {
@@ -138,6 +142,7 @@ export function Indexing({ property }: { property: string }) {
             body: JSON.stringify({
               property,
               discover: round === 1 ? discover : false,
+              discoverOnly: doDiscoverOnly,
               sitemapUrl: round === 1 ? sitemapUrl.trim() || undefined : undefined,
             }),
           });
@@ -158,6 +163,7 @@ export function Indexing({ property }: { property: string }) {
         quota = j.quotaLeft ?? quota;
         lastMessage = j.message;
         await load(); // refresh counts live between rounds
+        if (doDiscoverOnly) continue; // always follow discovery with an inspection round
         if (lastMessage !== CONTINUE_MESSAGE) break;
       }
       setMsg(

@@ -13,6 +13,12 @@ export async function POST(req: NextRequest) {
     property?: string;
     sitemapUrl?: string;
     discover?: boolean;
+    // When set, only run sitemap discovery and skip inspection this call —
+    // discovery (up to 50 sitemap fetches) plus a full inspection batch in
+    // the same request pushed this close to the platform's time limit; the
+    // Indexing tab now sends discovery as its own first round and inspects
+    // in the rounds after.
+    discoverOnly?: boolean;
     max?: number;
   };
   if (!body.property) return NextResponse.json({ error: "property required" }, { status: 400 });
@@ -26,6 +32,9 @@ export async function POST(req: NextRequest) {
   if (body.discover || body.sitemapUrl) {
     const d = await discoverSitemapUrls(user, site, body.sitemapUrl);
     discovered = d.found;
+  }
+  if (body.discoverOnly) {
+    return NextResponse.json({ discovered, checked: 0 });
   }
 
   const result = await runIndexCheck(user, site, { max: body.max, interactive: true });
