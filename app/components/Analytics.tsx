@@ -15,6 +15,7 @@ import { DateRangePicker, type RangeValue } from "./DateRangePicker";
 import { resolveComparison, resolveRange } from "@/lib/dateRanges";
 import { fmt, pctLabel } from "./format";
 import { downloadCsv } from "./csv";
+import { countryByName, flagSrc } from "@/lib/geo";
 
 interface GaProperty {
   propertyId: string;
@@ -394,6 +395,7 @@ export function Analytics() {
             q={q}
             onQ={setQ}
             csvName={`ga-${geoDim}`}
+            flags={geoDim === "country"}
           />
         )}
       </div>
@@ -581,6 +583,25 @@ function trendFilter(rows: TrendRow[], trend: string, q: string): TrendRow[] {
   });
 }
 
+function CountryFlag({ name }: { name: string }) {
+  const c = countryByName(name);
+  const src = flagSrc(c.alpha2);
+  if (!src) return <span aria-hidden className="mr-1.5">🌐</span>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={c.alpha2}
+      width={18}
+      height={13}
+      className="mr-1.5 inline-block rounded-sm align-[-1px]"
+      onError={(e) => {
+        e.currentTarget.style.visibility = "hidden";
+      }}
+    />
+  );
+}
+
 function TrendTable({
   keyLabel,
   metrics,
@@ -593,6 +614,7 @@ function TrendTable({
   onQ,
   csvName,
   drill,
+  flags,
 }: {
   keyLabel: string;
   metrics: MetricSpec[];
@@ -606,6 +628,8 @@ function TrendTable({
   csvName: string;
   /** When set, each row expands on click to show this drill-down content. */
   drill?: (rowKey: string) => ReactNode;
+  /** Render a country flag (looked up by name) before each row's key. */
+  flags?: boolean;
 }) {
   const [limit, setLimit] = useState(50);
   const [open, setOpen] = useState<string | null>(null);
@@ -652,6 +676,7 @@ function TrendTable({
                 >
                   <td className="max-w-md truncate px-4 py-2" title={r.key}>
                     {drill && <span className="mr-1 text-muted">{open === r.key ? "▾" : "▸"}</span>}
+                    {flags && <CountryFlag name={r.key} />}
                     {r.key || <span className="text-muted">(not set)</span>}
                     {r.isNew && (
                       <span className="ml-1.5 rounded bg-good/15 px-1 text-[10px] font-semibold text-good">

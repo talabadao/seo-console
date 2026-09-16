@@ -18,16 +18,45 @@ function flagOf(alpha2: string): string {
 }
 
 const COUNTRIES = new Map<string, Country>();
+const BY_NAME = new Map<string, Country>();
 for (const entry of RAW.split("|")) {
   const [a3, a2, ...rest] = entry.split(" ");
-  COUNTRIES.set(a3, { alpha2: a2, name: rest.join(" "), flag: flagOf(a2) });
+  const c = { alpha2: a2, name: rest.join(" "), flag: flagOf(a2) };
+  COUNTRIES.set(a3, c);
+  BY_NAME.set(c.name.toLowerCase(), c);
 }
+// A few aliases for names GA4 sends that don't match our canonical English name.
+const NAME_ALIASES: Record<string, string> = {
+  "united states of america": "united states",
+  "russian federation": "russia",
+  "czech republic": "czechia",
+  "myanmar (burma)": "myanmar",
+  "ivory coast": "côte d'ivoire",
+};
 
 export function country(code: string): Country {
   const c = COUNTRIES.get(code?.toLowerCase());
   if (c) return c;
   if (code?.toLowerCase() === "zzz") return { alpha2: "", name: "Unknown region", flag: "🌐" };
   return { alpha2: "", name: (code || "—").toUpperCase(), flag: "🌐" };
+}
+
+/**
+ * GA4's "country" dimension returns the English display name (e.g.
+ * "United States"), not a code — look it up against the same table by name
+ * instead of alpha-3. Falls back to a bare globe when nothing matches
+ * (territories/regions GA4 reports that aren't in the GSC alpha-3 list).
+ */
+export function countryByName(name: string): Country {
+  const key = (name || "").trim().toLowerCase();
+  const c = BY_NAME.get(NAME_ALIASES[key] ?? key);
+  if (c) return c;
+  return { alpha2: "", name: name || "—", flag: "🌐" };
+}
+
+/** Local static flag SVG (flag-icons, MIT) instead of a remote image fetch. */
+export function flagSrc(alpha2: string): string | null {
+  return /^[A-Z]{2}$/i.test(alpha2 || "") ? `/flags/4x3/${alpha2.toLowerCase()}.svg` : null;
 }
 
 export function deviceLabel(key: string): { label: string; icon: string } {

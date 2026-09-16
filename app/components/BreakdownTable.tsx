@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { METRIC_META, type MetricKey, fmtFull } from "./format";
 import { downloadCsv } from "./csv";
-import { country, deviceLabel } from "@/lib/geo";
+import { country, deviceLabel, flagSrc } from "@/lib/geo";
 
 export interface BreakdownRow {
   key: string;
@@ -53,12 +53,13 @@ function Delta({ cur, prev, invert }: { cur: number; prev: number; invert?: bool
 function KeyCell({ dimension, value }: { dimension: string; value: string }) {
   if (dimension === "country") {
     const c = country(value);
+    const src = flagSrc(c.alpha2);
     return (
       <span className="flex items-center gap-2">
-        {c.alpha2 ? (
+        {src ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`https://flagsapi.com/${c.alpha2}/flat/24.png`}
+            src={src}
             alt={c.alpha2}
             width={20}
             height={15}
