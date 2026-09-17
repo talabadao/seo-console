@@ -161,7 +161,20 @@ function summaryParts(data: ReportData) {
     ? data.bottomUrls.map(urlLine)
     : ["No qualifying URLs this week."];
 
-  const runRateLine = `${PACE_EMOJI[data.kpis.trafficOrganic.pace]} Organic run rate: ${pct1(data.kpis.trafficOrganic.projectedPct)}%    ${PACE_EMOJI[data.kpis.trafficAi.pace]} AI run rate: ${pct1(data.kpis.trafficAi.projectedPct)}%`;
+  // Actual achieved so far this month, as a % of the monthly target — not a
+  // full-month forecast. e.g. 6,327 reached against a 10,570 target is 59.9%,
+  // regardless of how many days are left in the month.
+  const toDatePct = (actual: number, target: number) =>
+    target > 0 ? (actual / target) * 100 : actual > 0 ? Infinity : 0;
+  const paceFor = (pct: number): Pace => {
+    if (!isFinite(pct)) return "off-track";
+    if (pct >= 100) return "on-track";
+    if (pct >= 85) return "at-risk";
+    return "off-track";
+  };
+  const organicPct = toDatePct(data.kpis.trafficOrganic.actualMtd, data.kpis.trafficOrganic.target);
+  const aiPct = toDatePct(data.kpis.trafficAi.actualMtd, data.kpis.trafficAi.target);
+  const runRateLine = `${PACE_EMOJI[paceFor(organicPct)]} Organic run rate: ${pct1(organicPct)}%    ${PACE_EMOJI[paceFor(aiPct)]} AI run rate: ${pct1(aiPct)}%`;
 
   return {
     mtdRange,
