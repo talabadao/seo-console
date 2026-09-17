@@ -627,7 +627,6 @@ function PostToAsanaModal({
           propertyId,
           title,
           statusType,
-          text: body.text,
           htmlText: body.html,
         }),
       });

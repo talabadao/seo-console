@@ -132,8 +132,11 @@ export type AsanaStatusType =
 
 export async function createStatusUpdate(
   token: string,
-  opts: { parent: string; title: string; text: string; htmlText: string; statusType: AsanaStatusType },
+  opts: { parent: string; title: string; htmlText: string; statusType: AsanaStatusType },
 ): Promise<{ gid: string; permalinkUrl: string | null }> {
+  // Asana rejects the request if both `text` and `html_text` are present
+  // ("Must supply only one of text or html_text") — send only html_text so
+  // the formatting (bold, bullets, code) survives.
   const j = await afetch<{ data: { gid: string; permalink_url?: string } }>(
     token,
     "/status_updates?opt_fields=permalink_url",
@@ -143,7 +146,6 @@ export async function createStatusUpdate(
         data: {
           parent: opts.parent,
           title: opts.title,
-          text: opts.text,
           html_text: opts.htmlText,
           status_type: opts.statusType,
         },

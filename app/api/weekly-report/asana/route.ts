@@ -30,17 +30,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid statusType" }, { status: 400 });
   }
   const title = String(body.title ?? "").trim();
-  const text = String(body.text ?? "");
   const htmlText = String(body.htmlText ?? "");
-  if (!title || !text || !htmlText) {
-    return NextResponse.json({ error: "title, text and htmlText are required" }, { status: 400 });
+  if (!title || !htmlText) {
+    return NextResponse.json({ error: "title and htmlText are required" }, { status: 400 });
   }
 
   try {
     const result = await createStatusUpdate(user.asana_api_token, {
       parent: projectGid,
       title,
-      text,
       htmlText,
       statusType,
     });
