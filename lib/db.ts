@@ -140,6 +140,7 @@ async function migrate(): Promise<void> {
       google_refresh_token  TEXT,
       google_token_expiry   BIGINT,
       bing_api_key          TEXT,
+      asana_api_token       TEXT,
       google_scopes         TEXT,
       ga_ai_domains         TEXT,
       created_at            BIGINT NOT NULL,
@@ -309,6 +310,9 @@ async function migrate(): Promise<void> {
   await ensureColumn(sql, "url_inspections", "in_sitemap", "INTEGER DEFAULT 0");
   await ensureColumn(sql, "sites", "auto_index_enabled", "BOOLEAN NOT NULL DEFAULT false");
   await ensureColumn(sql, "sites", "auto_index_cap", "INTEGER NOT NULL DEFAULT 100");
+  await ensureColumn(sql, "users", "asana_api_token", "TEXT");
+  await ensureColumn(sql, "weekly_kpi_config", "asana_project_gid", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(sql, "weekly_kpi_config", "asana_status_title", "TEXT NOT NULL DEFAULT ''");
 
   // longtailMinWords' configuration UI was removed in favor of a fixed
   // default — correct any site still sitting at the old default of 4.

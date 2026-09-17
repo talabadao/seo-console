@@ -62,6 +62,7 @@ export async function GET(req: NextRequest) {
       google_scopes: row.googleScopes,
       ga_ai_domains: row.gaAiDomains,
       bing_api_key: row.bingApiKey,
+      asana_api_token: null,
     };
     try {
       const d = await discoverSitemapUrls(user, site);

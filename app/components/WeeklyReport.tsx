@@ -4,14 +4,24 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { fmtFull, pctLabel } from "./format";
 import {
+  buildAsanaBody,
   buildInsights,
+  type AsanaTask,
   type DailyPoint,
   type GaProperty,
   type KpiCard as KpiCardData,
   type KpiConfig,
   type ReportData,
   type Section,
+  type TaskBuckets,
 } from "./insights";
+
+const STATUS_OPTIONS: { value: "on_track" | "at_risk" | "off_track" | "on_hold"; label: string }[] = [
+  { value: "on_track", label: "On track" },
+  { value: "at_risk", label: "At risk" },
+  { value: "off_track", label: "Off track" },
+  { value: "on_hold", label: "On hold" },
+];
 
 const PACE_COLOR: Record<KpiCardData["pace"], string> = {
   "on-track": "var(--good)",
@@ -157,7 +167,13 @@ export function WeeklyReport() {
       )}
 
       {data && sub === "overview" && <Overview data={data} />}
-      {data && sub === "insights" && <Insights data={data} />}
+      {data && sub === "insights" && (
+        <Insights
+          data={data}
+          propertyId={propertyId}
+          propertyLabel={props.find((p) => p.propertyId === propertyId)?.displayName ?? ""}
+        />
+      )}
 
       {showConfig && data && (
         <ConfigModal
@@ -423,9 +439,44 @@ function MiniCard({
 
 // ---------- Insights ----------
 
-function Insights({ data }: { data: ReportData }) {
+const INSIGHTS_HTML_CLASS =
+  "insights-content max-w-none text-sm leading-relaxed [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_code]:py-0.5 [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h2:first-child]:mt-0 [&_li]:ml-4 [&_li]:list-disc [&_p]:mt-3";
+
+function Insights({
+  data,
+  propertyId,
+  propertyLabel,
+}: {
+  data: ReportData;
+  propertyId: string;
+  propertyLabel: string;
+}) {
   const [copied, setCopied] = useState(false);
+  const [showPost, setShowPost] = useState(false);
+  const [tasks, setTasks] = useState<TaskBuckets | null>(null);
+  const [tasksErr, setTasksErr] = useState<string | null>(null);
+  const [tasksNeedConnect, setTasksNeedConnect] = useState(false);
   const built = useMemo(() => buildInsights(data), [data]);
+  const projectGid = data.config.asanaProjectGid.trim();
+
+  useEffect(() => {
+    if (!projectGid) return;
+    let ignore = false;
+    setTasksErr(null);
+    setTasksNeedConnect(false);
+    fetch(`/api/weekly-report/asana-tasks?propertyId=${encodeURIComponent(propertyId)}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (ignore) return;
+        if (j.needsAsanaConnect || j.needsProject) setTasksNeedConnect(true);
+        else if (j.error) setTasksErr(j.error);
+        else setTasks({ completedRecently: j.completedRecently, dueThisWeek: j.dueThisWeek, dueNextWeek: j.dueNextWeek });
+      })
+      .catch(() => !ignore && setTasksErr("Failed to load Asana tasks."));
+    return () => {
+      ignore = true;
+    };
+  }, [propertyId, projectGid]);
 
   async function copy() {
     try {
@@ -448,22 +499,216 @@ function Insights({ data }: { data: ReportData }) {
 
   return (
     <div className="rounded-xl border bg-surface p-5">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-muted">
           Formatted for pasting into Asana — copies bold / headings / bullets.
         </h3>
-        <button
-          onClick={copy}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
-        >
-          {copied ? "Copied!" : "Copy for Asana"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={copy}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+          >
+            {copied ? "Copied!" : "Copy for Asana"}
+          </button>
+          <button
+            onClick={() => setShowPost(true)}
+            disabled={!projectGid}
+            title={projectGid ? undefined : "Set an Asana project ID in Configure KPIs first"}
+            className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
+          >
+            Post to Asana…
+          </button>
+        </div>
       </div>
 
+      <div className={INSIGHTS_HTML_CLASS} dangerouslySetInnerHTML={{ __html: built.html }} />
+
+      {projectGid && (
+        <div className="mt-6 border-t pt-5">
+          <h4 className="text-sm font-semibold text-muted">Tasks (from Asana)</h4>
+          {tasksNeedConnect && (
+            <p className="mt-2 text-xs text-muted">
+              Connect Asana and set a project ID in Configure KPIs to pull tasks here.
+            </p>
+          )}
+          {tasksErr && <p className="mt-2 text-xs text-bad">{tasksErr}</p>}
+          {tasks && (
+            <div className="mt-3 grid gap-4 lg:grid-cols-3">
+              <TaskList title="Completed (last 2 weeks)" tasks={tasks.completedRecently} dateLabel="completed" empty="Nothing completed." />
+              <TaskList title="Due this week" tasks={tasks.dueThisWeek} dateLabel="due" empty="Nothing due this week." />
+              <TaskList title="Due next week" tasks={tasks.dueNextWeek} dateLabel="due" empty="Nothing due next week." />
+            </div>
+          )}
+        </div>
+      )}
+
+      {showPost && (
+        <PostToAsanaModal
+          data={data}
+          tasks={tasks}
+          propertyId={propertyId}
+          defaultTitle={data.config.asanaStatusTitle || propertyLabel}
+          onClose={() => setShowPost(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function TaskList({
+  title,
+  tasks,
+  dateLabel,
+  empty,
+}: {
+  title: string;
+  tasks: AsanaTask[];
+  dateLabel: "completed" | "due";
+  empty: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <div className="text-xs font-semibold uppercase text-muted">{title}</div>
+      {!tasks.length && <p className="mt-2 text-xs text-muted">{empty}</p>}
+      <ul className="mt-2 space-y-1.5">
+        {tasks.map((t) => {
+          const date = dateLabel === "completed" ? t.completed_at : t.due_on;
+          return (
+            <li key={t.gid} className="text-xs">
+              <a
+                href={t.permalink_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-foreground hover:text-accent"
+              >
+                {t.name}
+              </a>
+              <div className="text-muted">
+                {date ? date.slice(0, 10) : `no ${dateLabel} date`}
+                {t.assignee?.name ? ` · ${t.assignee.name}` : ""}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+// ---------- Post to Asana ----------
+
+function PostToAsanaModal({
+  data,
+  tasks,
+  propertyId,
+  defaultTitle,
+  onClose,
+}: {
+  data: ReportData;
+  tasks: TaskBuckets | null;
+  propertyId: string;
+  defaultTitle: string;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState(defaultTitle);
+  const [statusType, setStatusType] = useState<(typeof STATUS_OPTIONS)[number]["value"]>("on_track");
+  const [posting, setPosting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string; url?: string | null } | null>(null);
+  const body = useMemo(() => buildAsanaBody(data, tasks), [data, tasks]);
+
+  async function post() {
+    setPosting(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/weekly-report/asana", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          propertyId,
+          title,
+          statusType,
+          text: body.text,
+          htmlText: body.html,
+        }),
+      });
+      const j = await res.json();
+      if (res.ok) setResult({ ok: true, message: "Posted to Asana.", url: j.permalinkUrl });
+      else setResult({ ok: false, message: j.error ?? "Failed to post." });
+    } catch {
+      setResult({ ok: false, message: "Failed to post." });
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-12" onClick={onClose}>
       <div
-        className="insights-content max-w-none text-sm leading-relaxed [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_code]:py-0.5 [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h2:first-child]:mt-0 [&_li]:ml-4 [&_li]:list-disc [&_p]:mt-3"
-        dangerouslySetInnerHTML={{ __html: built.html }}
-      />
+        className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-surface p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Post status update to Asana</h2>
+          <button onClick={onClose} className="text-muted hover:text-foreground">
+            ✕
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          Nothing is sent until you press Send below — review the preview first.
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+          <label className="block">
+            <span className="text-xs text-muted">Title</span>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">Status</span>
+            <select
+              value={statusType}
+              onChange={(e) => setStatusType(e.target.value as typeof statusType)}
+              className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-4 rounded-lg border bg-background p-4">
+          <div className={INSIGHTS_HTML_CLASS} dangerouslySetInnerHTML={{ __html: body.html }} />
+        </div>
+
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={post}
+            disabled={posting || !title.trim()}
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {posting ? "Sending…" : "Send to Asana"}
+          </button>
+          {result && (
+            <span className={`text-sm ${result.ok ? "text-good" : "text-bad"}`}>
+              {result.message}
+              {result.ok && result.url && (
+                <>
+                  {" "}
+                  <a href={result.url} target="_blank" rel="noreferrer" className="underline">
+                    View in Asana
+                  </a>
+                </>
+              )}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -489,6 +734,8 @@ function ConfigModal({
   const [leadOrganicTarget, setLeadOrganicTarget] = useState(config.leadOrganicTarget);
   const [leadAiTarget, setLeadAiTarget] = useState(config.leadAiTarget);
   const [leadEvents, setLeadEvents] = useState<string[]>(config.leadEvents);
+  const [asanaProjectGid, setAsanaProjectGid] = useState(config.asanaProjectGid);
+  const [asanaStatusTitle, setAsanaStatusTitle] = useState(config.asanaStatusTitle);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -510,6 +757,8 @@ function ConfigModal({
           leadOrganicTarget,
           leadAiTarget,
           leadEvents,
+          asanaProjectGid,
+          asanaStatusTitle,
         }),
       });
       if (res.ok) onSaved();
@@ -568,6 +817,30 @@ function ConfigModal({
                 <span className="text-xs tabular-nums text-muted">{fmtFull(ev.count, "count")}</span>
               </label>
             ))}
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <p className="text-xs font-medium text-muted">Asana (Insights tab task export + status posts)</p>
+          <div className="mt-2 grid gap-3">
+            <label className="block">
+              <span className="text-xs text-muted">Asana project ID (gid)</span>
+              <input
+                value={asanaProjectGid}
+                onChange={(e) => setAsanaProjectGid(e.target.value)}
+                placeholder="e.g. 1201843027615074 — from the project's URL"
+                className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-muted">Status update title (optional — defaults to the property name)</span>
+              <input
+                value={asanaStatusTitle}
+                onChange={(e) => setAsanaStatusTitle(e.target.value)}
+                placeholder="e.g. HOP145 - Jackalope Hotel - SEO"
+                className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+              />
+            </label>
           </div>
         </div>
 

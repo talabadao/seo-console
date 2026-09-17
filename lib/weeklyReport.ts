@@ -312,6 +312,10 @@ export interface KpiConfig {
   leadOrganicTarget: number;
   leadAiTarget: number;
   leadEvents: string[];
+  /** Asana project gid tasks are pulled from / the status update is posted to. */
+  asanaProjectGid: string;
+  /** Optional fixed title for the Asana status update; falls back to the GA property name. */
+  asanaStatusTitle: string;
 }
 
 function defaultConfig(yearMonth: string): KpiConfig {
@@ -322,13 +326,16 @@ function defaultConfig(yearMonth: string): KpiConfig {
     leadOrganicTarget: 0,
     leadAiTarget: 0,
     leadEvents: [],
+    asanaProjectGid: "",
+    asanaStatusTitle: "",
   };
 }
 
 export async function configFor(userId: number, propertyId: string, yearMonth: string): Promise<KpiConfig> {
   const row = (await db
     .prepare(
-      `SELECT traffic_organic_target, traffic_ai_target, lead_organic_target, lead_ai_target, lead_events
+      `SELECT traffic_organic_target, traffic_ai_target, lead_organic_target, lead_ai_target,
+              lead_events, asana_project_gid, asana_status_title
        FROM weekly_kpi_config WHERE user_id = ? AND property_id = ? AND year_month = ?`,
     )
     .get(userId, propertyId, yearMonth)) as
@@ -338,6 +345,8 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
         lead_organic_target: number;
         lead_ai_target: number;
         lead_events: string;
+        asana_project_gid: string | null;
+        asana_status_title: string | null;
       }
     | undefined;
   if (!row) return defaultConfig(yearMonth);
@@ -355,6 +364,8 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
     leadOrganicTarget: Number(row.lead_organic_target) || 0,
     leadAiTarget: Number(row.lead_ai_target) || 0,
     leadEvents,
+    asanaProjectGid: row.asana_project_gid ?? "",
+    asanaStatusTitle: row.asana_status_title ?? "",
   };
 }
 
@@ -363,14 +374,17 @@ export async function saveConfig(userId: number, propertyId: string, cfg: KpiCon
     .prepare(
       `INSERT INTO weekly_kpi_config
          (user_id, property_id, year_month, traffic_organic_target, traffic_ai_target,
-          lead_organic_target, lead_ai_target, lead_events, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          lead_organic_target, lead_ai_target, lead_events, asana_project_gid,
+          asana_status_title, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (user_id, property_id, year_month) DO UPDATE SET
          traffic_organic_target = EXCLUDED.traffic_organic_target,
          traffic_ai_target = EXCLUDED.traffic_ai_target,
          lead_organic_target = EXCLUDED.lead_organic_target,
          lead_ai_target = EXCLUDED.lead_ai_target,
          lead_events = EXCLUDED.lead_events,
+         asana_project_gid = EXCLUDED.asana_project_gid,
+         asana_status_title = EXCLUDED.asana_status_title,
          updated_at = EXCLUDED.updated_at`,
     )
     .run(
@@ -382,6 +396,8 @@ export async function saveConfig(userId: number, propertyId: string, cfg: KpiCon
       cfg.leadOrganicTarget,
       cfg.leadAiTarget,
       JSON.stringify(cfg.leadEvents),
+      cfg.asanaProjectGid.trim(),
+      cfg.asanaStatusTitle.trim(),
       Date.now(),
     );
 }

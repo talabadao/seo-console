@@ -62,6 +62,11 @@ export function SettingsPanel({
   const [aiText, setAiText] = useState("");
   const [aiMsg, setAiMsg] = useState<string | null>(null);
 
+  const [asanaKey, setAsanaKey] = useState("");
+  const [asanaBusy, setAsanaBusy] = useState(false);
+  const [asanaMsg, setAsanaMsg] = useState<string | null>(null);
+  const [asanaConnected, setAsanaConnected] = useState(false);
+
   useEffect(() => {
     let ignore = false;
     fetch("/api/settings/ga")
@@ -73,6 +78,40 @@ export function SettingsPanel({
       ignore = true;
     };
   }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    fetch("/api/settings/asana")
+      .then((r) => r.json())
+      .then((j: { connected?: boolean }) => {
+        if (!ignore) setAsanaConnected(Boolean(j.connected));
+      });
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function saveAsana() {
+    setAsanaBusy(true);
+    setAsanaMsg(null);
+    try {
+      const res = await fetch("/api/settings/asana", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: asanaKey }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setAsanaConnected(json.connected);
+        setAsanaMsg(json.connected ? `Connected as ${json.name}.` : "Asana token cleared.");
+        setAsanaKey("");
+      } else {
+        setAsanaMsg(json.error ?? "Failed to save token");
+      }
+    } finally {
+      setAsanaBusy(false);
+    }
+  }
 
   async function saveAi() {
     setAiMsg(null);
@@ -258,6 +297,51 @@ export function SettingsPanel({
               Disconnect Bing
             </button>
           )}
+        </section>
+
+        <section className="mt-6">
+          <h3 className="text-sm font-medium">
+            Asana{" "}
+            <span className={asanaConnected ? "text-good" : "text-muted"}>
+              {asanaConnected ? "· connected" : "· not connected"}
+            </span>
+          </h3>
+          <p className="mt-1 text-xs text-muted">
+            Asana → My Settings → Apps → Developer apps → Personal access tokens. Used by the
+            Weekly Report&apos;s Insights tab to pull tasks and post status updates to the
+            project you set in Configure KPIs.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <input
+              value={asanaKey}
+              onChange={(e) => setAsanaKey(e.target.value)}
+              placeholder={asanaConnected ? "Enter a new token to replace" : "Paste Asana personal access token"}
+              className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm"
+            />
+            <button
+              onClick={saveAsana}
+              disabled={asanaBusy}
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {asanaBusy ? "…" : "Save"}
+            </button>
+          </div>
+          {asanaConnected && (
+            <button
+              onClick={() => {
+                setAsanaKey("");
+                fetch("/api/settings/asana", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ apiKey: "" }),
+                }).then(() => setAsanaConnected(false));
+              }}
+              className="mt-2 text-xs text-bad"
+            >
+              Disconnect Asana
+            </button>
+          )}
+          {asanaMsg && <p className="mt-2 text-xs text-muted">{asanaMsg}</p>}
         </section>
 
         {cfg && (

@@ -38,6 +38,8 @@ export async function POST(req: NextRequest) {
     leadOrganicTarget: num(body.leadOrganicTarget),
     leadAiTarget: num(body.leadAiTarget),
     leadEvents: Array.isArray(body.leadEvents) ? body.leadEvents.map(String).filter(Boolean) : [],
+    asanaProjectGid: String(body.asanaProjectGid ?? ""),
+    asanaStatusTitle: String(body.asanaStatusTitle ?? ""),
   };
   await saveConfig(user.id, propertyId, cfg);
   return NextResponse.json({ ok: true, config: cfg });

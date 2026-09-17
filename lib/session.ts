@@ -34,6 +34,7 @@ export interface UserRow {
   google_scopes: string | null;
   ga_ai_domains: string | null;
   bing_api_key: string | null;
+  asana_api_token: string | null;
 }
 
 export async function currentUser(): Promise<UserRow | null> {
