@@ -106,13 +106,21 @@ export interface ReportData {
 const n0 = (v: number) => Math.round(v).toLocaleString();
 const pct1 = (v: number) => (isFinite(v) ? Math.abs(v).toFixed(1) : "–");
 
+/** Circle matching a KPI's pace, used to make the run-rate line scannable at a glance. */
+const PACE_EMOJI: Record<Pace, string> = { "on-track": "🟢", "at-risk": "🟡", "off-track": "🔴" };
+
+const SUMMARY_TITLE = "📊 Summary";
+const TOP_URLS_TITLE = "🚀 Top-performing URLs for the week";
+const BOTTOM_URLS_TITLE = "📉 Underperforming URLs for the week";
+const DIVIDER = "─".repeat(28);
+
 function changeLine(cur: number, prev: number, unit: string): string {
   if (!prev) {
-    return cur > 0 ? `New this period — reached ${n0(cur)} ${unit}` : `No ${unit} recorded`;
+    return cur > 0 ? `🆕 New this period → ${n0(cur)} ${unit}` : `No ${unit} recorded`;
   }
   const pct = ((cur - prev) / prev) * 100;
-  const dir = pct >= 0 ? "Increased" : "Decreased";
-  return `${dir} ${pct1(pct)}% (reached ${n0(cur)} ${unit})`;
+  const arrow = pct >= 0 ? "▲" : "▼";
+  return `${arrow} ${pct1(pct)}% → ${n0(cur)} ${unit}`;
 }
 
 function esc(s: string): string {
@@ -120,8 +128,8 @@ function esc(s: string): string {
 }
 
 function urlLine(u: UrlChange): string {
-  const sign = (u.pct ?? 0) >= 0 ? "+" : "-";
-  return `${u.url}: ${sign}${pct1(u.pct ?? 0)}% (accounting for ${n0(u.cur)} sessions)`;
+  const arrow = (u.pct ?? 0) >= 0 ? "▲" : "▼";
+  return `${u.url} — ${arrow} ${pct1(u.pct ?? 0)}% → ${n0(u.cur)} sessions`;
 }
 
 interface SectionSpec {
@@ -135,10 +143,10 @@ function summaryParts(data: ReportData) {
   const mtdRange = `${w.monthStartLabel.replace(/, \d{4}$/, "")} – ${w.mtd.end.slice(-2)}`;
 
   const sectionSpecs: SectionSpec[] = [
-    { title: "Last 7 days vs Previous 7 days:", section: data.sections.last7 },
-    { title: "MTD vs Last period:", section: data.sections.mtdVsLastPeriod },
-    { title: "MTD vs Same period last year:", section: data.sections.mtdVsLastYear },
-    { title: "Last 30 days vs Last period:", section: data.sections.last30VsLastPeriod },
+    { title: "📆 Last 7 days vs Previous 7 days:", section: data.sections.last7 },
+    { title: "📆 MTD vs Last period:", section: data.sections.mtdVsLastPeriod },
+    { title: "📆 MTD vs Same period last year:", section: data.sections.mtdVsLastYear },
+    { title: "📆 Last 30 days vs Last period:", section: data.sections.last30VsLastPeriod },
   ];
 
   const sectionLines = (s: Section) => [
@@ -153,57 +161,71 @@ function summaryParts(data: ReportData) {
     ? data.bottomUrls.map(urlLine)
     : ["No qualifying URLs this week."];
 
+  const runRateLine = `${PACE_EMOJI[data.kpis.trafficOrganic.pace]} Organic run rate: ${pct1(data.kpis.trafficOrganic.projectedPct)}%    ${PACE_EMOJI[data.kpis.trafficAi.pace]} AI run rate: ${pct1(data.kpis.trafficAi.projectedPct)}%`;
+
   return {
     mtdRange,
     sections: sectionSpecs.map(({ title, section }) => ({ title, lines: sectionLines(section) })),
     topLines,
     bottomLines,
+    runRateLine,
   };
 }
 
-/** Builds both a rich-HTML version (for Asana's rich-paste) and a plain-text fallback. */
-export function buildInsights(data: ReportData): { html: string; text: string } {
-  const { windows: w, config, kpis } = data;
-  const { mtdRange, sections, topLines, bottomLines } = summaryParts(data);
+/**
+ * Builds both a rich-HTML version (for Asana's rich-paste — headings/bold
+ * render correctly when pasted through the browser, unlike the API's broken
+ * html_text) and a plain-text fallback. `tasks` is optional so the panel can
+ * still render before the Asana fetch resolves; pass it once loaded so the
+ * copied content is a complete, paste-and-done report even if you never open
+ * "Post to Asana" at all.
+ */
+export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null): { html: string; text: string } {
+  const { windows: w, config } = data;
+  const { mtdRange, sections, topLines, bottomLines, runRateLine } = summaryParts(data);
+  const taskSections = taskSectionsFor(tasks);
 
   // ---------- HTML ----------
   const ul = (lines: string[]) => `<ul>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
   const html = [
-    `<h2>Summary</h2>`,
+    `<h2>${esc(SUMMARY_TITLE)}</h2>`,
     `<p><strong>${esc(w.monthLabel)} KPI:</strong></p>`,
     ul([
-      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `Organic Traffic Reached (${mtdRange}): ${n0(kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(kpis.trafficAi.actualMtd)} sessions`,
+      `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
+      `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
     ]),
-    `<ul><li><code>KPI run rate: ${pct1(kpis.trafficOrganic.projectedPct)}% | KPI run rate: ${pct1(kpis.trafficAi.projectedPct)}%</code></li></ul>`,
+    `<ul><li><code>${esc(runRateLine)}</code></li></ul>`,
     ...sections.flatMap(({ title, lines }) => [
       `<p><strong><u>${esc(title)}</u></strong></p>`,
       ul(lines),
     ]),
-    `<h2>Top-performing URLs for the week</h2>`,
+    `<h2>${esc(TOP_URLS_TITLE)}</h2>`,
     ul(topLines),
-    `<h2>Underperforming URLs for the week</h2>`,
+    `<h2>${esc(BOTTOM_URLS_TITLE)}</h2>`,
     ul(bottomLines),
+    ...taskSections.flatMap(({ title, lines }) => [`<h2>${esc(title)}</h2>`, ul(lines)]),
   ].join("\n");
 
   // ---------- plain text ----------
   const bullets = (lines: string[]) => lines.map((l) => `• ${l}`).join("\n");
   const text = [
-    "Summary",
+    SUMMARY_TITLE,
     "",
     `${w.monthLabel} KPI:`,
     bullets([
-      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `Organic Traffic Reached (${mtdRange}): ${n0(kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(kpis.trafficAi.actualMtd)} sessions`,
-      `KPI run rate: ${pct1(kpis.trafficOrganic.projectedPct)}% | KPI run rate: ${pct1(kpis.trafficAi.projectedPct)}%`,
+      `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
+      `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
+      runRateLine,
     ]),
     "",
     ...sections.flatMap(({ title, lines }) => [title, bullets(lines), ""]),
-    "Top-performing URLs for the week",
+    DIVIDER,
+    TOP_URLS_TITLE,
     bullets(topLines),
     "",
-    "Underperforming URLs for the week",
+    BOTTOM_URLS_TITLE,
     bullets(bottomLines),
+    ...taskSections.flatMap(({ title, lines }) => ["", DIVIDER, title, bullets(lines)]),
   ].join("\n");
 
   return { html, text };
@@ -238,67 +260,51 @@ function taskLine(t: AsanaTask, dateLabel: "completed" | "due"): string {
   return `${t.name} — ${dateText}${who}`;
 }
 
-/**
- * Body content for Asana's create-status-update API. Asana's html_text does
- * NOT support <h1>/<h2> for stories or status updates (only strong / em / u /
- * s / code / a / ol / ul / li / blockquote / pre), so section titles here are
- * bold text rather than the headings buildInsights() uses for the browser
- * copy-paste flow. Wrapped in <body> per Asana's rich-text requirement.
- */
-export function buildAsanaBody(
-  data: ReportData,
-  tasks: TaskBuckets | null,
-): { html: string; text: string } {
-  const { windows: w, config, kpis } = data;
-  const { mtdRange, sections, topLines, bottomLines } = summaryParts(data);
-
-  const taskLines = (list: AsanaTask[], dateLabel: "completed" | "due", emptyText: string) =>
+/** The 3 task buckets as {title, lines} — shared by buildInsights() and buildAsanaBody(). */
+function taskSectionsFor(tasks: TaskBuckets | null): { title: string; lines: string[] }[] {
+  if (!tasks) return [];
+  const lines = (list: AsanaTask[], dateLabel: "completed" | "due", emptyText: string) =>
     list.length ? list.map((t) => taskLine(t, dateLabel)) : [emptyText];
+  return [
+    { title: "✅ Tasks completed (last 2 weeks)", lines: lines(tasks.completedRecently, "completed", "No tasks completed in the last 2 weeks.") },
+    { title: "🗓️ Tasks due this week", lines: lines(tasks.dueThisWeek, "due", "No tasks due this week.") },
+    { title: "🔜 Tasks due next week", lines: lines(tasks.dueNextWeek, "due", "No tasks due next week.") },
+  ];
+}
 
-  const taskSections = tasks
-    ? [
-        { title: "Tasks completed (last 2 weeks)", lines: taskLines(tasks.completedRecently, "completed", "No tasks completed in the last 2 weeks.") },
-        { title: "Tasks due this week", lines: taskLines(tasks.dueThisWeek, "due", "No tasks due this week.") },
-        { title: "Tasks due next week", lines: taskLines(tasks.dueNextWeek, "due", "No tasks due next week.") },
-      ]
-    : [];
-
-  const ul = (lines: string[]) => `<ul>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
-  const html = `<body>${[
-    `<p><strong>Summary</strong></p>`,
-    `<p><strong>${esc(w.monthLabel)} KPI:</strong></p>`,
-    ul([
-      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `Organic Traffic Reached (${mtdRange}): ${n0(kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(kpis.trafficAi.actualMtd)} sessions`,
-    ]),
-    `<ul><li><code>KPI run rate: ${pct1(kpis.trafficOrganic.projectedPct)}% | KPI run rate: ${pct1(kpis.trafficAi.projectedPct)}%</code></li></ul>`,
-    ...sections.flatMap(({ title, lines }) => [`<p><strong><u>${esc(title)}</u></strong></p>`, ul(lines)]),
-    `<p><strong>Top-performing URLs for the week</strong></p>`,
-    ul(topLines),
-    `<p><strong>Underperforming URLs for the week</strong></p>`,
-    ul(bottomLines),
-    ...taskSections.flatMap(({ title, lines }) => [`<p><strong>${esc(title)}</strong></p>`, ul(lines)]),
-  ].join("\n")}</body>`;
+/**
+ * Plain-text body for Asana's create-status-update API. Asana has a long-
+ * standing, staff-acknowledged bug where html_text on status updates is
+ * stored but never rendered (shows the raw markup instead of formatting —
+ * see https://forum.asana.com/t/rich-text-does-not-work-for-status-updates/31311),
+ * so this is plain text with spacing/dividers/emoji standing in for
+ * headings and bold instead of real markup.
+ */
+export function buildAsanaBody(data: ReportData, tasks: TaskBuckets | null): { text: string } {
+  const { windows: w, config } = data;
+  const { mtdRange, sections, topLines, bottomLines, runRateLine } = summaryParts(data);
+  const taskSections = taskSectionsFor(tasks);
 
   const bullets = (lines: string[]) => lines.map((l) => `• ${l}`).join("\n");
   const text = [
-    "Summary",
+    SUMMARY_TITLE,
     "",
     `${w.monthLabel} KPI:`,
     bullets([
-      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `Organic Traffic Reached (${mtdRange}): ${n0(kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(kpis.trafficAi.actualMtd)} sessions`,
-      `KPI run rate: ${pct1(kpis.trafficOrganic.projectedPct)}% | KPI run rate: ${pct1(kpis.trafficAi.projectedPct)}%`,
+      `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
+      `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
+      runRateLine,
     ]),
     "",
     ...sections.flatMap(({ title, lines }) => [title, bullets(lines), ""]),
-    "Top-performing URLs for the week",
+    DIVIDER,
+    TOP_URLS_TITLE,
     bullets(topLines),
     "",
-    "Underperforming URLs for the week",
+    BOTTOM_URLS_TITLE,
     bullets(bottomLines),
-    ...taskSections.flatMap(({ title, lines }) => ["", title, bullets(lines)]),
+    ...taskSections.flatMap(({ title, lines }) => ["", DIVIDER, title, bullets(lines)]),
   ].join("\n");
 
-  return { html, text };
+  return { text };
 }

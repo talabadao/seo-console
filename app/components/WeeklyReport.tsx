@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { fmtFull, pctLabel } from "./format";
 import {
@@ -454,9 +455,14 @@ function Insights({
   const [copied, setCopied] = useState(false);
   const [showPost, setShowPost] = useState(false);
   const [tasks, setTasks] = useState<TaskBuckets | null>(null);
+  const [asanaProjectName, setAsanaProjectName] = useState("");
   const [tasksErr, setTasksErr] = useState<string | null>(null);
   const [tasksNeedConnect, setTasksNeedConnect] = useState(false);
-  const built = useMemo(() => buildInsights(data), [data]);
+  // Rendered on screen without tasks (the TaskList grid below already covers that, with
+  // clickable links) but copied to the clipboard with tasks included, per request — so a
+  // plain paste is a complete, standalone report even without opening "Post to Asana".
+  const displayed = useMemo(() => buildInsights(data), [data]);
+  const forCopy = useMemo(() => buildInsights(data, tasks), [data, tasks]);
   const projectGid = data.config.asanaProjectGid.trim();
 
   useEffect(() => {
@@ -470,7 +476,10 @@ function Insights({
         if (ignore) return;
         if (j.needsAsanaConnect || j.needsProject) setTasksNeedConnect(true);
         else if (j.error) setTasksErr(j.error);
-        else setTasks({ completedRecently: j.completedRecently, dueThisWeek: j.dueThisWeek, dueNextWeek: j.dueNextWeek });
+        else {
+          setTasks({ completedRecently: j.completedRecently, dueThisWeek: j.dueThisWeek, dueNextWeek: j.dueNextWeek });
+          setAsanaProjectName(j.project?.name ?? "");
+        }
       })
       .catch(() => !ignore && setTasksErr("Failed to load Asana tasks."));
     return () => {
@@ -483,17 +492,17 @@ function Insights({
       if (typeof ClipboardItem !== "undefined") {
         await navigator.clipboard.write([
           new ClipboardItem({
-            "text/html": new Blob([built.html], { type: "text/html" }),
-            "text/plain": new Blob([built.text], { type: "text/plain" }),
+            "text/html": new Blob([forCopy.html], { type: "text/html" }),
+            "text/plain": new Blob([forCopy.text], { type: "text/plain" }),
           }),
         ]);
       } else {
-        await navigator.clipboard.writeText(built.text);
+        await navigator.clipboard.writeText(forCopy.text);
       }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      await navigator.clipboard.writeText(built.text).catch(() => {});
+      await navigator.clipboard.writeText(forCopy.text).catch(() => {});
     }
   }
 
@@ -501,7 +510,7 @@ function Insights({
     <div className="rounded-xl border bg-surface p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-muted">
-          Formatted for pasting into Asana — copies bold / headings / bullets.
+          Formatted for pasting into Asana — copies bold / headings / bullets, tasks included.
         </h3>
         <div className="flex gap-2">
           <button
@@ -521,7 +530,7 @@ function Insights({
         </div>
       </div>
 
-      <div className={INSIGHTS_HTML_CLASS} dangerouslySetInnerHTML={{ __html: built.html }} />
+      <div className={INSIGHTS_HTML_CLASS} dangerouslySetInnerHTML={{ __html: displayed.html }} />
 
       {projectGid && (
         <div className="mt-6 border-t pt-5">
@@ -547,7 +556,7 @@ function Insights({
           data={data}
           tasks={tasks}
           propertyId={propertyId}
-          defaultTitle={data.config.asanaStatusTitle || propertyLabel}
+          defaultTitle={`${data.config.asanaStatusTitle || asanaProjectName || propertyLabel} - ${format(new Date(), "d MMM")}`}
           onClose={() => setShowPost(false)}
         />
       )}
