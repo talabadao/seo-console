@@ -219,7 +219,11 @@ export function classifyTraffic(
 ): TrafficKind {
   const s = (source || "").toLowerCase();
   if (aiDomains.some((d) => d && (s === d || s.endsWith("." + d) || s.includes(d)))) return "ai";
-  if (/organic/i.test(channel || "")) return "organic";
+  // Exact match on GA4's "Organic Search" channel group only — a substring
+  // match on "organic" also swept in "Organic Social", "Organic Video", and
+  // "Organic Shopping", which is why totals here ran ~15-20% ahead of a
+  // reference report filtered to just Organic Search.
+  if ((channel || "").trim().toLowerCase() === "organic search") return "organic";
   return "other";
 }
 
