@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
+import { db } from "@/lib/db";
 import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
-import { cleanGaError, Semaphore } from "@/lib/ga4";
+import { cleanGaError, getPropertyMeta, propertyNow, Semaphore } from "@/lib/ga4";
 import {
   availableEvents,
   buildKpiCard,
@@ -28,8 +29,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unknown or unlinked GA property" }, { status: 404 });
   }
 
-  const w = reportWindows();
-  const config = await configFor(user.id, propertyId, w.yearMonth);
   const aiDomains = aiDomainsFor(user);
 
   let token: string;
@@ -38,6 +37,29 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
+
+  // GA4 interprets date ranges in the property's own timezone, and this
+  // server runs in UTC (Vercel) — anchoring "today" to the server's clock
+  // instead would drift by the property's UTC offset, under/overcounting a
+  // partial day at every window boundary versus a reference report.
+  const cachedTz = (await db
+    .prepare("SELECT time_zone FROM ga_properties WHERE user_id = ? AND property_id = ?")
+    .get(user.id, propertyId)) as { time_zone: string | null } | undefined;
+  let timeZone = cachedTz?.time_zone ?? null;
+  if (!timeZone) {
+    const meta = await getPropertyMeta(token, propertyId);
+    timeZone = meta.timeZone;
+    if (timeZone) {
+      await db
+        .prepare(
+          "UPDATE ga_properties SET time_zone = COALESCE(time_zone, ?) WHERE user_id = ? AND property_id = ?",
+        )
+        .run(timeZone, user.id, propertyId);
+    }
+  }
+
+  const w = reportWindows(propertyNow(timeZone));
+  const config = await configFor(user.id, propertyId, w.yearMonth);
 
   try {
     // Fired as up to 3 at a time rather than one big Promise.all — GA4's

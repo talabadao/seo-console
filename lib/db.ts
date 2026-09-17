@@ -259,6 +259,7 @@ async function migrate(): Promise<void> {
       display_name  TEXT,
       account_name  TEXT,
       currency_code TEXT,
+      time_zone     TEXT,
       created_at    BIGINT NOT NULL,
       UNIQUE(user_id, property_id)
     );
@@ -313,6 +314,7 @@ async function migrate(): Promise<void> {
   await ensureColumn(sql, "users", "asana_api_token", "TEXT");
   await ensureColumn(sql, "weekly_kpi_config", "asana_project_gid", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn(sql, "weekly_kpi_config", "asana_status_title", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(sql, "ga_properties", "time_zone", "TEXT");
 
   // longtailMinWords' configuration UI was removed in favor of a fixed
   // default — correct any site still sitting at the old default of 4.

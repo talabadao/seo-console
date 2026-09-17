@@ -9,7 +9,8 @@ import {
   classifyTraffic,
   cleanGaError,
   eqFilter,
-  getPropertyCurrency,
+  getPropertyMeta,
+  propertyNow,
   runReport,
   trendBreakdown,
   type DateRange,
@@ -48,22 +49,7 @@ export async function GET(req: NextRequest) {
 
   const kind = p.get("kind") || "main";
   const preset = (p.get("preset") || "28d") as PresetId;
-  const current: DateRange = (() => {
-    const r = resolveRange(preset, {
-      customStart: p.get("start") || undefined,
-      customEnd: p.get("end") || undefined,
-    });
-    return { startDate: r.start, endDate: r.end };
-  })();
   const compareMode = (p.get("compare") || "none") as CompareMode;
-  const prevR = resolveComparison(
-    { start: current.startDate, end: current.endDate },
-    compareMode,
-    { matchWeekdays: p.get("matchWeekdays") === "1" },
-  );
-  const previous: DateRange | null = prevR
-    ? { startDate: prevR.start, endDate: prevR.end }
-    : null;
   const grain = (["day", "week", "month"].includes(p.get("grain") || "")
     ? p.get("grain")
     : "day") as Grain;
@@ -77,20 +63,47 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 
-  // Resolve + cache the property's reporting currency.
-  let currency =
-    ((await db
-      .prepare("SELECT currency_code FROM ga_properties WHERE user_id = ? AND property_id = ?")
-      .get(user.id, propertyId)) as { currency_code: string | null } | undefined)?.currency_code ??
-    null;
-  if (!currency) {
-    currency = await getPropertyCurrency(token, propertyId);
-    if (currency) {
+  // Resolve + cache the property's reporting currency and timezone. The
+  // timezone anchors date-range math below — GA4 interprets date ranges in
+  // the property's own timezone, and this server runs in UTC (Vercel), so
+  // without this "yesterday"/"this month" etc. would drift by however many
+  // hours the property is offset from UTC, undercounting or overcounting a
+  // partial day at each boundary versus a reference report.
+  const cached = (await db
+    .prepare("SELECT currency_code, time_zone FROM ga_properties WHERE user_id = ? AND property_id = ?")
+    .get(user.id, propertyId)) as { currency_code: string | null; time_zone: string | null } | undefined;
+  let currency = cached?.currency_code ?? null;
+  let timeZone = cached?.time_zone ?? null;
+  if (!currency || !timeZone) {
+    const meta = await getPropertyMeta(token, propertyId);
+    currency = currency ?? meta.currency;
+    timeZone = timeZone ?? meta.timeZone;
+    if (meta.currency || meta.timeZone) {
       await db
-        .prepare("UPDATE ga_properties SET currency_code = ? WHERE user_id = ? AND property_id = ?")
-        .run(currency, user.id, propertyId);
+        .prepare(
+          "UPDATE ga_properties SET currency_code = COALESCE(currency_code, ?), time_zone = COALESCE(time_zone, ?) WHERE user_id = ? AND property_id = ?",
+        )
+        .run(meta.currency, meta.timeZone, user.id, propertyId);
     }
   }
+
+  const anchor = propertyNow(timeZone);
+  const current: DateRange = (() => {
+    const r = resolveRange(preset, {
+      customStart: p.get("start") || undefined,
+      customEnd: p.get("end") || undefined,
+      anchor,
+    });
+    return { startDate: r.start, endDate: r.end };
+  })();
+  const prevR = resolveComparison(
+    { start: current.startDate, end: current.endDate },
+    compareMode,
+    { matchWeekdays: p.get("matchWeekdays") === "1" },
+  );
+  const previous: DateRange | null = prevR
+    ? { startDate: prevR.start, endDate: prevR.end }
+    : null;
 
   try {
     if (kind === "geo") {

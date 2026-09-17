@@ -66,12 +66,52 @@ export async function listGaProperties(token: string): Promise<GaProperty[]> {
   return out;
 }
 
-export async function getPropertyCurrency(token: string, propertyId: string): Promise<string | null> {
+export interface GaPropertyMeta {
+  currency: string | null;
+  timeZone: string | null;
+}
+
+export async function getPropertyMeta(token: string, propertyId: string): Promise<GaPropertyMeta> {
   try {
     const d = await gfetch(`${ADMIN}/${propertyId}`, token);
-    return d.currencyCode ?? null;
+    return { currency: d.currencyCode ?? null, timeZone: d.timeZone ?? null };
   } catch {
-    return null;
+    return { currency: null, timeZone: null };
+  }
+}
+
+/**
+ * "Now", expressed as the wall-clock moment currently showing in the GA4
+ * property's own reporting timezone — used as the anchor for date-range math
+ * (resolveRange/reportWindows) instead of the server's clock. GA4 date ranges
+ * are interpreted in the property's timezone, so anchoring to the server's
+ * UTC "today" instead could be off by a day (or a few hours' worth of
+ * sessions) for any property not itself in UTC, which shows up as SEO
+ * Console's totals running consistently a bit under (or over) a reference
+ * report. Relies on this process itself running in UTC (true for Vercel
+ * serverless by default) — format() elsewhere reads a Date's LOCAL fields,
+ * which only line up with the property's calendar day when the host's own
+ * timezone is UTC.
+ */
+export function propertyNow(timeZone: string | null, base: Date = new Date()): Date {
+  if (!timeZone) return base;
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(base);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+    return new Date(
+      `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}Z`,
+    );
+  } catch {
+    return base;
   }
 }
 
