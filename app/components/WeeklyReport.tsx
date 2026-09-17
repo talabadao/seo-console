@@ -627,7 +627,7 @@ function PostToAsanaModal({
           propertyId,
           title,
           statusType,
-          htmlText: body.html,
+          text: body.text,
         }),
       });
       const j = await res.json();
@@ -681,8 +681,14 @@ function PostToAsanaModal({
           </label>
         </div>
 
-        <div className="mt-4 rounded-lg border bg-background p-4">
-          <div className={INSIGHTS_HTML_CLASS} dangerouslySetInnerHTML={{ __html: body.html }} />
+        <p className="mt-4 text-xs text-muted">
+          Posted as plain text — Asana has a long-standing bug where{" "}
+          <code className="rounded bg-background px-1 py-0.5">html_text</code> on status updates is
+          stored but never rendered, so it shows the raw markup instead of bold/bullets. This is
+          exactly what will be posted.
+        </p>
+        <div className="mt-2 max-h-96 overflow-y-auto rounded-lg border bg-background p-4">
+          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{body.text}</pre>
         </div>
 
         <div className="mt-4 flex items-center gap-3">

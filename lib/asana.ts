@@ -132,11 +132,16 @@ export type AsanaStatusType =
 
 export async function createStatusUpdate(
   token: string,
-  opts: { parent: string; title: string; htmlText: string; statusType: AsanaStatusType },
+  opts: { parent: string; title: string; text: string; statusType: AsanaStatusType },
 ): Promise<{ gid: string; permalinkUrl: string | null }> {
   // Asana rejects the request if both `text` and `html_text` are present
-  // ("Must supply only one of text or html_text") — send only html_text so
-  // the formatting (bold, bullets, code) survives.
+  // ("Must supply only one of text or html_text"). Sending html_text alone
+  // is well-formed per their docs but Asana has a long-standing, staff-
+  // acknowledged bug where it's stored without being rendered — the status
+  // update shows the literal "<body><p><strong>..." markup instead of
+  // formatted text (https://forum.asana.com/t/rich-text-does-not-work-for-status-updates/31311).
+  // Until Asana fixes that, send plain `text` so the content is at least
+  // readable, even without bold/bullets.
   const j = await afetch<{ data: { gid: string; permalink_url?: string } }>(
     token,
     "/status_updates?opt_fields=permalink_url",
@@ -146,7 +151,7 @@ export async function createStatusUpdate(
         data: {
           parent: opts.parent,
           title: opts.title,
-          html_text: opts.htmlText,
+          text: opts.text,
           status_type: opts.statusType,
         },
       }),
