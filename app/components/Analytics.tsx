@@ -47,8 +47,13 @@ interface MainData {
   prevTotals: MainData["totals"] | null;
   sourceMedium: TrendRow[];
   keyEvents: TrendRow[];
+  channels: string[];
   sampled: boolean;
 }
+
+/** Not a real GA4 channel — flags the app's own AI-source domain list (Settings) instead of
+ * trusting GA4's own "AI Assistant" channel grouping, which isn't reliable enough yet. */
+const AI_CHANNEL = "__ai__";
 
 const INITIAL_RANGE: RangeValue = {
   preset: "28d",
@@ -78,14 +83,16 @@ export function Analytics() {
   const [props, setProps] = useState<GaProperty[]>([]);
   const [propertyId, setPropertyId] = useState("");
   const [range, setRange] = useState<RangeValue>(INITIAL_RANGE);
-  const [sub, setSub] = useState<"sourceMedium" | "keyEvents" | "geo">("sourceMedium");
+  const [sub, setSub] = useState<"sourceMedium" | "keyEvents" | "landingPages" | "geo">("sourceMedium");
   const [geoDim, setGeoDim] = useState<"country" | "city">("country");
   const [trend, setTrend] = useState<"all" | "growing" | "decaying" | "new">("all");
   const [q, setQ] = useState("");
-  const [keSourceMedium, setKeSourceMedium] = useState("");
+  const [keChannel, setKeChannel] = useState("");
+  const [landingChannel, setLandingChannel] = useState("");
   const [active, setActive] = useState<("organic" | "ai" | "other")[]>(["organic", "ai"]);
   const [data, setData] = useState<MainData | null>(null);
   const [geo, setGeo] = useState<{ dim: string; currency: string | null; rows: TrendRow[] } | null>(null);
+  const [landing, setLanding] = useState<{ rows: TrendRow[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [enableUrl, setEnableUrl] = useState<string | null>(null);
@@ -145,9 +152,7 @@ export function Analytics() {
     setErr(null);
     setEnableUrl(null);
     try {
-      const res = await fetch(
-        `/api/ga/report?${qs(keSourceMedium ? { sourceMedium: keSourceMedium } : {})}`,
-      );
+      const res = await fetch(`/api/ga/report?${qs(keChannel ? { channel: keChannel } : {})}`);
       const j = await res.json();
       if (j.needsReconnect) setNeedsReconnect(true);
       else if (j.error) {
@@ -157,7 +162,7 @@ export function Analytics() {
     } finally {
       setLoading(false);
     }
-  }, [propertyId, qs, keSourceMedium]);
+  }, [propertyId, qs, keChannel]);
 
   useEffect(() => {
     loadMain();
@@ -178,6 +183,22 @@ export function Analytics() {
   useEffect(() => {
     loadGeo();
   }, [loadGeo]);
+
+  const loadLanding = useCallback(async () => {
+    if (!propertyId || sub !== "landingPages") return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/ga/report?${qs({ kind: "landingPages", channel: landingChannel })}`);
+      const j = await res.json();
+      if (!j.error && !j.needsReconnect) setLanding(j);
+    } finally {
+      setLoading(false);
+    }
+  }, [propertyId, sub, landingChannel, qs]);
+
+  useEffect(() => {
+    loadLanding();
+  }, [loadLanding]);
 
   const compareOn = range.compareMode !== "none";
 
@@ -309,6 +330,7 @@ export function Analytics() {
             [
               ["sourceMedium", "Source / Medium"],
               ["keyEvents", "Key Events"],
+              ["landingPages", "Landing Pages"],
               ["geo", "Demographic"],
             ] as const
           ).map(([id, label]) => (
@@ -365,9 +387,9 @@ export function Analytics() {
         {sub === "keyEvents" && (
           <KeyEventsTable
             rows={data?.keyEvents ?? []}
-            sourceMediumOptions={data?.sourceMedium.map((r) => r.key) ?? []}
-            sourceMedium={keSourceMedium}
-            onSourceMedium={setKeSourceMedium}
+            channels={data?.channels ?? []}
+            channel={keChannel}
+            onChannel={setKeChannel}
             currency={data?.currency ?? null}
             compareOn={compareOn}
             trend={trend}
@@ -375,6 +397,27 @@ export function Analytics() {
             q={q}
             onQ={setQ}
             qs={qs}
+          />
+        )}
+
+        {sub === "landingPages" && (
+          <TrendTable
+            keyLabel="Landing Page + Query String"
+            metrics={[
+              { label: "Sessions", kind: "count" },
+              { label: "Users", kind: "count" },
+              { label: "Revenue", kind: "money" },
+              { label: "Key events", kind: "count" },
+            ]}
+            rows={landing?.rows ?? []}
+            currency={data?.currency ?? null}
+            compareOn={compareOn}
+            trend={trend}
+            onTrend={setTrend}
+            q={q}
+            onQ={setQ}
+            csvName="ga-landing-pages"
+            right={<ChannelSelect channels={data?.channels ?? []} value={landingChannel} onChange={setLandingChannel} />}
           />
         )}
 
@@ -602,6 +645,33 @@ function CountryFlag({ name }: { name: string }) {
   );
 }
 
+function ChannelSelect({
+  channels,
+  value,
+  onChange,
+}: {
+  channels: string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-md border bg-background px-2 py-1.5 text-sm"
+      title="AI uses this app's own AI-source domain list (Settings), not GA4's own AI Assistant channel"
+    >
+      <option value="">All channels</option>
+      <option value={AI_CHANNEL}>AI (custom domain list)</option>
+      {channels.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function TrendTable({
   keyLabel,
   metrics,
@@ -615,6 +685,7 @@ function TrendTable({
   csvName,
   drill,
   flags,
+  right,
 }: {
   keyLabel: string;
   metrics: MetricSpec[];
@@ -630,6 +701,8 @@ function TrendTable({
   drill?: (rowKey: string) => ReactNode;
   /** Render a country flag (looked up by name) before each row's key. */
   flags?: boolean;
+  /** Extra control(s) rendered in the toolbar, e.g. a Channel filter. */
+  right?: ReactNode;
 }) {
   const [limit, setLimit] = useState(50);
   const [open, setOpen] = useState<string | null>(null);
@@ -646,6 +719,7 @@ function TrendTable({
         count={filtered.length}
         limit={limit}
         onLimit={setLimit}
+        right={right}
         onExport={() =>
           downloadCsv(`${csvName}-${new Date().toISOString().slice(0, 10)}.csv`, [
             [keyLabel, ...metrics.map((m) => m.label)],
@@ -716,9 +790,9 @@ function TrendTable({
 
 function KeyEventsTable({
   rows,
-  sourceMediumOptions,
-  sourceMedium,
-  onSourceMedium,
+  channels,
+  channel,
+  onChannel,
   currency,
   compareOn,
   trend,
@@ -728,9 +802,9 @@ function KeyEventsTable({
   qs,
 }: {
   rows: TrendRow[];
-  sourceMediumOptions: string[];
-  sourceMedium: string;
-  onSourceMedium: (v: string) => void;
+  channels: string[];
+  channel: string;
+  onChannel: (v: string) => void;
   currency: string | null;
   compareOn: boolean;
   trend: "all" | "growing" | "decaying" | "new";
@@ -760,21 +834,7 @@ function KeyEventsTable({
             ...filtered.map((r) => [r.key, String(r.cur[0] ?? 0), (r.cur[1] ?? 0).toFixed(2), (r.cur[2] ?? 0).toFixed(2)]),
           ])
         }
-        right={
-          <select
-            value={sourceMedium}
-            onChange={(e) => onSourceMedium(e.target.value)}
-            className="rounded-md border bg-background px-2 py-1.5 text-sm"
-            title="Filter key events to sessions from one Source / Medium"
-          >
-            <option value="">All source / medium</option>
-            {sourceMediumOptions.map((s) => (
-              <option key={s} value={s}>
-                {s || "(not set)"}
-              </option>
-            ))}
-          </select>
-        }
+        right={<ChannelSelect channels={channels} value={channel} onChange={onChannel} />}
       />
       <div className="max-h-[34rem] overflow-auto">
         <table className="w-full border-collapse text-sm">

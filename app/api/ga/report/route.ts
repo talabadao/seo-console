@@ -4,17 +4,15 @@ import { db } from "@/lib/db";
 import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
 import {
-  KEY_EVENT_FILTER,
-  andFilter,
   classifyTraffic,
   cleanGaError,
-  eqFilter,
   getPropertyMeta,
   propertyNow,
   runReport,
   trendBreakdown,
   type DateRange,
 } from "@/lib/ga4";
+import { availableChannels, keyEventsByChannel, landingPageTrend } from "@/lib/gaChannels";
 import {
   bucketLabel,
   bucketOf,
@@ -118,12 +116,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ dim, currency, rows: geo.rows, sampled: geo.sampled });
     }
 
+    if (kind === "landingPages") {
+      const channel = p.get("channel") || "";
+      const lp = await landingPageTrend(token, propertyId, current, previous, channel, aiDomains);
+      return NextResponse.json({ currency, rows: lp.rows, sampled: lp.sampled });
+    }
+
     // Optional global filter for the Key Events breakdown, set from the
-    // "Source / Medium" dropdown in the Key Events toolbar.
-    const keSourceMedium = p.get("sourceMedium") || null;
+    // "Channel" dropdown in the Key Events toolbar (same filter as the
+    // Landing Pages tab — see lib/gaChannels.ts).
+    const keChannel = p.get("channel") || "";
 
     // --- main view ---
-    const [seriesRep, sourceMedium, keyEvents] = await Promise.all([
+    const [seriesRep, sourceMedium, keyEvents, channels] = await Promise.all([
       runReport(token, propertyId, {
         dimensions: ["date", "sessionSource", "sessionDefaultChannelGroup"],
         metrics: ["sessions"],
@@ -137,16 +142,8 @@ export async function GET(req: NextRequest) {
         previous,
         limit: 5000,
       }),
-      trendBreakdown(token, propertyId, {
-        dimensions: ["eventName"],
-        metrics: ["keyEvents", "totalRevenue", "eventValue"],
-        current,
-        previous,
-        dimensionFilter: keSourceMedium
-          ? andFilter(KEY_EVENT_FILTER, eqFilter("sessionSourceMedium", keSourceMedium))
-          : KEY_EVENT_FILTER,
-        limit: 2000,
-      }),
+      keyEventsByChannel(token, propertyId, current, previous, keChannel, aiDomains),
+      availableChannels(token, propertyId, current),
     ]);
 
     // Bucket the time series into organic / ai / other, zero-filled across
@@ -213,7 +210,8 @@ export async function GET(req: NextRequest) {
       prevTotals: previous ? { ...sum(prevSeries), ...totalsFromKe(true) } : null,
       sourceMedium: sourceMedium.rows,
       keyEvents: keyEvents.rows,
-      keySourceMedium: keSourceMedium,
+      keChannel,
+      channels,
       sampled: seriesRep.sampled || sourceMedium.sampled || keyEvents.sampled,
       aiDomains,
     });
