@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { accessTokenFor } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
 import { fetchLiveReport, fold, type BreakdownRow } from "@/lib/gscLive";
 import {
   resolveComparison,
@@ -82,6 +82,7 @@ export async function GET(req: NextRequest) {
   try {
     token = await accessTokenFor(user);
   } catch (e) {
+    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "auth" },
       { status: 502 },

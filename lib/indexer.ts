@@ -1,5 +1,5 @@
 import { db, rawSql } from "@/lib/db";
-import { accessTokenFor } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
 import { inspectUrl, listSitemaps } from "@/lib/google/searchconsole";
 import { publishUrl, serviceAccountConfigured } from "@/lib/google/indexingApi";
 import type { UserRow } from "@/lib/session";
@@ -230,7 +230,7 @@ export async function runIndexCheck(
   user: UserRow,
   site: SiteRow,
   opts: { max?: number; interactive?: boolean } = {},
-): Promise<{ checked: number; quotaLeft: number; message?: string }> {
+): Promise<{ checked: number; quotaLeft: number; message?: string; needsReconnect?: boolean }> {
   await db
     .prepare(
       `INSERT INTO index_jobs (site_id, started_at, status, checked) VALUES (?, ?, 'running', 0)
@@ -270,7 +270,12 @@ export async function runIndexCheck(
     await db
       .prepare("UPDATE index_jobs SET status = 'error', finished_at = ?, message = ? WHERE site_id = ?")
       .run(Date.now(), msg, site.id);
-    return { checked: 0, quotaLeft: await quotaLeft(site.id), message: msg };
+    return {
+      checked: 0,
+      quotaLeft: await quotaLeft(site.id),
+      message: msg,
+      needsReconnect: e instanceof GoogleReauthRequiredError,
+    };
   }
 
   const prior = db.prepare(

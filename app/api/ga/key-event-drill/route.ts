@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { ownsGaProperty } from "@/lib/gaConfig";
 import { cleanGaError, eqFilter, trendBreakdown, type DateRange } from "@/lib/ga4";
 import {
@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
   try {
     token = await accessTokenFor(user);
   } catch (e) {
+    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
-import { accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { cleanGaError, listGaProperties } from "@/lib/ga4";
 
 export async function GET() {
@@ -14,6 +14,7 @@ export async function GET() {
 
   let refreshError: string | null = null;
   let enableUrl: string | null = null;
+  let needsReconnect = false;
   try {
     const token = await accessTokenFor(user);
     const remote = await listGaProperties(token);
@@ -39,9 +40,13 @@ export async function GET() {
       }
     }
   } catch (e) {
-    const cleaned = cleanGaError(e instanceof Error ? e.message : String(e));
-    refreshError = cleaned.message;
-    enableUrl = cleaned.enableUrl;
+    if (e instanceof GoogleReauthRequiredError) {
+      needsReconnect = true;
+    } else {
+      const cleaned = cleanGaError(e instanceof Error ? e.message : String(e));
+      refreshError = cleaned.message;
+      enableUrl = cleaned.enableUrl;
+    }
   }
 
   const properties = await db
@@ -50,5 +55,5 @@ export async function GET() {
     )
     .all(user.id);
 
-  return NextResponse.json({ properties, refreshError, enableUrl });
+  return NextResponse.json({ properties, refreshError, enableUrl, needsReconnect });
 }

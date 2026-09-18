@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { subMonths, subYears, format, parseISO } from "date-fns";
 import { currentUser } from "@/lib/session";
-import { accessTokenFor } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
 import { siteConfigFor } from "@/lib/siteConfig";
 import { resolveRange, type PresetId, type Range } from "@/lib/dateRanges";
 import {
@@ -41,6 +41,7 @@ export async function GET(
   try {
     token = await accessTokenFor(user);
   } catch (e) {
+    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

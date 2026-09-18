@@ -11,6 +11,7 @@ import { Opportunities } from "./Opportunities";
 import { Analytics } from "./Analytics";
 import { WeeklyReport } from "./WeeklyReport";
 import { SettingsPanel } from "./SettingsPanel";
+import { GoogleReconnectBanner } from "./GoogleReconnect";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
 import { EMPTY_FILTER, filterActive, type FilterState } from "@/lib/queryFilters";
 import { resolveComparison, resolveRange } from "@/lib/dateRanges";
@@ -85,6 +86,7 @@ export function Dashboard({
   >("performance");
   const [showSettings, setShowSettings] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
 
   const resolved = useMemo(() => {
     const r = resolveRange(range.preset, {
@@ -118,6 +120,7 @@ export function Dashboard({
     const res = await fetch("/api/sites");
     if (!res.ok) return;
     const json = await res.json();
+    if (json.needsReconnect) setNeedsReconnect(true);
     const list: SiteMeta[] = json.sites ?? [];
     setSites(list);
     setProperty((cur) =>
@@ -146,7 +149,8 @@ export function Dashboard({
       if (filters.trend !== "all") p.set("trend", filters.trend);
       const res = await fetch(`/api/performance?${p}`);
       const json = await res.json();
-      if (res.ok) setData(json);
+      if (json.needsReconnect) setNeedsReconnect(true);
+      else if (res.ok) setData(json);
       else setNotice(json.error ?? "Failed to load");
     } finally {
       setLoading(false);
@@ -301,14 +305,20 @@ export function Dashboard({
           </div>
         )}
 
-        {tab === "indexing" && <Indexing property={property} />}
-        {tab === "analytics" && <Analytics />}
-        {tab === "weekly-report" && <WeeklyReport />}
-        {tab === "opportunities" && (
-          <Opportunities property={property} searchType={searchType} />
+        {needsReconnect ? (
+          <GoogleReconnectBanner detail="Google stopped accepting this app's Search Console access — sign in again to reconnect Performance, Opportunities, and Indexing." />
+        ) : (
+          <>
+            {tab === "indexing" && <Indexing property={property} />}
+            {tab === "analytics" && <Analytics />}
+            {tab === "weekly-report" && <WeeklyReport />}
+            {tab === "opportunities" && (
+              <Opportunities property={property} searchType={searchType} />
+            )}
+          </>
         )}
 
-        {tab === "performance" && (
+        {!needsReconnect && tab === "performance" && (
           <>
             <div className="mb-5 flex flex-wrap items-center gap-3">
               <DateRangePicker

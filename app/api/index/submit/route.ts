@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
-import { accessTokenFor, hasIndexingScope } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor, hasIndexingScope } from "@/lib/google/oauth";
 import { submitUrls, submitQuotaLeft, type SiteRow } from "@/lib/indexer";
 
 export const maxDuration = 120;
@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
   try {
     token = await accessTokenFor(user);
   } catch (e) {
+    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { accessTokenFor } from "@/lib/google/oauth";
+import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
 import { listSites } from "@/lib/google/searchconsole";
 import { db } from "@/lib/db";
 import { dataDateRange, lastSync } from "@/lib/metrics";
@@ -10,6 +10,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   let refreshError: string | null = null;
+  let needsReconnect = false;
   try {
     const token = await accessTokenFor(user);
     const remote = await listSites(token);
@@ -24,7 +25,8 @@ export async function GET() {
       await upsert.run(user.id, s.siteUrl, s.permissionLevel, now);
     }
   } catch (e) {
-    refreshError = e instanceof Error ? e.message : String(e);
+    if (e instanceof GoogleReauthRequiredError) needsReconnect = true;
+    else refreshError = e instanceof Error ? e.message : String(e);
   }
 
   const rows = (await db
@@ -46,5 +48,5 @@ export async function GET() {
     })),
   );
 
-  return NextResponse.json({ sites, refreshError });
+  return NextResponse.json({ sites, refreshError, needsReconnect });
 }
