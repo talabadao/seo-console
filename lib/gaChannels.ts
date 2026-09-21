@@ -124,3 +124,60 @@ export async function keyEventsByChannel(
     limit: 2000,
   });
 }
+
+const iso8 = (yyyymmdd: string) =>
+  yyyymmdd.length === 8
+    ? `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`
+    : yyyymmdd;
+
+export interface PagePerfRow {
+  page: string;
+  total: number;
+  /** "yyyy-MM-dd" -> sessions that day. Sparse — a missing day means 0. */
+  byDate: Record<string, number>;
+}
+
+/**
+ * Per-landing-page daily sessions over a single range — the Page Performance
+ * heatmap's data source. `total` is summed across every landing page GA4
+ * returned (before the top-`take` cap), so it reflects true site-wide
+ * landing-page traffic even though only the busiest pages are returned.
+ */
+export async function pagePerformanceMatrix(
+  token: string,
+  propertyId: string,
+  range: DateRange,
+  channel: string,
+  aiDomains: string[],
+  take: number = 50,
+): Promise<{ rows: PagePerfRow[]; total: number; sampled: boolean }> {
+  const needsClassification = channel === AI_CHANNEL;
+  const { rows, sampled } = await runReport(token, propertyId, {
+    dimensions: needsClassification
+      ? ["date", "landingPagePlusQueryString", "sessionSource", "sessionDefaultChannelGroup"]
+      : ["date", "landingPagePlusQueryString"],
+    metrics: ["sessions"],
+    dateRanges: [range],
+    dimensionFilter: !needsClassification && channel ? eqFilter("sessionDefaultChannelGroup", channel) : undefined,
+    limit: 100000,
+  });
+
+  const map = new Map<string, PagePerfRow>();
+  let total = 0;
+  for (const r of rows) {
+    if (needsClassification && classifyTraffic(r.dims[2], r.dims[3], aiDomains) !== "ai") continue;
+    const date = iso8(r.dims[0]);
+    const page = r.dims[1];
+    const v = r.metrics[0] ?? 0;
+    let row = map.get(page);
+    if (!row) {
+      row = { page, total: 0, byDate: {} };
+      map.set(page, row);
+    }
+    row.byDate[date] = (row.byDate[date] ?? 0) + v;
+    row.total += v;
+    total += v;
+  }
+  const out = [...map.values()].sort((a, b) => b.total - a.total).slice(0, take);
+  return { rows: out, total, sampled };
+}

@@ -5,8 +5,9 @@ import { format } from "date-fns";
 import { DateRangePicker, type RangeValue } from "./DateRangePicker";
 import { resolveRange } from "@/lib/dateRanges";
 import { fmt, pctLabel } from "./format";
+import { PagePerformance } from "./PagePerformance";
 
-type Kind = "cannibalization" | "keyword-topics" | "low-hanging" | "underperforming";
+type Kind = "cannibalization" | "keyword-topics" | "low-hanging" | "underperforming" | "page-performance";
 
 const INITIAL_RANGE: RangeValue = {
   preset: "3m",
@@ -42,6 +43,12 @@ const TABS: { id: Kind; label: string; blurb: string }[] = [
     blurb:
       "Pages that used to earn real traffic and have since dropped materially — vs. the previous window or the same window last year — where the loss is a meaningful share of the site's clicks or more than the per-month threshold.",
   },
+  {
+    id: "page-performance",
+    label: "Page Performance",
+    blurb:
+      "Daily sessions per landing page (GA4) over the selected timeframe, so a change made to a specific page shows up as a visible shift in its own row. Cell shading is scaled per page, not across the whole table, so a smaller page's own good/bad days are still easy to spot. Filter by channel — AI uses this app's own AI-source domain list instead of GA4's own AI Assistant grouping.",
+  },
 ];
 
 export function Opportunities({
@@ -70,6 +77,7 @@ export function Opportunities({
   );
 
   const load = useCallback(async () => {
+    if (kind === "page-performance") return; // self-contained GA4 component, manages its own fetch
     if (!property) return;
     setLoading(true);
     setErr(null);
@@ -141,6 +149,13 @@ export function Opportunities({
         ))}
       </div>
 
+      {kind === "page-performance" ? (
+        <>
+          <p className="mb-4 rounded-lg border bg-surface p-3 text-sm text-muted">{active.blurb}</p>
+          <PagePerformance />
+        </>
+      ) : (
+        <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <DateRangePicker
           value={range}
@@ -239,6 +254,8 @@ export function Opportunities({
       )}
       {kind === "underperforming" && (
         <UnderperformingTable rows={(data?.rows as UnderRow[]) ?? []} months={months} />
+      )}
+        </>
       )}
     </div>
   );

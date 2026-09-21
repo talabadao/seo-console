@@ -16,6 +16,7 @@ import { resolveComparison, resolveRange } from "@/lib/dateRanges";
 import { fmt, pctLabel } from "./format";
 import { downloadCsv } from "./csv";
 import { countryByName, flagSrc } from "@/lib/geo";
+import { ChannelSelect } from "./ChannelSelect";
 
 interface GaProperty {
   propertyId: string;
@@ -50,10 +51,6 @@ interface MainData {
   channels: string[];
   sampled: boolean;
 }
-
-/** Not a real GA4 channel — flags the app's own AI-source domain list (Settings) instead of
- * trusting GA4's own "AI Assistant" channel grouping, which isn't reliable enough yet. */
-const AI_CHANNEL = "__ai__";
 
 const INITIAL_RANGE: RangeValue = {
   preset: "28d",
@@ -642,33 +639,6 @@ function CountryFlag({ name }: { name: string }) {
         e.currentTarget.style.visibility = "hidden";
       }}
     />
-  );
-}
-
-function ChannelSelect({
-  channels,
-  value,
-  onChange,
-}: {
-  channels: string[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border bg-background px-2 py-1.5 text-sm"
-      title="AI uses this app's own AI-source domain list (Settings), not GA4's own AI Assistant channel"
-    >
-      <option value="">All channels</option>
-      <option value={AI_CHANNEL}>AI (custom domain list)</option>
-      {channels.map((c) => (
-        <option key={c} value={c}>
-          {c}
-        </option>
-      ))}
-    </select>
   );
 }
 
