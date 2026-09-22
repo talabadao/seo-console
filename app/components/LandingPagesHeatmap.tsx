@@ -5,19 +5,13 @@ import { parseISO, format as formatDate } from "date-fns";
 import { fmtFull } from "./format";
 import { ChannelSelect } from "./ChannelSelect";
 
-interface GaProperty {
-  propertyId: string;
-  displayName: string;
-  accountName: string;
-}
-
 interface PagePerfRow {
   page: string;
   total: number;
   byDate: Record<string, number>;
 }
 
-interface PagePerfData {
+interface HeatmapData {
   range: { start: string; end: string };
   days: string[];
   rows: PagePerfRow[];
@@ -26,16 +20,14 @@ interface PagePerfData {
   sampled: boolean;
 }
 
-const TIMEFRAMES: { id: "1d" | "7d" | "14d" | "28d"; label: string }[] = [
-  { id: "1d", label: "1 day" },
+const TIMEFRAMES: { id: "7d" | "14d" | "28d"; label: string }[] = [
   { id: "7d", label: "7 days" },
   { id: "14d", label: "14 days" },
   { id: "28d", label: "28 days" },
 ];
 
-function dayLabel(d: string, timeframe: string): string {
-  const dt = parseISO(d);
-  return formatDate(dt, timeframe === "1d" ? "EEE d" : "MMM d");
+function dayLabel(d: string): string {
+  return formatDate(parseISO(d), "MMM d");
 }
 
 /** Background tint for one heatmap cell, scaled against that row's own max — a page's own
@@ -47,37 +39,13 @@ function heatColor(value: number, max: number): string {
   return `color-mix(in srgb, var(--clicks) ${pct}%, transparent)`;
 }
 
-export function PagePerformance() {
-  const [props, setProps] = useState<GaProperty[]>([]);
-  const [propertyId, setPropertyId] = useState("");
-  const [timeframe, setTimeframe] = useState<"1d" | "7d" | "14d" | "28d">("7d");
+export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
+  const [timeframe, setTimeframe] = useState<"7d" | "14d" | "28d">("7d");
   const [channel, setChannel] = useState("");
-  const [data, setData] = useState<PagePerfData | null>(null);
+  const [data, setData] = useState<HeatmapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [enableUrl, setEnableUrl] = useState<string | null>(null);
-  const [needsReconnect, setNeedsReconnect] = useState(false);
-  const [propsLoaded, setPropsLoaded] = useState(false);
-
-  const loadProps = useCallback(async () => {
-    const res = await fetch("/api/ga/properties");
-    const j = await res.json();
-    setPropsLoaded(true);
-    if (j.needsReconnect) {
-      setNeedsReconnect(true);
-      return;
-    }
-    setProps(j.properties ?? []);
-    setPropertyId((cur) =>
-      cur && (j.properties ?? []).some((p: GaProperty) => p.propertyId === cur)
-        ? cur
-        : (j.properties?.[0]?.propertyId ?? ""),
-    );
-  }, []);
-
-  useEffect(() => {
-    loadProps();
-  }, [loadProps]);
 
   const load = useCallback(async () => {
     if (!propertyId) return;
@@ -86,10 +54,10 @@ export function PagePerformance() {
     setEnableUrl(null);
     try {
       const p = new URLSearchParams({ propertyId, timeframe, channel });
-      const res = await fetch(`/api/opportunities/page-performance?${p}`);
+      const res = await fetch(`/api/ga/landing-heatmap?${p}`);
       const j = await res.json();
-      if (j.needsReconnect) setNeedsReconnect(true);
-      else if (j.error) {
+      if (j.needsReconnect) return; // Analytics' top-level state already covers reconnect
+      if (j.error) {
         setErr(j.error);
         setEnableUrl(j.enableUrl ?? null);
       } else setData(j);
@@ -110,42 +78,9 @@ export function PagePerformance() {
     return m;
   }, [data]);
 
-  if (needsReconnect) {
-    return (
-      <div className="rounded-xl border border-bad/40 bg-bad/10 p-6 text-sm">
-        <p className="font-medium">Google Analytics isn&apos;t connected yet.</p>
-        <p className="mt-1 text-muted">
-          Your Google sign-in needs the Analytics read permission. Enable the{" "}
-          <strong>Google Analytics Admin API</strong> and <strong>Data API</strong> in Google
-          Cloud, then reconnect.
-        </p>
-        <a
-          href="/api/auth/google"
-          className="mt-3 inline-block rounded-md bg-accent px-4 py-2 font-medium text-white"
-        >
-          Connect Google Analytics
-        </a>
-      </div>
-    );
-  }
-
   return (
-    <div>
+    <div className="p-4">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <select
-          value={propertyId}
-          onChange={(e) => setPropertyId(e.target.value)}
-          className="max-w-xs rounded-md border bg-background px-3 py-1.5 text-sm"
-        >
-          {!props.length && <option value="">No GA4 properties</option>}
-          {props.map((p) => (
-            <option key={p.propertyId} value={p.propertyId}>
-              {p.accountName ? `${p.accountName} · ` : ""}
-              {p.displayName}
-            </option>
-          ))}
-        </select>
-
         <div className="flex rounded-md border p-0.5 text-sm">
           {TIMEFRAMES.map((t) => (
             <button
@@ -172,11 +107,6 @@ export function PagePerformance() {
       </div>
 
       {err && <ErrorBanner message={err} enableUrl={enableUrl} onRetry={load} />}
-      {propsLoaded && !props.length && (
-        <div className="mb-4 rounded-lg border bg-surface p-3 text-sm text-muted">
-          No GA4 properties found for this Google account.
-        </div>
-      )}
 
       <div className="mb-4 rounded-xl border bg-surface p-4">
         <div className="text-sm text-muted">Total sessions from landing pages</div>
@@ -196,7 +126,7 @@ export function PagePerformance() {
                 <th className="sticky left-0 z-20 bg-surface px-3 py-2.5 font-medium">Landing page</th>
                 {(data?.days ?? []).map((d) => (
                   <th key={d} className="px-2 py-2.5 text-right font-medium whitespace-nowrap">
-                    {dayLabel(d, timeframe)}
+                    {dayLabel(d)}
                   </th>
                 ))}
                 <th className="px-3 py-2.5 text-right font-medium">Total</th>

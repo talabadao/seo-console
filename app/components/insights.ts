@@ -108,6 +108,12 @@ const pct1 = (v: number) => (isFinite(v) ? Math.abs(v).toFixed(1) : "–");
 
 /** Circle matching a KPI's pace, used to make the run-rate line scannable at a glance. */
 const PACE_EMOJI: Record<Pace, string> = { "on-track": "🟢", "at-risk": "🟡", "off-track": "🔴" };
+/** Color for the on-screen (HTML) run-rate line — same CSS variables as the Overview tiles. */
+const PACE_COLOR: Record<Pace, string> = {
+  "on-track": "var(--good)",
+  "at-risk": "var(--position)",
+  "off-track": "var(--bad)",
+};
 
 const SUMMARY_TITLE = "📊 Summary";
 const TOP_URLS_TITLE = "🚀 Top-performing URLs for the week";
@@ -166,15 +172,22 @@ function summaryParts(data: ReportData) {
   // regardless of how many days are left in the month.
   const toDatePct = (actual: number, target: number) =>
     target > 0 ? (actual / target) * 100 : actual > 0 ? Infinity : 0;
+  // KPI achievement bands for the run-rate line specifically (distinct from
+  // the Overview tiles' expectedByNowPct-relative pace): >=85% reached this
+  // month is on track, 65-85% is at risk, below 65% is off track.
   const paceFor = (pct: number): Pace => {
     if (!isFinite(pct)) return "off-track";
-    if (pct >= 100) return "on-track";
-    if (pct >= 85) return "at-risk";
+    if (pct >= 85) return "on-track";
+    if (pct >= 65) return "at-risk";
     return "off-track";
   };
   const organicPct = toDatePct(data.kpis.trafficOrganic.actualMtd, data.kpis.trafficOrganic.target);
   const aiPct = toDatePct(data.kpis.trafficAi.actualMtd, data.kpis.trafficAi.target);
   const runRateLine = `${PACE_EMOJI[paceFor(organicPct)]} Organic run rate: ${pct1(organicPct)}%    ${PACE_EMOJI[paceFor(aiPct)]} AI run rate: ${pct1(aiPct)}%`;
+  const runRateHtml = [
+    `<span style="color:${PACE_COLOR[paceFor(organicPct)]}">Organic run rate: ${pct1(organicPct)}%</span>`,
+    `<span style="color:${PACE_COLOR[paceFor(aiPct)]}">AI run rate: ${pct1(aiPct)}%</span>`,
+  ].join("&nbsp;&nbsp;&nbsp;");
 
   return {
     mtdRange,
@@ -182,6 +195,7 @@ function summaryParts(data: ReportData) {
     topLines,
     bottomLines,
     runRateLine,
+    runRateHtml,
   };
 }
 
@@ -195,7 +209,7 @@ function summaryParts(data: ReportData) {
  */
 export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null): { html: string; text: string } {
   const { windows: w, config } = data;
-  const { mtdRange, sections, topLines, bottomLines, runRateLine } = summaryParts(data);
+  const { mtdRange, sections, topLines, bottomLines, runRateLine, runRateHtml } = summaryParts(data);
   const taskSections = taskSectionsFor(tasks);
 
   // ---------- HTML ----------
@@ -207,7 +221,7 @@ export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null
       `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
       `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
     ]),
-    `<ul><li><code>${esc(runRateLine)}</code></li></ul>`,
+    `<ul><li>${runRateHtml}</li></ul>`,
     ...sections.flatMap(({ title, lines }) => [
       `<p><strong><u>${esc(title)}</u></strong></p>`,
       ul(lines),

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
-import { fetchLiveReport, fold, type BreakdownRow } from "@/lib/gscLive";
+import { fetchLiveReport, fold, type BreakdownRow, type CrossFilter } from "@/lib/gscLive";
 import {
   resolveComparison,
   resolveRange,
@@ -78,6 +78,18 @@ export async function GET(req: NextRequest) {
   const limit = limitParam > 0 ? Math.min(limitParam, 200000) : Infinity;
   const filters = parseFilters(p);
 
+  // Cross-dimension scoping — e.g. viewing Queries but narrowed to one page,
+  // or viewing Pages but narrowed to queries containing some text. Only makes
+  // sense against the *other* dimension than the one being broken down by.
+  const filterPage = p.get("filterPage") || "";
+  const filterQuery = p.get("filterQuery") || "";
+  const crossFilter: CrossFilter | undefined =
+    dimension === "query" && filterPage
+      ? { dimension: "page", operator: "contains", value: filterPage }
+      : dimension === "page" && filterQuery
+        ? { dimension: "query", operator: "contains", value: filterQuery }
+        : undefined;
+
   let token: string;
   try {
     token = await accessTokenFor(user);
@@ -100,6 +112,7 @@ export async function GET(req: NextRequest) {
       grain,
       dimension,
       maxRows: Number(process.env.LIVE_MAX_ROWS || 50000),
+      crossFilter,
     });
   } catch (e) {
     return NextResponse.json(

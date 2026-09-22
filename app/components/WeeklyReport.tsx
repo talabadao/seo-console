@@ -16,6 +16,7 @@ import {
   type Section,
   type TaskBuckets,
 } from "./insights";
+import { SearchableSelect } from "./SearchableSelect";
 
 const STATUS_OPTIONS: { value: "on_track" | "at_risk" | "off_track" | "on_hold"; label: string }[] = [
   { value: "on_track", label: "On track" },
@@ -111,19 +112,17 @@ export function WeeklyReport() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <select
+        <SearchableSelect
           value={propertyId}
-          onChange={(e) => setPropertyId(e.target.value)}
-          className="max-w-xs rounded-md border bg-background px-3 py-1.5 text-sm"
-        >
-          {!props.length && <option value="">No GA4 properties</option>}
-          {props.map((p) => (
-            <option key={p.propertyId} value={p.propertyId}>
-              {p.accountName ? `${p.accountName} · ` : ""}
-              {p.displayName}
-            </option>
-          ))}
-        </select>
+          onChange={setPropertyId}
+          className="max-w-xs"
+          placeholder="No GA4 properties"
+          options={props.map((p) => ({
+            value: p.propertyId,
+            label: p.displayName,
+            sublabel: p.accountName || undefined,
+          }))}
+        />
 
         <div className="flex rounded-md border p-0.5 text-sm">
           {(

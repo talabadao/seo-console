@@ -66,15 +66,22 @@ export function FilterMenu({
 
           <p className="mt-4 text-xs font-semibold uppercase text-muted">Trend vs comparison</p>
           <div className="mt-1 grid grid-cols-4 gap-1">
-            {(["all", "growing", "decaying", "new"] as const).map((t) => (
+            {(
+              [
+                ["all", "All"],
+                ["growing", "Winning"],
+                ["decaying", "Losing"],
+                ["new", "New"],
+              ] as const
+            ).map(([t, label]) => (
               <button
                 key={t}
                 onClick={() => set({ trend: t })}
-                className={`rounded-md border px-1 py-1 text-xs capitalize ${
+                className={`rounded-md border px-1 py-1 text-xs ${
                   value.trend === t ? "border-accent bg-accent-soft text-accent" : ""
                 }`}
               >
-                {t}
+                {label}
               </button>
             ))}
           </div>

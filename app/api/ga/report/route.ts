@@ -12,7 +12,7 @@ import {
   trendBreakdown,
   type DateRange,
 } from "@/lib/ga4";
-import { availableChannels, keyEventsByChannel, landingPageTrend } from "@/lib/gaChannels";
+import { availableChannels, keyEventsByChannel } from "@/lib/gaChannels";
 import {
   bucketLabel,
   bucketOf,
@@ -115,12 +115,6 @@ export async function GET(req: NextRequest) {
         limit: 5000,
       });
       return NextResponse.json({ dim, currency, rows: geo.rows, sampled: geo.sampled });
-    }
-
-    if (kind === "landingPages") {
-      const channel = p.get("channel") || "";
-      const lp = await landingPageTrend(token, propertyId, current, previous, channel, aiDomains);
-      return NextResponse.json({ currency, rows: lp.rows, sampled: lp.sampled });
     }
 
     // Optional global filter for the Key Events breakdown, set from the

@@ -12,6 +12,7 @@ import { Analytics } from "./Analytics";
 import { WeeklyReport } from "./WeeklyReport";
 import { SettingsPanel } from "./SettingsPanel";
 import { GoogleReconnectBanner } from "./GoogleReconnect";
+import { SearchableSelect } from "./SearchableSelect";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
 import { EMPTY_FILTER, filterActive, type FilterState } from "@/lib/queryFilters";
 import { resolveComparison, resolveRange } from "@/lib/dateRanges";
@@ -77,6 +78,8 @@ export function Dashboard({
   const [searchType, setSearchType] = useState("web");
   const [dimension, setDimension] = useState("query");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTER);
+  const [filterPage, setFilterPage] = useState("");
+  const [filterQuery, setFilterQuery] = useState("");
   const [activeMetrics, setActiveMetrics] = useState<MetricKey[]>(["clicks", "impressions"]);
   const [data, setData] = useState<PerfResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -147,6 +150,8 @@ export function Dashboard({
       if (filters.longtail) p.set("longtail", "1");
       if (filters.ai) p.set("ai", "1");
       if (filters.trend !== "all") p.set("trend", filters.trend);
+      if (dimension === "query" && filterPage) p.set("filterPage", filterPage);
+      if (dimension === "page" && filterQuery) p.set("filterQuery", filterQuery);
       const res = await fetch(`/api/performance?${p}`);
       const json = await res.json();
       if (json.needsReconnect) setNeedsReconnect(true);
@@ -155,7 +160,7 @@ export function Dashboard({
     } finally {
       setLoading(false);
     }
-  }, [property, dimension, coreQuery, filters]);
+  }, [property, dimension, coreQuery, filters, filterPage, filterQuery]);
 
   useEffect(() => {
     loadPerf();
@@ -212,19 +217,17 @@ export function Dashboard({
         <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-3 px-5 py-3">
           <span className="text-base font-semibold">SEO Console</span>
 
-          <select
+          <SearchableSelect
             value={property}
-            onChange={(e) => setProperty(e.target.value)}
-            className="rounded-md border bg-background px-3 py-1.5 text-sm"
-          >
-            {!sites.length && <option value="">No properties</option>}
-            {sites.map((s) => (
-              <option key={s.id} value={s.property}>
-                {s.source === "bing" ? "Bing · " : ""}
-                {s.property}
-              </option>
-            ))}
-          </select>
+            onChange={setProperty}
+            className="w-64"
+            placeholder="No properties"
+            options={sites.map((s) => ({
+              value: s.property,
+              label: s.property,
+              sublabel: s.source === "bing" ? "Bing" : undefined,
+            }))}
+          />
 
           <select
             value={searchType}
@@ -392,7 +395,11 @@ export function Dashboard({
                 {DIMENSIONS.map((d) => (
                   <button
                     key={d.id}
-                    onClick={() => setDimension(d.id)}
+                    onClick={() => {
+                      setFilterPage("");
+                      setFilterQuery("");
+                      setDimension(d.id);
+                    }}
                     className={`rounded-t-md px-3 py-2 text-sm font-medium ${
                       dimension === d.id
                         ? "bg-accent-soft text-accent"
@@ -402,6 +409,33 @@ export function Dashboard({
                     {d.label}
                   </button>
                 ))}
+                {dimension === "query" && (
+                  <input
+                    value={filterPage}
+                    onChange={(e) => setFilterPage(e.target.value)}
+                    placeholder="Filter to page (URL contains)…"
+                    className="ml-2 w-56 rounded-md border bg-background px-2 py-1 text-xs"
+                  />
+                )}
+                {dimension === "page" && (
+                  <input
+                    value={filterQuery}
+                    onChange={(e) => setFilterQuery(e.target.value)}
+                    placeholder="Filter to query (contains)…"
+                    className="ml-2 w-56 rounded-md border bg-background px-2 py-1 text-xs"
+                  />
+                )}
+                {(filterPage || filterQuery) && (
+                  <button
+                    onClick={() => {
+                      setFilterPage("");
+                      setFilterQuery("");
+                    }}
+                    className="rounded-md border border-accent bg-accent-soft px-2 py-1 text-xs text-accent"
+                  >
+                    Filtered to &quot;{dimension === "query" ? filterPage : filterQuery}&quot; ✕
+                  </button>
+                )}
                 {data?.truncated && (
                   <span className="ml-auto px-2 text-xs text-muted">
                     showing first {data.breakdown.length.toLocaleString()} — refine with filters
@@ -416,6 +450,21 @@ export function Dashboard({
                 compareOn={showRowDeltas}
                 trend={filters.trend}
                 onTrend={(t) => setFilters((f) => ({ ...f, trend: t }))}
+                onDrill={
+                  dimension === "page"
+                    ? (key) => {
+                        setFilterQuery("");
+                        setFilterPage(key);
+                        setDimension("query");
+                      }
+                    : dimension === "query"
+                      ? (key) => {
+                          setFilterPage("");
+                          setFilterQuery(key);
+                          setDimension("page");
+                        }
+                      : undefined
+                }
               />
             </div>
           </>

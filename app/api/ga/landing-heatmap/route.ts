@@ -10,7 +10,6 @@ import { enumerateBuckets, resolveRange, type PresetId } from "@/lib/dateRanges"
 export const maxDuration = 60;
 
 const TIMEFRAME_PRESET: Record<string, PresetId> = {
-  "1d": "yesterday",
   "7d": "7d",
   "14d": "14d",
   "28d": "28d",

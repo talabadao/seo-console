@@ -17,6 +17,8 @@ import { fmt, pctLabel } from "./format";
 import { downloadCsv } from "./csv";
 import { countryByName, flagSrc } from "@/lib/geo";
 import { ChannelSelect } from "./ChannelSelect";
+import { SearchableSelect } from "./SearchableSelect";
+import { LandingPagesHeatmap } from "./LandingPagesHeatmap";
 
 interface GaProperty {
   propertyId: string;
@@ -85,11 +87,9 @@ export function Analytics() {
   const [trend, setTrend] = useState<"all" | "growing" | "decaying" | "new">("all");
   const [q, setQ] = useState("");
   const [keChannel, setKeChannel] = useState("");
-  const [landingChannel, setLandingChannel] = useState("");
   const [active, setActive] = useState<("organic" | "ai" | "other")[]>(["organic", "ai"]);
   const [data, setData] = useState<MainData | null>(null);
   const [geo, setGeo] = useState<{ dim: string; currency: string | null; rows: TrendRow[] } | null>(null);
-  const [landing, setLanding] = useState<{ rows: TrendRow[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [enableUrl, setEnableUrl] = useState<string | null>(null);
@@ -181,22 +181,6 @@ export function Analytics() {
     loadGeo();
   }, [loadGeo]);
 
-  const loadLanding = useCallback(async () => {
-    if (!propertyId || sub !== "landingPages") return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/ga/report?${qs({ kind: "landingPages", channel: landingChannel })}`);
-      const j = await res.json();
-      if (!j.error && !j.needsReconnect) setLanding(j);
-    } finally {
-      setLoading(false);
-    }
-  }, [propertyId, sub, landingChannel, qs]);
-
-  useEffect(() => {
-    loadLanding();
-  }, [loadLanding]);
-
   const compareOn = range.compareMode !== "none";
 
   if (needsReconnect) {
@@ -221,19 +205,17 @@ export function Analytics() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <select
+        <SearchableSelect
           value={propertyId}
-          onChange={(e) => setPropertyId(e.target.value)}
-          className="max-w-xs rounded-md border bg-background px-3 py-1.5 text-sm"
-        >
-          {!props.length && <option value="">No GA4 properties</option>}
-          {props.map((p) => (
-            <option key={p.propertyId} value={p.propertyId}>
-              {p.accountName ? `${p.accountName} · ` : ""}
-              {p.displayName}
-            </option>
-          ))}
-        </select>
+          onChange={setPropertyId}
+          className="max-w-xs"
+          placeholder="No GA4 properties"
+          options={props.map((p) => ({
+            value: p.propertyId,
+            label: p.displayName,
+            sublabel: p.accountName || undefined,
+          }))}
+        />
         <DateRangePicker
           value={range}
           resolvedRange={resolved.r}
@@ -397,26 +379,7 @@ export function Analytics() {
           />
         )}
 
-        {sub === "landingPages" && (
-          <TrendTable
-            keyLabel="Landing Page + Query String"
-            metrics={[
-              { label: "Sessions", kind: "count" },
-              { label: "Users", kind: "count" },
-              { label: "Revenue", kind: "money" },
-              { label: "Key events", kind: "count" },
-            ]}
-            rows={landing?.rows ?? []}
-            currency={data?.currency ?? null}
-            compareOn={compareOn}
-            trend={trend}
-            onTrend={setTrend}
-            q={q}
-            onQ={setQ}
-            csvName="ga-landing-pages"
-            right={<ChannelSelect channels={data?.channels ?? []} value={landingChannel} onChange={setLandingChannel} />}
-          />
-        )}
+        {sub === "landingPages" && <LandingPagesHeatmap propertyId={propertyId} />}
 
         {sub === "geo" && (
           <TrendTable
@@ -1030,8 +993,8 @@ function TableToolbar({
         {(
           [
             ["all", "All"],
-            ["growing", "Growing"],
-            ["decaying", "Decaying"],
+            ["growing", "Winning"],
+            ["decaying", "Losing"],
             ["new", "New"],
           ] as const
         ).map(([t, l]) => (

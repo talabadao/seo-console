@@ -61,6 +61,24 @@ function extractTags(xml: string, tag: string): string[] {
   return out;
 }
 
+/** Parses already-fetched (or uploaded) sitemap XML text — recurses into a `<sitemapindex>`'s
+ * child sitemaps over the network, since only the index itself is already in hand. */
+async function collectFromXml(
+  xml: string,
+  seen: Set<string>,
+  urls: Set<string>,
+  budget: { left: number },
+  depth = 0,
+): Promise<void> {
+  if (/<sitemapindex/i.test(xml)) {
+    for (const loc of extractTags(xml, "loc")) {
+      await collectFromSitemap(loc, seen, urls, budget, depth + 1);
+    }
+  } else {
+    for (const loc of extractTags(xml, "loc")) urls.add(loc);
+  }
+}
+
 async function collectFromSitemap(
   url: string,
   seen: Set<string>,
@@ -73,20 +91,14 @@ async function collectFromSitemap(
   budget.left--;
   const xml = await fetchText(url);
   if (!xml) return;
-
-  if (/<sitemapindex/i.test(xml)) {
-    for (const loc of extractTags(xml, "loc")) {
-      await collectFromSitemap(loc, seen, urls, budget, depth + 1);
-    }
-  } else {
-    for (const loc of extractTags(xml, "loc")) urls.add(loc);
-  }
+  await collectFromXml(xml, seen, urls, budget, depth);
 }
 
 export async function discoverSitemapUrls(
   user: UserRow,
   site: SiteRow,
   manualSitemapUrl?: string,
+  manualSitemapXml?: string,
 ): Promise<{ found: number; sitemaps: string[] }> {
   const roots = new Set<string>();
 
@@ -119,8 +131,22 @@ export async function discoverSitemapUrls(
   const budget = { left: MAX_SITEMAP_FETCHES };
   for (const r of roots) await collectFromSitemap(r, seen, urls, budget);
 
+  if (manualSitemapXml) {
+    const text = manualSitemapXml.trim();
+    if (text.startsWith("<")) {
+      // An XML sitemap (or sitemap index) pasted/uploaded directly.
+      await collectFromXml(text, seen, urls, budget);
+    } else {
+      // A plain text file — one URL per line.
+      for (const line of text.split(/\r?\n/)) {
+        const u = line.trim();
+        if (u) urls.add(u);
+      }
+    }
+  }
+
   const now = Date.now();
-  const source = manualSitemapUrl ? "manual" : "sitemap";
+  const source = manualSitemapUrl || manualSitemapXml ? "manual" : "sitemap";
   const values = [...urls].map((url) => ({
     site_id: site.id,
     url,

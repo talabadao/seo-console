@@ -5,6 +5,7 @@ import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
 import { siteConfigFor } from "@/lib/siteConfig";
 import { resolveRange, type PresetId, type Range } from "@/lib/dateRanges";
 import {
+  brandingKeywords,
   cannibalizationTopics,
   keywordTopics,
   lowHangingFruitTopics,
@@ -102,6 +103,13 @@ export async function GET(
             perMonth: Number(p.get("perMonth") || 100),
           },
         ),
+      });
+    }
+
+    if (kind === "branding-keywords") {
+      return NextResponse.json({
+        range,
+        rows: await brandingKeywords(token, property, range, searchType, sc.config.brandTerms),
       });
     }
 

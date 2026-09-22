@@ -77,29 +77,6 @@ async function aiClassifiedTrend(
   return { rows: out, sampled };
 }
 
-/** Landing page (+query string) sessions/users/revenue/key events, optionally filtered to one channel. */
-export async function landingPageTrend(
-  token: string,
-  propertyId: string,
-  current: DateRange,
-  previous: DateRange | null,
-  channel: string,
-  aiDomains: string[],
-): Promise<{ rows: TrendRow[]; sampled: boolean }> {
-  const metrics = ["sessions", "totalUsers", "totalRevenue", "keyEvents"];
-  if (channel === AI_CHANNEL) {
-    return aiClassifiedTrend(token, propertyId, current, previous, aiDomains, "landingPagePlusQueryString", metrics);
-  }
-  return trendBreakdown(token, propertyId, {
-    dimensions: ["landingPagePlusQueryString"],
-    metrics,
-    current,
-    previous,
-    dimensionFilter: channel ? eqFilter("sessionDefaultChannelGroup", channel) : undefined,
-    limit: 5000,
-  });
-}
-
 /** Key events, optionally filtered to one channel — replaces the old plain Source/Medium filter. */
 export async function keyEventsByChannel(
   token: string,
@@ -138,10 +115,12 @@ export interface PagePerfRow {
 }
 
 /**
- * Per-landing-page daily sessions over a single range — the Page Performance
- * heatmap's data source. `total` is summed across every landing page GA4
- * returned (before the top-`take` cap), so it reflects true site-wide
- * landing-page traffic even though only the busiest pages are returned.
+ * Per-landing-page (no query string — `landingPage`, not
+ * `landingPagePlusQueryString`) daily sessions over a single range — the
+ * Landing Pages heatmap's data source. `total` is summed across every
+ * landing page GA4 returned (before the top-`take` cap), so it reflects true
+ * site-wide landing-page traffic even though only the busiest pages are
+ * returned.
  */
 export async function pagePerformanceMatrix(
   token: string,
@@ -154,8 +133,8 @@ export async function pagePerformanceMatrix(
   const needsClassification = channel === AI_CHANNEL;
   const { rows, sampled } = await runReport(token, propertyId, {
     dimensions: needsClassification
-      ? ["date", "landingPagePlusQueryString", "sessionSource", "sessionDefaultChannelGroup"]
-      : ["date", "landingPagePlusQueryString"],
+      ? ["date", "landingPage", "sessionSource", "sessionDefaultChannelGroup"]
+      : ["date", "landingPage"],
     metrics: ["sessions"],
     dateRanges: [range],
     dimensionFilter: !needsClassification && channel ? eqFilter("sessionDefaultChannelGroup", channel) : undefined,

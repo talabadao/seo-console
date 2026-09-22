@@ -525,4 +525,46 @@ export async function underperformingPages(
   return out;
 }
 
+// ---------- 4. Branding keywords ----------
+
+export type BrandKeywordStatus = "good" | "warning";
+
+export interface BrandKeywordRow extends RowStat {
+  query: string;
+  status: BrandKeywordStatus;
+  pages: (RowStat & { url: string })[];
+}
+
+/** Position at/above this counts as healthy; anything worse is flagged. */
+const BRAND_POSITION_WARN = 2;
+
+/** Own-brand queries (Settings → Query filters → Branded terms) and where they rank. */
+export async function brandingKeywords(
+  token: string,
+  property: string,
+  range: Range,
+  type: SearchType,
+  brandTerms: string[],
+): Promise<BrandKeywordRow[]> {
+  if (!brandTerms.length) return [];
+  const rows = await queryPageRows(token, property, range, type);
+  const byQuery = groupQueryPages(rows, (q) => isBranded(q, brandTerms));
+
+  const out: BrandKeywordRow[] = [];
+  for (const [query, pages] of byQuery) {
+    const withImpr = pages.filter((p) => p.impressions > 0);
+    if (!withImpr.length) continue;
+    const agg = foldWeighted(withImpr);
+    out.push({
+      query,
+      ...agg,
+      status: agg.position > BRAND_POSITION_WARN ? "warning" : "good",
+      pages: withImpr,
+    });
+  }
+  // Worst-ranking (highest position number) first, so warnings surface at the top.
+  out.sort((a, b) => b.position - a.position || b.impressions - a.impressions);
+  return out;
+}
+
 export { zero };

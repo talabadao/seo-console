@@ -77,6 +77,23 @@ export function dimensionSupported(dimension: string, type: SearchType): boolean
   return true;
 }
 
+/** A same-request filter on a *different* dimension than the one being broken down by —
+ * e.g. scoping a Queries breakdown to one page, or a Pages breakdown to queries containing
+ * some text. Applied to every request below (totals, series, and the breakdown itself) so
+ * the whole report — not just the table — reflects the cross-filter. */
+export interface CrossFilter {
+  dimension: "page" | "query";
+  operator: "contains" | "equals";
+  value: string;
+}
+
+function crossFilterGroups(f?: CrossFilter): unknown[] | undefined {
+  if (!f || !f.value.trim()) return undefined;
+  return [
+    { filters: [{ dimension: f.dimension, operator: f.operator, expression: f.value.trim() }] },
+  ];
+}
+
 export async function fetchLiveReport(opts: {
   token: string;
   property: string;
@@ -86,14 +103,18 @@ export async function fetchLiveReport(opts: {
   grain: Grain;
   dimension: string; // query | page | country | device | searchAppearance
   maxRows?: number;
+  crossFilter?: CrossFilter;
 }): Promise<LiveReport> {
   const { token, property, current, previous, searchType, grain, dimension } = opts;
   const maxRows = opts.maxRows ?? 50000;
   const type = searchType;
+  const dimensionFilterGroups = crossFilterGroups(opts.crossFilter);
 
   const canBreakdown = dimensionSupported(dimension, type);
-  const cur = { startDate: current.start, endDate: current.end };
-  const prv = previous ? { startDate: previous.start, endDate: previous.end } : null;
+  const cur = { startDate: current.start, endDate: current.end, dimensionFilterGroups };
+  const prv = previous
+    ? { startDate: previous.start, endDate: previous.end, dimensionFilterGroups }
+    : null;
   const soft = (p: Promise<SearchAnalyticsRow[]>) => p.catch(() => [] as SearchAnalyticsRow[]);
   const none = Promise.resolve([] as SearchAnalyticsRow[]);
 

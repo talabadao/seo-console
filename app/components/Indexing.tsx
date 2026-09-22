@@ -79,13 +79,26 @@ export function Indexing({ property }: { property: string }) {
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [sitemapUrl, setSitemapUrl] = useState("");
+  const [sitemapFileName, setSitemapFileName] = useState("");
+  const [sitemapXml, setSitemapXml] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [reconnect, setReconnect] = useState(false);
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
+  const [runProgress, setRunProgress] = useState<{ done: number; target: number } | null>(null);
   const autoRunFor = useRef<string | null>(null);
+
+  async function onSitemapFile(f: File | null) {
+    if (!f) {
+      setSitemapFileName("");
+      setSitemapXml("");
+      return;
+    }
+    setSitemapFileName(f.name);
+    setSitemapXml(await f.text());
+  }
 
   const load = useCallback(async () => {
     if (!property) return;
@@ -121,6 +134,14 @@ export function Indexing({ property }: { property: string }) {
   async function run(discover: boolean) {
     setBusy(true);
     setMsg(null);
+    // Rough progress estimate for the bar: how many of the site's known URLs
+    // aren't inspected yet, as of the moment the run started. Discovery can
+    // grow that denominator mid-run (new URLs found), but re-deriving it live
+    // from `data` (updated by `load()` below) keeps the bar honest either way.
+    const startInspected = data?.inspected ?? 0;
+    setRunProgress(
+      data && data.total > startInspected ? { done: 0, target: data.total - startInspected } : null,
+    );
     try {
       let discoveredTotal: number | undefined;
       let checkedTotal = 0;
@@ -144,6 +165,7 @@ export function Indexing({ property }: { property: string }) {
               discover: round === 1 ? discover : false,
               discoverOnly: doDiscoverOnly,
               sitemapUrl: round === 1 ? sitemapUrl.trim() || undefined : undefined,
+              sitemapXml: round === 1 ? sitemapXml || undefined : undefined,
             }),
           });
           j = await res.json();
@@ -163,6 +185,10 @@ export function Indexing({ property }: { property: string }) {
         quota = j.quotaLeft ?? quota;
         lastMessage = j.message;
         await load(); // refresh counts live between rounds
+        setRunProgress((cur) => {
+          const target = Math.max(cur?.target ?? 0, checkedTotal);
+          return target > 0 ? { done: checkedTotal, target } : null;
+        });
         if (doDiscoverOnly) continue; // always follow discovery with an inspection round
         if (lastMessage !== CONTINUE_MESSAGE) break;
       }
@@ -173,6 +199,7 @@ export function Indexing({ property }: { property: string }) {
       );
     } finally {
       setBusy(false);
+      setRunProgress(null);
     }
   }
 
@@ -304,6 +331,27 @@ export function Indexing({ property }: { property: string }) {
             placeholder="optional sitemap URL"
             className="w-48 rounded-md border bg-background px-2 py-1.5 text-sm"
           />
+          <label
+            className="cursor-pointer rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft"
+            title={sitemapFileName || "Upload a sitemap XML or a text file of URLs, one per line"}
+          >
+            {sitemapFileName ? `📄 ${sitemapFileName}` : "Upload sitemap"}
+            <input
+              type="file"
+              accept=".xml,.txt"
+              onChange={(e) => onSitemapFile(e.target.files?.[0] ?? null)}
+              className="hidden"
+            />
+          </label>
+          {sitemapFileName && (
+            <button
+              onClick={() => onSitemapFile(null)}
+              className="text-xs text-muted hover:text-foreground"
+              title="Remove uploaded sitemap"
+            >
+              ✕
+            </button>
+          )}
           <button
             onClick={() => run(true)}
             disabled={busy || !property}
@@ -346,6 +394,25 @@ export function Indexing({ property }: { property: string }) {
           </button>
         </div>
       </div>
+
+      {runProgress && (
+        <div className="mb-3">
+          <div className="mb-1 flex justify-between text-xs text-muted">
+            <span>Inspecting URLs…</span>
+            <span>
+              {runProgress.done} / {runProgress.target}
+            </span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-background">
+            <div
+              className="h-full rounded-full bg-accent transition-all"
+              style={{
+                width: `${Math.min(100, Math.round((runProgress.done / runProgress.target) * 100))}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {msg && <div className="mb-3 rounded-lg border bg-surface p-3 text-sm">{msg}</div>}
 

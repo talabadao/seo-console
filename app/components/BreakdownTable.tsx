@@ -95,6 +95,7 @@ export function BreakdownTable({
   compareOn,
   trend,
   onTrend,
+  onDrill,
 }: {
   dimension: string;
   rows: BreakdownRow[];
@@ -103,6 +104,8 @@ export function BreakdownTable({
   compareOn: boolean;
   trend: "all" | "growing" | "decaying" | "new";
   onTrend: (t: "all" | "growing" | "decaying" | "new") => void;
+  /** Row click handler — pivots to the other dimension, scoped to this row's key. */
+  onDrill?: (key: string) => void;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("clicks");
@@ -164,8 +167,8 @@ export function BreakdownTable({
           {(
             [
               ["all", "All"],
-              ["growing", "Growing"],
-              ["decaying", "Decaying"],
+              ["growing", "Winning"],
+              ["decaying", "Losing"],
               ["new", "New"],
             ] as const
           ).map(([t, label]) => (
@@ -236,7 +239,11 @@ export function BreakdownTable({
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.key} className="border-b border-border/60 hover:bg-accent-soft/40">
+              <tr
+                key={r.key}
+                className={`border-b border-border/60 hover:bg-accent-soft/40 ${onDrill ? "cursor-pointer" : ""}`}
+                onClick={onDrill ? () => onDrill(r.key) : undefined}
+              >
                 <td className="max-w-md px-4 py-2" title={r.key}>
                   <span className="flex items-center gap-1.5">
                     <KeyCell dimension={dimension} value={r.key} />
