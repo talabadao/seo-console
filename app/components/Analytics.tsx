@@ -808,7 +808,7 @@ function KeyEventsTable({
                 {open === r.key && (
                   <tr className="border-b border-border/60 bg-background/50">
                     <td colSpan={4} className="px-6 py-3">
-                      <div className="grid gap-4 lg:grid-cols-[2fr_1fr_1fr]">
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
                         <Drill title="By landing page (+ string)" by="landing" eventName={r.key} currency={currency} channel={channel} qs={qs} />
                         <Drill title="By referral page" by="referrer" eventName={r.key} currency={currency} channel={channel} qs={qs} />
                         <Drill title="By page path (+ string)" by="pagePath" eventName={r.key} currency={currency} channel={channel} qs={qs} />
@@ -859,13 +859,13 @@ function Drill({
   }, [by, eventName, channel, qs]);
 
   return (
-    <div className="rounded-lg border bg-surface">
+    <div className="min-w-0 rounded-lg border bg-surface">
       <div className="border-b px-3 py-1.5 text-xs font-semibold uppercase text-muted">{title}</div>
       <div className="max-h-64 overflow-auto">
         {rows === null && <p className="px-3 py-3 text-xs text-muted">Loading…</p>}
         {rows?.slice(0, 50).map((r) => (
-          <div key={r.key} className="flex items-center gap-2 border-b border-border/40 px-3 py-1 text-xs">
-            <span className="flex-1 truncate" title={r.key}>
+          <div key={r.key} className="flex min-w-0 items-center gap-2 border-b border-border/40 px-3 py-1 text-xs">
+            <span className="min-w-0 flex-1 truncate" title={r.key}>
               {r.key || "(not set)"}
             </span>
             <span className="tabular-nums">{fmt(r.cur[0] ?? 0, "count")}</span>
