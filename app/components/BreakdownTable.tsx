@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { METRIC_META, type MetricKey, fmtFull } from "./format";
 import { downloadCsv } from "./csv";
 import { country, deviceLabel, flagSrc } from "@/lib/geo";
+import { classifyAiPrompt } from "@/lib/queryFilters";
 
 export interface BreakdownRow {
   key: string;
@@ -31,6 +32,25 @@ type SortKey = "key" | MetricKey;
 function pctChange(cur: number, prev: number): number | null {
   if (!prev) return cur > 0 ? Infinity : null;
   return ((cur - prev) / prev) * 100;
+}
+
+const AI_FLAG_META = {
+  bot: { label: "BOT", color: "var(--bad)" },
+  offtopic: { label: "OFFTOPIC", color: "var(--position)" },
+  new: { label: "NEW", color: "var(--good)" },
+} as const;
+
+function AiPromptBadge({ flag }: { flag: "bot" | "offtopic" | "new" | null }) {
+  if (!flag) return null;
+  const meta = AI_FLAG_META[flag];
+  return (
+    <span
+      className="rounded px-1 text-[10px] font-semibold"
+      style={{ color: meta.color, background: `color-mix(in srgb, ${meta.color} 15%, transparent)` }}
+    >
+      {meta.label}
+    </span>
+  );
 }
 
 function Delta({ cur, prev, invert }: { cur: number; prev: number; invert?: boolean }) {
@@ -96,6 +116,7 @@ export function BreakdownTable({
   trend,
   onTrend,
   onDrill,
+  aiPromptMode,
 }: {
   dimension: string;
   rows: BreakdownRow[];
@@ -106,6 +127,8 @@ export function BreakdownTable({
   onTrend: (t: "all" | "growing" | "decaying" | "new") => void;
   /** Row click handler — pivots to the other dimension, scoped to this row's key. */
   onDrill?: (key: string) => void;
+  /** Query dimension + the "AI search prompts" filter active — shows Bot/Offtopic/New labels. */
+  aiPromptMode?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("clicks");
@@ -238,7 +261,9 @@ export function BreakdownTable({
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => (
+            {shown.map((r) => {
+              const aiFlag = aiPromptMode ? classifyAiPrompt(r) : null;
+              return (
               <tr
                 key={r.key}
                 className={`border-b border-border/60 hover:bg-accent-soft/40 ${onDrill ? "cursor-pointer" : ""}`}
@@ -247,10 +272,14 @@ export function BreakdownTable({
                 <td className="max-w-md px-4 py-2" title={r.key}>
                   <span className="flex items-center gap-1.5">
                     <KeyCell dimension={dimension} value={r.key} />
-                    {r.isNew && (
-                      <span className="rounded bg-good/15 px-1 text-[10px] font-semibold text-good">
-                        NEW
-                      </span>
+                    {aiPromptMode ? (
+                      <AiPromptBadge flag={aiFlag} />
+                    ) : (
+                      r.isNew && (
+                        <span className="rounded bg-good/15 px-1 text-[10px] font-semibold text-good">
+                          NEW
+                        </span>
+                      )
                     )}
                   </span>
                 </td>
@@ -263,7 +292,8 @@ export function BreakdownTable({
                   </td>
                 ))}
               </tr>
-            ))}
+              );
+            })}
             {!shown.length && (
               <tr>
                 <td colSpan={cols.length + 1} className="px-4 py-10 text-center text-muted">

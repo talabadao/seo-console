@@ -12,7 +12,7 @@ interface Stat {
 
 export interface BrandKeywordRow extends Stat {
   query: string;
-  status: "good" | "warning";
+  status: "warning" | null;
   pages: (Stat & { url: string })[];
 }
 
@@ -35,19 +35,16 @@ function StatCells({ s }: { s: Stat }) {
   );
 }
 
-function StatusBadge({ status }: { status: "good" | "warning" }) {
-  const good = status === "good";
+function StatusBadge() {
   return (
     <span
       className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold"
       style={{
-        color: good ? "var(--good)" : "var(--bad)",
-        background: good
-          ? "color-mix(in srgb, var(--good) 15%, transparent)"
-          : "color-mix(in srgb, var(--bad) 15%, transparent)",
+        color: "var(--position)",
+        background: "color-mix(in srgb, var(--position) 18%, transparent)",
       }}
     >
-      {good ? "Good" : "Warning"}
+      Warning
     </span>
   );
 }
@@ -61,7 +58,7 @@ export function BrandingKeywordsTable({ rows }: { rows: BrandKeywordRow[] }) {
       <div className="flex items-center gap-3 border-b px-4 py-2 text-sm text-muted">
         <span>{rows.length.toLocaleString()} branded keyword{rows.length === 1 ? "" : "s"}</span>
         {warnCount > 0 && (
-          <span className="rounded bg-bad/15 px-1.5 py-0.5 text-xs font-semibold text-bad">
+          <span className="rounded bg-position/15 px-1.5 py-0.5 text-xs font-semibold text-position">
             {warnCount} warning{warnCount === 1 ? "" : "s"}
           </span>
         )}
@@ -95,39 +92,34 @@ export function BrandingKeywordsTable({ rows }: { rows: BrandKeywordRow[] }) {
                     <span className="mr-1 text-muted">{open === r.query ? "▾" : "▸"}</span>
                     {r.query}
                   </td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={r.status} />
-                  </td>
+                  <td className="px-3 py-2">{r.status === "warning" && <StatusBadge />}</td>
                   <StatCells s={r} />
                 </tr>
                 {open === r.query && (
-                  <tr className="border-b border-border/50 bg-background/50">
-                    <td colSpan={6} className="px-3 py-3">
-                      <div className="mb-1 text-xs font-semibold uppercase text-muted">
+                  <>
+                    <tr className="border-b border-border/40 bg-background/50 text-xs">
+                      <td colSpan={6} className="px-3 pt-2 pb-1 font-semibold uppercase text-muted">
                         Ranking URL{r.pages.length === 1 ? "" : "s"} for this keyword
-                      </div>
-                      <table className="w-full text-xs">
-                        <tbody>
-                          {r.pages.map((p) => (
-                            <tr key={p.url} className="border-b border-border/40">
-                              <td className="max-w-[20rem] truncate py-1 pr-2">
-                                <a
-                                  href={p.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-accent hover:underline"
-                                  title={p.url}
-                                >
-                                  {path(p.url)}
-                                </a>
-                              </td>
-                              <StatCells s={p} />
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {r.pages.map((p) => (
+                      <tr key={p.url} className="border-b border-border/40 bg-background/50 text-xs">
+                        <td className="max-w-xs truncate py-1.5 pr-2 pl-7">
+                          <a
+                            href={p.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-accent hover:underline"
+                            title={p.url}
+                          >
+                            {path(p.url)}
+                          </a>
+                        </td>
+                        <td />
+                        <StatCells s={p} />
+                      </tr>
+                    ))}
+                  </>
                 )}
               </Fragment>
             ))}

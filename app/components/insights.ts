@@ -115,14 +115,14 @@ const PACE_COLOR: Record<Pace, string> = {
   "off-track": "var(--bad)",
 };
 
-const SUMMARY_TITLE = "📊 Summary";
-const TOP_URLS_TITLE = "🚀 Top-performing URLs for the week";
-const BOTTOM_URLS_TITLE = "📉 Underperforming URLs for the week";
+const SUMMARY_TITLE = "Summary";
+const TOP_URLS_TITLE = "Top-performing URLs for the week";
+const BOTTOM_URLS_TITLE = "Underperforming URLs for the week";
 const DIVIDER = "─".repeat(28);
 
 function changeLine(cur: number, prev: number, unit: string): string {
   if (!prev) {
-    return cur > 0 ? `🆕 New this period → ${n0(cur)} ${unit}` : `No ${unit} recorded`;
+    return cur > 0 ? `New this period → ${n0(cur)} ${unit}` : `No ${unit} recorded`;
   }
   const pct = ((cur - prev) / prev) * 100;
   const arrow = pct >= 0 ? "▲" : "▼";
@@ -149,10 +149,10 @@ function summaryParts(data: ReportData) {
   const mtdRange = `${w.monthStartLabel.replace(/, \d{4}$/, "")} – ${w.mtd.end.slice(-2)}`;
 
   const sectionSpecs: SectionSpec[] = [
-    { title: "📆 Last 7 days vs Previous 7 days:", section: data.sections.last7 },
-    { title: "📆 MTD vs Last period:", section: data.sections.mtdVsLastPeriod },
-    { title: "📆 MTD vs Same period last year:", section: data.sections.mtdVsLastYear },
-    { title: "📆 Last 30 days vs Last period:", section: data.sections.last30VsLastPeriod },
+    { title: "Last 7 days vs Previous 7 days:", section: data.sections.last7 },
+    { title: "MTD vs Last period:", section: data.sections.mtdVsLastPeriod },
+    { title: "MTD vs Same period last year:", section: data.sections.mtdVsLastYear },
+    { title: "Last 30 days vs Last period:", section: data.sections.last30VsLastPeriod },
   ];
 
   const sectionLines = (s: Section) => [
@@ -218,8 +218,8 @@ export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null
     `<h2>${esc(SUMMARY_TITLE)}</h2>`,
     `<p><strong>${esc(w.monthLabel)} KPI:</strong></p>`,
     ul([
-      `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
+      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
+      `Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
     ]),
     `<ul><li>${runRateHtml}</li></ul>`,
     ...sections.flatMap(({ title, lines }) => [
@@ -240,8 +240,8 @@ export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null
     "",
     `${w.monthLabel} KPI:`,
     bullets([
-      `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
+      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
+      `Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
       runRateLine,
     ]),
     "",
@@ -293,9 +293,9 @@ function taskSectionsFor(tasks: TaskBuckets | null): { title: string; lines: str
   const lines = (list: AsanaTask[], dateLabel: "completed" | "due", emptyText: string) =>
     list.length ? list.map((t) => taskLine(t, dateLabel)) : [emptyText];
   return [
-    { title: "✅ Tasks completed (last 2 weeks)", lines: lines(tasks.completedRecently, "completed", "No tasks completed in the last 2 weeks.") },
-    { title: "🗓️ Tasks due this week", lines: lines(tasks.dueThisWeek, "due", "No tasks due this week.") },
-    { title: "🔜 Tasks due next week", lines: lines(tasks.dueNextWeek, "due", "No tasks due next week.") },
+    { title: "Tasks completed (last 2 weeks)", lines: lines(tasks.completedRecently, "completed", "No tasks completed in the last 2 weeks.") },
+    { title: "Tasks due this week", lines: lines(tasks.dueThisWeek, "due", "No tasks due this week.") },
+    { title: "Tasks due next week", lines: lines(tasks.dueNextWeek, "due", "No tasks due next week.") },
   ];
 }
 
@@ -318,8 +318,8 @@ export function buildAsanaBody(data: ReportData, tasks: TaskBuckets | null): { t
     "",
     `${w.monthLabel} KPI:`,
     bullets([
-      `🎯 Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
-      `📈 Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
+      `Organic Traffic Target: ${n0(config.trafficOrganicTarget)} | AI Traffic Target: ${n0(config.trafficAiTarget)}`,
+      `Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
       runRateLine,
     ]),
     "",

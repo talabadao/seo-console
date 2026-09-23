@@ -422,6 +422,7 @@ export function Dashboard({
                 compareOn={showRowDeltas}
                 trend={filters.trend}
                 onTrend={(t) => setFilters((f) => ({ ...f, trend: t }))}
+                aiPromptMode={dimension === "query" && filters.ai}
                 onDrill={
                   dimension === "page"
                     ? (key) => {

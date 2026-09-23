@@ -125,18 +125,99 @@ export function isBranded(key: string, terms: string[]): boolean {
   return terms.some((t) => t && k.includes(t.toLowerCase()));
 }
 
-// A query matches if it satisfies either branch (OR, not AND):
+function isIntegerPosition(p: number): boolean {
+  return Math.abs(p - Math.round(p)) < 1e-9;
+}
+
+// A query matches if it satisfies any of these branches (OR, not AND):
 //   1. Position ~1.0 and impressions < 10 — ranking #1 but barely getting
 //      shown, a classic sign an AI Overview/answer box is absorbing the
 //      impression instead of a standard blue link.
 //   2. Impressions = 1 and position 2.0-20.0 — a single, oddly-precise
-//      impression at a non-top position, typical of an AI assistant citing
-//      the page once rather than organic search traffic.
+//      (integer) impression at a non-top position, typical of an AI
+//      assistant citing the page once rather than organic search traffic.
+//   3. Newly-appeared this period (zero presence in the equivalent prior
+//      period — see isNew), non-integer position under 10, and under 30
+//      impressions — a sudden, still-noisy blip rather than an established
+//      ranking. The current-vs-none jump between periods stands in for
+//      "irregular activity" here, since the breakdown only carries
+//      period-aggregate totals, not a per-day series per query.
 export function matchesAi(row: BreakdownRow): boolean {
   const p = row.position;
   const branch1 = Math.abs(p - 1) < 0.05 && row.impressions < 10;
   const branch2 = row.impressions === 1 && p >= 2 - 1e-9 && p <= 20 + 1e-9;
-  return branch1 || branch2;
+  const branch3 =
+    row.isNew && p > 0 && p < 10 && !isIntegerPosition(p) && row.impressions > 0 && row.impressions < 30;
+  return branch1 || branch2 || branch3;
+}
+
+// ---------- AI Search Prompts: Offtopic / Bot labels ----------
+//
+// Rule-based only (no API/LLM call) — flags two concrete, non-semantic
+// patterns found in AI-referral query text. Neither rule is language-
+// dependent since both key off syntax/structure, not meaning. A third,
+// genuinely off-topic-content pattern (e.g. a query entirely unrelated to
+// the site's subject matter, from an AI grounding mismatch) isn't included
+// here — telling "off-topic" from "on-topic" requires understanding what
+// the site is actually about, which isn't something a string rule can do
+// reliably; that would need a real semantic classifier (e.g. an LLM pass)
+// as a separate, opt-in step.
+
+const BOT_MARKER_KEYWORDS = [
+  "no greeting",
+  "no emoji",
+  "hedging",
+  "reasoning is internal",
+  "# role",
+  "# directive",
+  "# persona",
+  "# instructions",
+  "# system",
+  "you are an ai",
+  "do not mention",
+  "internal monologue",
+];
+
+/** Pattern A: prompt-injection text masquerading as a system prompt (starts with "#", or hits
+ * 2+ of the marker phrases those prompts consistently use). Pattern B: automated search-agent
+ * syntax — 2+ "-word"/"-site:..." exclusion tokens, which no human types by hand. */
+export function isBotQuery(key: string): boolean {
+  const k = key.trim();
+  if (!k) return false;
+  if (k.startsWith("#")) return true;
+  const lower = k.toLowerCase();
+  if (BOT_MARKER_KEYWORDS.filter((m) => lower.includes(m)).length >= 2) return true;
+  const exclusions = k.match(/(^|\s)-(?:site:)?\S+/g) ?? [];
+  return exclusions.length >= 2;
+}
+
+const OFFTOPIC_FILLER_WORDS = new Set([
+  "ok", "okay", "k", "kk", "ya", "yes", "no", "yeah", "yep", "nope",
+  "hoy", "oui", "oùi", "non", "si", "sí",
+  "ค่ะ", "ครับ", "จ้า",
+]);
+const OFFTOPIC_OPTION_RE = /^option\s*[a-z0-9]+$/i;
+
+/** Pure filler — a single-letter/token "answer" or stock acknowledgement with no real query
+ * intent (often a multiple-choice reply meant for a different question entirely). Does NOT
+ * catch genuinely off-topic-but-substantial content — see the module note above. */
+export function isOfftopicFiller(key: string): boolean {
+  const k = key.trim();
+  if (!k) return false;
+  const lower = k.toLowerCase();
+  if (OFFTOPIC_FILLER_WORDS.has(lower)) return true;
+  if (OFFTOPIC_OPTION_RE.test(lower)) return true;
+  return k.length <= 2;
+}
+
+export type AiPromptFlag = "bot" | "offtopic" | "new" | null;
+
+/** Which badge (if any) to show on an AI-matched row — checked in severity order. */
+export function classifyAiPrompt(row: BreakdownRow): AiPromptFlag {
+  if (isBotQuery(row.key)) return "bot";
+  if (isOfftopicFiller(row.key)) return "offtopic";
+  if (row.isNew) return "new";
+  return null;
 }
 
 export function filterActive(f: FilterState): boolean {

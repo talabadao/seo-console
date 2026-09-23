@@ -527,7 +527,7 @@ export async function underperformingPages(
 
 // ---------- 4. Branding keywords ----------
 
-export type BrandKeywordStatus = "good" | "warning";
+export type BrandKeywordStatus = "warning" | null;
 
 export interface BrandKeywordRow extends RowStat {
   query: string;
@@ -535,8 +535,8 @@ export interface BrandKeywordRow extends RowStat {
   pages: (RowStat & { url: string })[];
 }
 
-/** Position at/above this counts as healthy; anything worse is flagged. */
-const BRAND_POSITION_WARN = 2;
+/** Above this average position, a brand query is flagged as a warning. */
+const BRAND_POSITION_WARN = 3;
 /** Below this many impressions a brand query is too thin a signal to flag either way. */
 const BRAND_MIN_IMPRESSIONS = 30;
 
@@ -561,7 +561,7 @@ export async function brandingKeywords(
     out.push({
       query,
       ...agg,
-      status: agg.position > BRAND_POSITION_WARN ? "warning" : "good",
+      status: agg.position > BRAND_POSITION_WARN ? "warning" : null,
       pages: withImpr,
     });
   }

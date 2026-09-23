@@ -425,18 +425,21 @@ export function Indexing({ property }: { property: string }) {
       )}
 
       {runProgress && (
-        <div className="mb-3">
-          <div className="mb-1 flex justify-between text-xs text-muted">
-            <span>Inspecting URLs…</span>
-            <span>
-              {runProgress.done} / {runProgress.target}
+        <div className="mb-3 rounded-lg border bg-surface p-3">
+          <div className="mb-1.5 flex items-center justify-between text-sm">
+            <span className="font-medium">Inspecting URLs from the sitemap…</span>
+            <span className="tabular-nums text-muted">
+              {runProgress.done.toLocaleString()} / {runProgress.target.toLocaleString()} ·{" "}
+              {Math.min(100, Math.round((runProgress.done / runProgress.target) * 100))}%
             </span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-background">
+          <div className="h-3 overflow-hidden rounded-full border bg-background">
             <div
-              className="h-full rounded-full bg-accent transition-all"
+              className={`h-full rounded-full bg-accent transition-all ${
+                runProgress.done === 0 ? "animate-pulse" : ""
+              }`}
               style={{
-                width: `${Math.min(100, Math.round((runProgress.done / runProgress.target) * 100))}%`,
+                width: `${Math.max(3, Math.min(100, Math.round((runProgress.done / runProgress.target) * 100)))}%`,
               }}
             />
           </div>

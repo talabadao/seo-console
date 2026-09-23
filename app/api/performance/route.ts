@@ -56,10 +56,14 @@ export async function GET(req: NextRequest) {
   });
   const compareMode = (p.get("compare") || "none") as CompareMode;
   const trendParam = p.get("trend") || "all";
+  const aiParam = p.get("ai") === "1";
   // Growing / Decaying / New need a baseline even if the user hasn't turned on a
-  // visible comparison — fall back to the previous period for those.
+  // visible comparison — fall back to the previous period for those. The AI
+  // Search Prompts filter also needs it: its "new, low-impression, non-integer
+  // position" branch (matchesAi) reads isNew, which is only ever true when a
+  // previous-period comparison was resolved.
   const effectiveCompare: CompareMode =
-    compareMode === "none" && trendParam !== "all" ? "previous" : compareMode;
+    compareMode === "none" && (trendParam !== "all" || aiParam) ? "previous" : compareMode;
   const previous = resolveComparison(current, effectiveCompare, {
     matchWeekdays: p.get("matchWeekdays") === "1",
     customStart: p.get("compareStart") || undefined,
