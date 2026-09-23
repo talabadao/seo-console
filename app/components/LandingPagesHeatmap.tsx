@@ -30,6 +30,28 @@ function dayLabel(d: string): string {
   return formatDate(parseISO(d), "MMM d");
 }
 
+interface Column {
+  key: string;
+  label: string;
+  days: string[];
+}
+
+/** Day columns as-is, or sequential 7-day buckets (not calendar-week-aligned) from the start
+ * of the range — a 28-day range in "week" grain becomes 4 columns of 7 days each. */
+function buildColumns(days: string[], grain: "day" | "week"): Column[] {
+  if (grain === "day") return days.map((d) => ({ key: d, label: dayLabel(d), days: [d] }));
+  const out: Column[] = [];
+  for (let i = 0; i < days.length; i += 7) {
+    const chunk = days.slice(i, i + 7);
+    out.push({
+      key: chunk[0],
+      label: chunk.length > 1 ? `${dayLabel(chunk[0])} – ${dayLabel(chunk[chunk.length - 1])}` : dayLabel(chunk[0]),
+      days: chunk,
+    });
+  }
+  return out;
+}
+
 /** Background tint for one heatmap cell, scaled against that row's own max — a page's own
  * quiet vs. busy days stand out even when it's much smaller than the site's top page. */
 function heatColor(value: number, max: number): string {
@@ -41,6 +63,7 @@ function heatColor(value: number, max: number): string {
 
 export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
   const [timeframe, setTimeframe] = useState<"7d" | "14d" | "28d">("7d");
+  const [grain, setGrain] = useState<"day" | "week">("day");
   const [channel, setChannel] = useState("");
   const [data, setData] = useState<HeatmapData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,13 +93,21 @@ export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
     load();
   }, [load]);
 
+  const columns = useMemo(() => buildColumns(data?.days ?? [], grain), [data, grain]);
+
+  const rowCells = useMemo(() => {
+    return (data?.rows ?? []).map((r) => ({
+      page: r.page,
+      total: r.total,
+      cells: columns.map((c) => c.days.reduce((a, d) => a + (r.byDate[d] ?? 0), 0)),
+    }));
+  }, [data, columns]);
+
   const maxByRow = useMemo(() => {
     const m = new Map<string, number>();
-    for (const r of data?.rows ?? []) {
-      m.set(r.page, Math.max(0, ...Object.values(r.byDate)));
-    }
+    for (const r of rowCells) m.set(r.page, Math.max(0, ...r.cells));
     return m;
-  }, [data]);
+  }, [rowCells]);
 
   return (
     <div className="p-4">
@@ -91,6 +122,25 @@ export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
               }`}
             >
               {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex rounded-md border p-0.5 text-sm">
+          {(
+            [
+              ["day", "Day"],
+              ["week", "Week"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setGrain(id)}
+              className={`rounded px-3 py-1 font-medium ${
+                grain === id ? "bg-accent text-white" : "text-muted"
+              }`}
+            >
+              {label}
             </button>
           ))}
         </div>
@@ -123,17 +173,19 @@ export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-surface text-left text-muted">
               <tr className="border-b">
-                <th className="sticky left-0 z-20 bg-surface px-3 py-2.5 font-medium">Landing page</th>
-                {(data?.days ?? []).map((d) => (
-                  <th key={d} className="px-2 py-2.5 text-right font-medium whitespace-nowrap">
-                    {dayLabel(d)}
+                <th className="sticky left-0 z-20 bg-surface px-3 py-2.5 font-medium">
+                  Landing page + query string
+                </th>
+                {columns.map((c) => (
+                  <th key={c.key} className="px-2 py-2.5 text-right font-medium whitespace-nowrap">
+                    {c.label}
                   </th>
                 ))}
                 <th className="px-3 py-2.5 text-right font-medium">Total</th>
               </tr>
             </thead>
             <tbody>
-              {(data?.rows ?? []).map((r) => {
+              {rowCells.map((r) => {
                 const max = maxByRow.get(r.page) ?? 0;
                 return (
                   <tr key={r.page} className="border-b border-border/60 hover:bg-accent-soft/40">
@@ -143,14 +195,14 @@ export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
                     >
                       {r.page || "/"}
                     </td>
-                    {(data?.days ?? []).map((d) => {
-                      const v = r.byDate[d] ?? 0;
+                    {columns.map((c, i) => {
+                      const v = r.cells[i];
                       return (
                         <td
-                          key={d}
+                          key={c.key}
                           className="px-2 py-2 text-right tabular-nums"
                           style={{ background: heatColor(v, max) }}
-                          title={`${d}: ${v.toLocaleString()} sessions`}
+                          title={`${c.label}: ${v.toLocaleString()} sessions`}
                         >
                           {v > 0 ? v.toLocaleString() : <span className="text-muted">–</span>}
                         </td>
@@ -162,12 +214,9 @@ export function LandingPagesHeatmap({ propertyId }: { propertyId: string }) {
                   </tr>
                 );
               })}
-              {!data?.rows.length && (
+              {!rowCells.length && (
                 <tr>
-                  <td
-                    colSpan={(data?.days.length ?? 0) + 2}
-                    className="px-4 py-10 text-center text-muted"
-                  >
+                  <td colSpan={columns.length + 2} className="px-4 py-10 text-center text-muted">
                     No data.
                   </td>
                 </tr>

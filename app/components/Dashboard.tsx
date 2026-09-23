@@ -78,8 +78,6 @@ export function Dashboard({
   const [searchType, setSearchType] = useState("web");
   const [dimension, setDimension] = useState("query");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTER);
-  const [filterPage, setFilterPage] = useState("");
-  const [filterQuery, setFilterQuery] = useState("");
   const [activeMetrics, setActiveMetrics] = useState<MetricKey[]>(["clicks", "impressions"]);
   const [data, setData] = useState<PerfResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -150,8 +148,8 @@ export function Dashboard({
       if (filters.longtail) p.set("longtail", "1");
       if (filters.ai) p.set("ai", "1");
       if (filters.trend !== "all") p.set("trend", filters.trend);
-      if (dimension === "query" && filterPage) p.set("filterPage", filterPage);
-      if (dimension === "page" && filterQuery) p.set("filterQuery", filterQuery);
+      if (dimension === "query" && filters.filterPage) p.set("filterPage", filters.filterPage);
+      if (dimension === "page" && filters.filterQuery) p.set("filterQuery", filters.filterQuery);
       const res = await fetch(`/api/performance?${p}`);
       const json = await res.json();
       if (json.needsReconnect) setNeedsReconnect(true);
@@ -160,7 +158,7 @@ export function Dashboard({
     } finally {
       setLoading(false);
     }
-  }, [property, dimension, coreQuery, filters, filterPage, filterQuery]);
+  }, [property, dimension, coreQuery, filters]);
 
   useEffect(() => {
     loadPerf();
@@ -204,6 +202,8 @@ export function Dashboard({
         a: filters.ai,
         t: filters.trend !== "all",
         c: filters.contains.trim().length > 0,
+        fp: filters.filterPage.trim().length > 0,
+        fq: filters.filterQuery.trim().length > 0,
       }).filter(Boolean).length
     : 0;
   const compareOn = range.compareMode !== "none";
@@ -396,8 +396,7 @@ export function Dashboard({
                   <button
                     key={d.id}
                     onClick={() => {
-                      setFilterPage("");
-                      setFilterQuery("");
+                      setFilters((f) => ({ ...f, filterPage: "", filterQuery: "" }));
                       setDimension(d.id);
                     }}
                     className={`rounded-t-md px-3 py-2 text-sm font-medium ${
@@ -409,33 +408,6 @@ export function Dashboard({
                     {d.label}
                   </button>
                 ))}
-                {dimension === "query" && (
-                  <input
-                    value={filterPage}
-                    onChange={(e) => setFilterPage(e.target.value)}
-                    placeholder="Filter to page (URL contains)…"
-                    className="ml-2 w-56 rounded-md border bg-background px-2 py-1 text-xs"
-                  />
-                )}
-                {dimension === "page" && (
-                  <input
-                    value={filterQuery}
-                    onChange={(e) => setFilterQuery(e.target.value)}
-                    placeholder="Filter to query (contains)…"
-                    className="ml-2 w-56 rounded-md border bg-background px-2 py-1 text-xs"
-                  />
-                )}
-                {(filterPage || filterQuery) && (
-                  <button
-                    onClick={() => {
-                      setFilterPage("");
-                      setFilterQuery("");
-                    }}
-                    className="rounded-md border border-accent bg-accent-soft px-2 py-1 text-xs text-accent"
-                  >
-                    Filtered to &quot;{dimension === "query" ? filterPage : filterQuery}&quot; ✕
-                  </button>
-                )}
                 {data?.truncated && (
                   <span className="ml-auto px-2 text-xs text-muted">
                     showing first {data.breakdown.length.toLocaleString()} — refine with filters
@@ -453,14 +425,12 @@ export function Dashboard({
                 onDrill={
                   dimension === "page"
                     ? (key) => {
-                        setFilterQuery("");
-                        setFilterPage(key);
+                        setFilters((f) => ({ ...f, filterQuery: "", filterPage: key }));
                         setDimension("query");
                       }
                     : dimension === "query"
                       ? (key) => {
-                          setFilterPage("");
-                          setFilterQuery(key);
+                          setFilters((f) => ({ ...f, filterPage: "", filterQuery: key }));
                           setDimension("page");
                         }
                       : undefined

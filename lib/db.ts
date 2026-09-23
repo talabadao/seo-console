@@ -161,6 +161,7 @@ async function migrate(): Promise<void> {
       ai_impr_max         INTEGER DEFAULT 10,
       auto_index_enabled  BOOLEAN NOT NULL DEFAULT false,
       auto_index_cap      INTEGER NOT NULL DEFAULT 100,
+      auto_index_hour     INTEGER NOT NULL DEFAULT 3,
       UNIQUE(user_id, source, property)
     );
 
@@ -311,6 +312,7 @@ async function migrate(): Promise<void> {
   await ensureColumn(sql, "url_inspections", "in_sitemap", "INTEGER DEFAULT 0");
   await ensureColumn(sql, "sites", "auto_index_enabled", "BOOLEAN NOT NULL DEFAULT false");
   await ensureColumn(sql, "sites", "auto_index_cap", "INTEGER NOT NULL DEFAULT 100");
+  await ensureColumn(sql, "sites", "auto_index_hour", "INTEGER NOT NULL DEFAULT 3");
   await ensureColumn(sql, "users", "asana_api_token", "TEXT");
   await ensureColumn(sql, "weekly_kpi_config", "asana_project_gid", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn(sql, "weekly_kpi_config", "asana_status_title", "TEXT NOT NULL DEFAULT ''");

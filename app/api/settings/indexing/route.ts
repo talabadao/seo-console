@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
     property?: string;
     autoIndexEnabled?: boolean;
     autoIndexCap?: number;
+    autoIndexHour?: number;
   };
   if (!body.property) return NextResponse.json({ error: "property required" }, { status: 400 });
 
@@ -27,6 +28,8 @@ export async function POST(req: NextRequest) {
   if (typeof body.autoIndexEnabled === "boolean") patch.autoIndexEnabled = body.autoIndexEnabled;
   if (typeof body.autoIndexCap === "number")
     patch.autoIndexCap = Math.max(1, Math.round(body.autoIndexCap));
+  if (typeof body.autoIndexHour === "number")
+    patch.autoIndexHour = Math.max(0, Math.min(23, Math.round(body.autoIndexHour)));
 
   const merged = await saveAutoIndexConfig(user.id, body.property, patch);
   if (!merged) return NextResponse.json({ error: "unknown property" }, { status: 404 });

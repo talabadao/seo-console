@@ -24,6 +24,10 @@ export interface FilterState {
   ai: boolean;
   contains: string;
   trend: "all" | "growing" | "decaying" | "new";
+  /** Cross-dimension scope while viewing Queries: only queries seen on a page whose URL contains this. */
+  filterPage: string;
+  /** Cross-dimension scope while viewing Pages: only pages ranking for a query containing this. */
+  filterQuery: string;
 }
 
 export const EMPTY_FILTER: FilterState = {
@@ -34,6 +38,8 @@ export const EMPTY_FILTER: FilterState = {
   ai: false,
   contains: "",
   trend: "all",
+  filterPage: "",
+  filterQuery: "",
 };
 
 // Interrogatives + question particles across the languages we support.
@@ -141,7 +147,9 @@ export function filterActive(f: FilterState): boolean {
     f.longtail ||
     f.ai ||
     f.trend !== "all" ||
-    f.contains.trim().length > 0
+    f.contains.trim().length > 0 ||
+    f.filterPage.trim().length > 0 ||
+    f.filterQuery.trim().length > 0
   );
 }
 

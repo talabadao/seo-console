@@ -77,6 +77,8 @@ export async function saveSiteConfig(
 export interface AutoIndexConfig {
   autoIndexEnabled: boolean;
   autoIndexCap: number;
+  /** UTC hour (0-23) the daily scheduled inspection run should target. */
+  autoIndexHour: number;
 }
 
 export async function autoIndexConfigFor(
@@ -85,16 +87,20 @@ export async function autoIndexConfigFor(
 ): Promise<{ siteId: number; config: AutoIndexConfig } | null> {
   const row = (await db
     .prepare(
-      `SELECT id, auto_index_enabled, auto_index_cap
+      `SELECT id, auto_index_enabled, auto_index_cap, auto_index_hour
          FROM sites WHERE user_id = ? AND property = ? AND source = 'google'`,
     )
     .get(userId, property)) as
-    | { id: number; auto_index_enabled: boolean; auto_index_cap: number }
+    | { id: number; auto_index_enabled: boolean; auto_index_cap: number; auto_index_hour: number }
     | undefined;
   if (!row) return null;
   return {
     siteId: row.id,
-    config: { autoIndexEnabled: row.auto_index_enabled, autoIndexCap: row.auto_index_cap },
+    config: {
+      autoIndexEnabled: row.auto_index_enabled,
+      autoIndexCap: row.auto_index_cap,
+      autoIndexHour: row.auto_index_hour,
+    },
   };
 }
 
@@ -107,8 +113,8 @@ export async function saveAutoIndexConfig(
   if (!cur) return null;
   const merged = { ...cur.config, ...patch };
   await db
-    .prepare(`UPDATE sites SET auto_index_enabled = ?, auto_index_cap = ? WHERE id = ?`)
-    .run(merged.autoIndexEnabled, merged.autoIndexCap, cur.siteId);
+    .prepare(`UPDATE sites SET auto_index_enabled = ?, auto_index_cap = ?, auto_index_hour = ? WHERE id = ?`)
+    .run(merged.autoIndexEnabled, merged.autoIndexCap, merged.autoIndexHour, cur.siteId);
   return merged;
 }
 

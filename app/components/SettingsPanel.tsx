@@ -15,6 +15,11 @@ interface SiteConfig {
 interface AutoIndexConfig {
   autoIndexEnabled: boolean;
   autoIndexCap: number;
+  autoIndexHour: number;
+}
+
+function hourLabel(h: number): string {
+  return `${String(h).padStart(2, "0")}:00 UTC`;
 }
 
 function initialTheme(): Theme {
@@ -185,6 +190,7 @@ export function SettingsPanel({
         property,
         autoIndexEnabled: idxCfg.autoIndexEnabled,
         autoIndexCap: idxCfg.autoIndexCap,
+        autoIndexHour: idxCfg.autoIndexHour,
       }),
     });
     setIdxMsg(res.ok ? "Saved." : "Save failed.");
@@ -372,10 +378,14 @@ export function SettingsPanel({
           <section className="mt-6">
             <h3 className="text-sm font-medium">Indexing automation — {property}</h3>
             <p className="mt-1 text-xs text-muted">
-              Runs once a day: pulls the sitemap from Search Console, inspects any URL not
-              checked in the last 3 days, and logs each URL&apos;s indexing status for the day.
-              Not every site needs this — leave it off for low-priority properties to save
-              your daily URL Inspection quota (2,000/day, shared across the whole property).
+              Runs once a day at the time below: pulls the sitemap from Search Console,
+              inspects any URL not checked in the last 3 days, and logs each URL&apos;s indexing
+              status for the day for comparison over time. Off by default — a project only runs
+              automatically once you enable it here. Not every site needs this — leave it off
+              for low-priority properties to save your daily URL Inspection quota (2,000/day,
+              shared across the whole property, per Google&apos;s Search Console API limits).
+              Vercel can&apos;t guarantee the exact minute, so expect it to land within the
+              chosen hour.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-4 text-sm">
               <label className="flex items-center gap-2">
@@ -385,6 +395,20 @@ export function SettingsPanel({
                   onChange={(e) => setIdxCfg({ ...idxCfg, autoIndexEnabled: e.target.checked })}
                 />
                 Auto-inspect this site daily
+              </label>
+              <label className="flex flex-col">
+                <span className="text-xs text-muted">Time (UTC)</span>
+                <select
+                  value={idxCfg.autoIndexHour}
+                  onChange={(e) => setIdxCfg({ ...idxCfg, autoIndexHour: Number(e.target.value) })}
+                  className="mt-1 w-28 rounded-md border bg-background px-2 py-1"
+                >
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>
+                      {hourLabel(h)}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="flex flex-col">
                 <span className="text-xs text-muted">Max URLs per daily run</span>
@@ -431,16 +455,6 @@ export function SettingsPanel({
             </button>
             {aiMsg && <span className="text-xs text-muted">{aiMsg}</span>}
           </div>
-        </section>
-
-        <section className="mt-6 rounded-lg border bg-background p-3 text-xs text-muted">
-          <p className="font-medium text-foreground">Scheduled daily sync (Windows)</p>
-          <p className="mt-1">
-            Run <code>npm run sync</code> in the project folder — or schedule it via Task
-            Scheduler (Program <code>node</code>, Arguments{" "}
-            <code>node_modules/tsx/dist/cli.mjs scripts/sync.mts</code>, Start in the project
-            folder). Runs the same pull as “Sync now” for every property.
-          </p>
         </section>
 
         {msg && <p className="mt-4 text-sm">{msg}</p>}

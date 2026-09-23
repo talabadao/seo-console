@@ -115,8 +115,7 @@ export interface PagePerfRow {
 }
 
 /**
- * Per-landing-page (no query string — `landingPage`, not
- * `landingPagePlusQueryString`) daily sessions over a single range — the
+ * Per-(landing page + query string) daily sessions over a single range — the
  * Landing Pages heatmap's data source. `total` is summed across every
  * landing page GA4 returned (before the top-`take` cap), so it reflects true
  * site-wide landing-page traffic even though only the busiest pages are
@@ -133,8 +132,8 @@ export async function pagePerformanceMatrix(
   const needsClassification = channel === AI_CHANNEL;
   const { rows, sampled } = await runReport(token, propertyId, {
     dimensions: needsClassification
-      ? ["date", "landingPage", "sessionSource", "sessionDefaultChannelGroup"]
-      : ["date", "landingPage"],
+      ? ["date", "landingPagePlusQueryString", "sessionSource", "sessionDefaultChannelGroup"]
+      : ["date", "landingPagePlusQueryString"],
     metrics: ["sessions"],
     dateRanges: [range],
     dimensionFilter: !needsClassification && channel ? eqFilter("sessionDefaultChannelGroup", channel) : undefined,

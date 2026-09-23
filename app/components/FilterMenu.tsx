@@ -41,13 +41,31 @@ export function FilterMenu({
 
       {open && (
         <div className="absolute left-0 z-40 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border bg-surface p-4 shadow-xl">
-          <label className="text-xs font-semibold uppercase text-muted">Contains</label>
-          <input
-            value={value.contains}
-            onChange={(e) => set({ contains: e.target.value })}
-            placeholder="text in query / URL…"
-            className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
-          />
+          {queryOnly ? (
+            <>
+              <label className="text-xs font-semibold uppercase text-muted">
+                Filter to page (URL contains)
+              </label>
+              <input
+                value={value.filterPage}
+                onChange={(e) => set({ filterPage: e.target.value })}
+                placeholder="e.g. /blog/halong-bay"
+                className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+              />
+            </>
+          ) : dimension === "page" ? (
+            <>
+              <label className="text-xs font-semibold uppercase text-muted">
+                Filter to query (contains)
+              </label>
+              <input
+                value={value.filterQuery}
+                onChange={(e) => set({ filterQuery: e.target.value })}
+                placeholder="e.g. halong bay"
+                className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+              />
+            </>
+          ) : null}
 
           <p className="mt-4 text-xs font-semibold uppercase text-muted">Position</p>
           <div className="mt-1 flex gap-1">
@@ -139,6 +157,8 @@ export function FilterMenu({
                   ai: false,
                   contains: "",
                   trend: "all",
+                  filterPage: "",
+                  filterQuery: "",
                 })
               }
               className="mt-4 w-full rounded-md border px-2 py-1.5 text-sm text-bad"

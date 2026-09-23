@@ -33,6 +33,8 @@ function parseFilters(p: URLSearchParams): FilterState {
     trend: (["all", "growing", "decaying", "new"].includes(p.get("trend") || "")
       ? p.get("trend")
       : "all") as FilterState["trend"],
+    filterPage: p.get("filterPage") || "",
+    filterQuery: p.get("filterQuery") || "",
   };
 }
 
@@ -81,13 +83,11 @@ export async function GET(req: NextRequest) {
   // Cross-dimension scoping — e.g. viewing Queries but narrowed to one page,
   // or viewing Pages but narrowed to queries containing some text. Only makes
   // sense against the *other* dimension than the one being broken down by.
-  const filterPage = p.get("filterPage") || "";
-  const filterQuery = p.get("filterQuery") || "";
   const crossFilter: CrossFilter | undefined =
-    dimension === "query" && filterPage
-      ? { dimension: "page", operator: "contains", value: filterPage }
-      : dimension === "page" && filterQuery
-        ? { dimension: "query", operator: "contains", value: filterQuery }
+    dimension === "query" && filters.filterPage
+      ? { dimension: "page", operator: "contains", value: filters.filterPage }
+      : dimension === "page" && filters.filterQuery
+        ? { dimension: "query", operator: "contains", value: filters.filterQuery }
         : undefined;
 
   let token: string;

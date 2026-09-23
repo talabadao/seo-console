@@ -537,6 +537,8 @@ export interface BrandKeywordRow extends RowStat {
 
 /** Position at/above this counts as healthy; anything worse is flagged. */
 const BRAND_POSITION_WARN = 2;
+/** Below this many impressions a brand query is too thin a signal to flag either way. */
+const BRAND_MIN_IMPRESSIONS = 30;
 
 /** Own-brand queries (Settings → Query filters → Branded terms) and where they rank. */
 export async function brandingKeywords(
@@ -555,6 +557,7 @@ export async function brandingKeywords(
     const withImpr = pages.filter((p) => p.impressions > 0);
     if (!withImpr.length) continue;
     const agg = foldWeighted(withImpr);
+    if (agg.impressions < BRAND_MIN_IMPRESSIONS) continue;
     out.push({
       query,
       ...agg,
@@ -562,8 +565,7 @@ export async function brandingKeywords(
       pages: withImpr,
     });
   }
-  // Worst-ranking (highest position number) first, so warnings surface at the top.
-  out.sort((a, b) => b.position - a.position || b.impressions - a.impressions);
+  out.sort((a, b) => b.impressions - a.impressions);
   return out;
 }
 

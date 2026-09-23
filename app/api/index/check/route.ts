@@ -12,7 +12,6 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     property?: string;
     sitemapUrl?: string;
-    sitemapXml?: string;
     discover?: boolean;
     // When set, only run sitemap discovery and skip inspection this call —
     // discovery (up to 50 sitemap fetches) plus a full inspection batch in
@@ -30,8 +29,8 @@ export async function POST(req: NextRequest) {
   if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   let discovered: number | undefined;
-  if (body.discover || body.sitemapUrl || body.sitemapXml) {
-    const d = await discoverSitemapUrls(user, site, body.sitemapUrl, body.sitemapXml);
+  if (body.discover || body.sitemapUrl) {
+    const d = await discoverSitemapUrls(user, site, body.sitemapUrl);
     discovered = d.found;
   }
   if (body.discoverOnly) {

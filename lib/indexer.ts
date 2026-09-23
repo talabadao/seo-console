@@ -98,7 +98,6 @@ export async function discoverSitemapUrls(
   user: UserRow,
   site: SiteRow,
   manualSitemapUrl?: string,
-  manualSitemapXml?: string,
 ): Promise<{ found: number; sitemaps: string[] }> {
   const roots = new Set<string>();
 
@@ -131,22 +130,8 @@ export async function discoverSitemapUrls(
   const budget = { left: MAX_SITEMAP_FETCHES };
   for (const r of roots) await collectFromSitemap(r, seen, urls, budget);
 
-  if (manualSitemapXml) {
-    const text = manualSitemapXml.trim();
-    if (text.startsWith("<")) {
-      // An XML sitemap (or sitemap index) pasted/uploaded directly.
-      await collectFromXml(text, seen, urls, budget);
-    } else {
-      // A plain text file — one URL per line.
-      for (const line of text.split(/\r?\n/)) {
-        const u = line.trim();
-        if (u) urls.add(u);
-      }
-    }
-  }
-
   const now = Date.now();
-  const source = manualSitemapUrl || manualSitemapXml ? "manual" : "sitemap";
+  const source = manualSitemapUrl ? "manual" : "sitemap";
   const values = [...urls].map((url) => ({
     site_id: site.id,
     url,

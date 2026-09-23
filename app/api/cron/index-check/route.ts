@@ -24,14 +24,25 @@ interface AutoIndexSiteRow {
 }
 
 /**
- * Vercel Cron target — runs daily (see vercel.json). Vercel automatically sends
- * `Authorization: Bearer $CRON_SECRET` on scheduled invocations when that env
- * var is set; require it here so this can't be triggered by anyone else.
+ * Vercel Cron target — one entry per UTC hour (see vercel.json; Hobby-plan
+ * cron jobs can each only run once a day, so a per-project "run at hour N"
+ * schedule is implemented as 24 separate once-daily entries, each passing
+ * its own hour via `?hour=`, rather than one cron polling every hour).
+ * Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on
+ * scheduled invocations when that env var is set; require it here so this
+ * can't be triggered by anyone else. A site with auto-inspect off, or whose
+ * chosen hour doesn't match this invocation, is simply not selected below —
+ * nothing runs for it today.
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const hour = Number(req.nextUrl.searchParams.get("hour"));
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return NextResponse.json({ error: "hour required" }, { status: 400 });
   }
 
   const rows = (await db
@@ -44,9 +55,10 @@ export async function GET(req: NextRequest) {
              u.ga_ai_domains AS "gaAiDomains", u.bing_api_key AS "bingApiKey"
         FROM sites s
         JOIN users u ON u.id = s.user_id
-       WHERE s.source = 'google' AND s.auto_index_enabled = true AND u.google_refresh_token IS NOT NULL
+       WHERE s.source = 'google' AND s.auto_index_enabled = true AND s.auto_index_hour = ?
+         AND u.google_refresh_token IS NOT NULL
     `)
-    .all()) as unknown as AutoIndexSiteRow[];
+    .all(hour)) as unknown as AutoIndexSiteRow[];
 
   const results: { property: string; discovered?: number; checked?: number; error?: string }[] = [];
   for (const row of rows) {

@@ -79,8 +79,6 @@ export function Indexing({ property }: { property: string }) {
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [sitemapUrl, setSitemapUrl] = useState("");
-  const [sitemapFileName, setSitemapFileName] = useState("");
-  const [sitemapXml, setSitemapXml] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [reconnect, setReconnect] = useState(false);
   const [q, setQ] = useState("");
@@ -88,37 +86,32 @@ export function Indexing({ property }: { property: string }) {
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
   const [runProgress, setRunProgress] = useState<{ done: number; target: number } | null>(null);
+  const [confirmSitemap, setConfirmSitemap] = useState<{ count: number; urls: string[] } | null>(null);
   const autoRunFor = useRef<string | null>(null);
 
-  async function onSitemapFile(f: File | null) {
-    if (!f) {
-      setSitemapFileName("");
-      setSitemapXml("");
-      return;
-    }
-    setSitemapFileName(f.name);
-    setSitemapXml(await f.text());
-  }
-
   const load = useCallback(async () => {
-    if (!property) return;
+    if (!property) return null;
     const res = await fetch(`/api/index?property=${encodeURIComponent(property)}`);
-    if (res.ok) setData(await res.json());
+    if (!res.ok) return null;
+    const j = (await res.json()) as IndexData;
+    setData(j);
+    return j;
   }, [property]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Discovery already pulls the sitemap straight from Search Console's API
-  // (falling back to robots.txt / sitemap.xml) — no manual URL needed. Kick
-  // it off automatically the first time a property has never been checked,
-  // instead of requiring a click. `job` is persisted server-side, so this
-  // fires at most once per property, ever, even across reloads.
+  // Discovery pulls the sitemap straight from Search Console's API (falling
+  // back to robots.txt / sitemap.xml) and shows it for confirmation before
+  // any inspecting starts. Kick it off automatically the first time a
+  // property has never been checked, instead of requiring a click. `job` is
+  // persisted server-side, so this fires at most once per property, ever,
+  // even across reloads.
   useEffect(() => {
     if (!property || !data || data.job || busy || autoRunFor.current === property) return;
     autoRunFor.current = property;
-    run(true);
+    discover();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [property, data, busy]);
 
@@ -131,42 +124,65 @@ export function Indexing({ property }: { property: string }) {
   const CONTINUE_MESSAGE = "Run-limit reached — click again to keep going.";
   const MAX_ROUNDS = 20;
 
-  async function run(discover: boolean) {
+  /** Pulls the sitemap (via GSC's API, or the optional manual link) and shows it for
+   * confirmation — inspection only starts once the user reviews and accepts it. */
+  async function discover() {
     setBusy(true);
     setMsg(null);
-    // Rough progress estimate for the bar: how many of the site's known URLs
-    // aren't inspected yet, as of the moment the run started. Discovery can
-    // grow that denominator mid-run (new URLs found), but re-deriving it live
-    // from `data` (updated by `load()` below) keeps the bar honest either way.
+    try {
+      const res = await fetch("/api/index/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          property,
+          discover: true,
+          discoverOnly: true,
+          sitemapUrl: sitemapUrl.trim() || undefined,
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setMsg(j.error ?? "Failed");
+        return;
+      }
+      const fresh = await load();
+      setConfirmSitemap({
+        count: j.discovered ?? fresh?.total ?? 0,
+        urls: (fresh?.urls ?? []).map((u) => u.url),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startInspecting() {
+    setConfirmSitemap(null);
+    runInspection();
+  }
+
+  async function runInspection() {
+    setBusy(true);
+    setMsg(null);
+    // Progress estimate for the bar: how many of the site's known sitemap URLs
+    // aren't inspected yet, as of the moment the run started.
     const startInspected = data?.inspected ?? 0;
     setRunProgress(
       data && data.total > startInspected ? { done: 0, target: data.total - startInspected } : null,
     );
     try {
-      let discoveredTotal: number | undefined;
       let checkedTotal = 0;
       let quota = 0;
       let lastMessage: string | undefined;
       let round = 0;
-      // Discovery (up to 50 sitemap fetches) runs as its own round, separate
-      // from inspection — combining it with a full inspection batch in one
-      // request pushed close to the platform's time limit.
       while (round < MAX_ROUNDS) {
         round++;
-        const doDiscoverOnly = round === 1 && discover;
         let res: Response;
-        let j: { discovered?: number; checked?: number; quotaLeft?: number; message?: string; error?: string };
+        let j: { checked?: number; quotaLeft?: number; message?: string; error?: string };
         try {
           res = await fetch("/api/index/check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              property,
-              discover: round === 1 ? discover : false,
-              discoverOnly: doDiscoverOnly,
-              sitemapUrl: round === 1 ? sitemapUrl.trim() || undefined : undefined,
-              sitemapXml: round === 1 ? sitemapXml || undefined : undefined,
-            }),
+            body: JSON.stringify({ property }),
           });
           j = await res.json();
         } catch {
@@ -180,7 +196,6 @@ export function Indexing({ property }: { property: string }) {
           setMsg(j.error ?? "Failed");
           break;
         }
-        if (j.discovered != null && discoveredTotal == null) discoveredTotal = j.discovered;
         checkedTotal += j.checked ?? 0;
         quota = j.quotaLeft ?? quota;
         lastMessage = j.message;
@@ -189,11 +204,10 @@ export function Indexing({ property }: { property: string }) {
           const target = Math.max(cur?.target ?? 0, checkedTotal);
           return target > 0 ? { done: checkedTotal, target } : null;
         });
-        if (doDiscoverOnly) continue; // always follow discovery with an inspection round
         if (lastMessage !== CONTINUE_MESSAGE) break;
       }
       setMsg(
-        `${discoveredTotal != null ? `Discovered ${discoveredTotal} URLs. ` : ""}Inspected ${checkedTotal}. Quota left: ${quota}.${
+        `Inspected ${checkedTotal}. Quota left: ${quota}.${
           lastMessage && lastMessage !== CONTINUE_MESSAGE ? ` (${lastMessage})` : ""
         }`,
       );
@@ -329,38 +343,18 @@ export function Indexing({ property }: { property: string }) {
             value={sitemapUrl}
             onChange={(e) => setSitemapUrl(e.target.value)}
             placeholder="optional sitemap URL"
+            title="Falls back automatically to robots.txt / sitemap.xml if this is left blank"
             className="w-48 rounded-md border bg-background px-2 py-1.5 text-sm"
           />
-          <label
-            className="cursor-pointer rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft"
-            title={sitemapFileName || "Upload a sitemap XML or a text file of URLs, one per line"}
-          >
-            {sitemapFileName ? `📄 ${sitemapFileName}` : "Upload sitemap"}
-            <input
-              type="file"
-              accept=".xml,.txt"
-              onChange={(e) => onSitemapFile(e.target.files?.[0] ?? null)}
-              className="hidden"
-            />
-          </label>
-          {sitemapFileName && (
-            <button
-              onClick={() => onSitemapFile(null)}
-              className="text-xs text-muted hover:text-foreground"
-              title="Remove uploaded sitemap"
-            >
-              ✕
-            </button>
-          )}
           <button
-            onClick={() => run(true)}
+            onClick={discover}
             disabled={busy || !property}
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft disabled:opacity-50"
           >
-            {busy ? "Working…" : "Discover + check"}
+            {busy ? "Working…" : "Discover sitemap"}
           </button>
           <button
-            onClick={() => run(false)}
+            onClick={runInspection}
             disabled={busy || !property}
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft disabled:opacity-50"
           >
@@ -394,6 +388,41 @@ export function Indexing({ property }: { property: string }) {
           </button>
         </div>
       </div>
+
+      {confirmSitemap && (
+        <div className="mb-3 rounded-xl border border-accent/40 bg-accent-soft/30 p-4">
+          <p className="text-sm font-medium">
+            Found {confirmSitemap.count.toLocaleString()} URL
+            {confirmSitemap.count === 1 ? "" : "s"} in the sitemap. Review before inspecting:
+          </p>
+          <div className="mt-2 max-h-48 overflow-auto rounded-md border bg-background p-2 text-xs">
+            {confirmSitemap.urls.slice(0, 300).map((u) => (
+              <div key={u} className="truncate py-0.5">
+                {u}
+              </div>
+            ))}
+            {!confirmSitemap.urls.length && <p className="text-muted">No URLs found.</p>}
+            {confirmSitemap.urls.length > 300 && (
+              <div className="pt-1 text-muted">…and {confirmSitemap.urls.length - 300} more</div>
+            )}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={startInspecting}
+              disabled={!confirmSitemap.urls.length}
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              Looks good — start inspecting
+            </button>
+            <button
+              onClick={() => setConfirmSitemap(null)}
+              className="rounded-md border px-3 py-1.5 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {runProgress && (
         <div className="mb-3">
