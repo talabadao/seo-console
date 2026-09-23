@@ -102,6 +102,37 @@ export async function keyEventsByChannel(
   });
 }
 
+/**
+ * Key events for one event name, broken down by referrer/landing page/page path —
+ * the Key Events row drill-down. Takes the same `channel` filter as the parent
+ * `keyEventsByChannel()` row it's drilling into, so the breakdown always sums back
+ * to that row's count instead of silently showing every channel.
+ */
+export async function keyEventDrill(
+  token: string,
+  propertyId: string,
+  current: DateRange,
+  previous: DateRange | null,
+  eventName: string,
+  groupDim: string,
+  channel: string,
+  aiDomains: string[],
+): Promise<{ rows: TrendRow[]; sampled: boolean }> {
+  const metrics = ["keyEvents", "totalRevenue"];
+  const eventFilter = eqFilter("eventName", eventName);
+  if (channel === AI_CHANNEL) {
+    return aiClassifiedTrend(token, propertyId, current, previous, aiDomains, groupDim, metrics, eventFilter);
+  }
+  return trendBreakdown(token, propertyId, {
+    dimensions: [groupDim],
+    metrics,
+    current,
+    previous,
+    dimensionFilter: channel ? andFilter(eventFilter, eqFilter("sessionDefaultChannelGroup", channel)) : eventFilter,
+    limit: 2000,
+  });
+}
+
 const iso8 = (yyyymmdd: string) =>
   yyyymmdd.length === 8
     ? `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`

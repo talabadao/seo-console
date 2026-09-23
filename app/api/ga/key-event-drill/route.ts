@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
-import { ownsGaProperty } from "@/lib/gaConfig";
-import { cleanGaError, eqFilter, trendBreakdown, type DateRange } from "@/lib/ga4";
+import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
+import { cleanGaError, type DateRange } from "@/lib/ga4";
+import { keyEventDrill } from "@/lib/gaChannels";
 import {
   resolveComparison,
   resolveRange,
@@ -46,6 +47,8 @@ export async function GET(req: NextRequest) {
   const previous: DateRange | null = prevR
     ? { startDate: prevR.start, endDate: prevR.end }
     : null;
+  const channel = p.get("channel") || "";
+  const aiDomains = aiDomainsFor(user);
 
   let token: string;
   try {
@@ -56,15 +59,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await trendBreakdown(token, propertyId, {
-      dimensions: [DIM[by]],
-      metrics: ["keyEvents", "totalRevenue"],
-      current,
-      previous,
-      dimensionFilter: eqFilter("eventName", eventName),
-      limit: 2000,
-    });
-    return NextResponse.json({ by, eventName, rows: res.rows, sampled: res.sampled });
+    const res = await keyEventDrill(token, propertyId, current, previous, eventName, DIM[by], channel, aiDomains);
+    return NextResponse.json({ by, eventName, channel, rows: res.rows, sampled: res.sampled });
   } catch (e) {
     const cleaned = cleanGaError(e instanceof Error ? e.message : String(e));
     return NextResponse.json(

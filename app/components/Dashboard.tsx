@@ -312,7 +312,9 @@ export function Dashboard({
           <GoogleReconnectBanner detail="Google stopped accepting this app's Search Console access — sign in again to reconnect Performance, Opportunities, and Indexing." />
         ) : (
           <>
-            {tab === "indexing" && <Indexing property={property} />}
+            {tab === "indexing" && (
+              <Indexing property={property} neverSynced={!currentSite?.lastSync?.finished_at} />
+            )}
             {tab === "analytics" && <Analytics />}
             {tab === "weekly-report" && <WeeklyReport />}
             {tab === "opportunities" && (

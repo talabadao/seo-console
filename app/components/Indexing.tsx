@@ -73,7 +73,7 @@ interface IndexData {
 
 const PAGE_SIZES = [25, 50, 100, 250];
 
-export function Indexing({ property }: { property: string }) {
+export function Indexing({ property, neverSynced }: { property: string; neverSynced?: boolean }) {
   const [data, setData] = useState<IndexData | null>(null);
   const [tab, setTab] = useState<"all" | "indexed" | "not" | "risk">("all");
   const [busy, setBusy] = useState(false);
@@ -176,6 +176,16 @@ export function Indexing({ property }: { property: string }) {
       let round = 0;
       while (round < MAX_ROUNDS) {
         round++;
+        // A round's request is one real Google API round trip per URL (~40ms
+        // delay + actual network latency each), so a full batch can take
+        // 10-30+s before this fetch resolves and `checkedTotal` updates below
+        // — nudge the bar forward in the meantime so it doesn't look stalled,
+        // then snap to the real count once the response lands.
+        let optimisticDone = checkedTotal;
+        const ticker = setInterval(() => {
+          optimisticDone++;
+          setRunProgress((cur) => (cur ? { ...cur, done: Math.min(cur.target - 1, optimisticDone) } : cur));
+        }, 600);
         let res: Response;
         let j: { checked?: number; quotaLeft?: number; message?: string; error?: string };
         try {
@@ -189,9 +199,11 @@ export function Indexing({ property }: { property: string }) {
           // Likely the function got killed mid-run (large batch, platform time
           // limit) rather than a real failure — each URL it did reach was
           // already saved server-side, so just try another round.
+          clearInterval(ticker);
           await load();
           continue;
         }
+        clearInterval(ticker);
         if (!res.ok) {
           setMsg(j.error ?? "Failed");
           break;
@@ -528,6 +540,13 @@ export function Indexing({ property }: { property: string }) {
       </div>
 
       {/* PAGES table */}
+      {neverSynced && (
+        <div className="mt-4 rounded-lg border border-position/40 bg-position/10 p-3 text-sm">
+          <strong>Clicks/Impressions below will show 0</strong> until you run{" "}
+          <strong>Sync history</strong> (top of the page) at least once — those columns come from
+          locally-synced Search Console history, not a live fetch.
+        </div>
+      )}
       <div className="mt-4 rounded-xl border bg-surface">
         <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
           <strong className="text-sm">PAGES</strong>

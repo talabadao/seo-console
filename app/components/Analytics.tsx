@@ -809,9 +809,9 @@ function KeyEventsTable({
                   <tr className="border-b border-border/60 bg-background/50">
                     <td colSpan={4} className="px-6 py-3">
                       <div className="grid gap-4 lg:grid-cols-3">
-                        <Drill title="By referral page" by="referrer" eventName={r.key} currency={currency} qs={qs} />
-                        <Drill title="By landing page (+ string)" by="landing" eventName={r.key} currency={currency} qs={qs} />
-                        <Drill title="By page path (+ string)" by="pagePath" eventName={r.key} currency={currency} qs={qs} />
+                        <Drill title="By referral page" by="referrer" eventName={r.key} currency={currency} channel={channel} qs={qs} />
+                        <Drill title="By landing page (+ string)" by="landing" eventName={r.key} currency={currency} channel={channel} qs={qs} />
+                        <Drill title="By page path (+ string)" by="pagePath" eventName={r.key} currency={currency} channel={channel} qs={qs} />
                       </div>
                     </td>
                   </tr>
@@ -837,24 +837,26 @@ function Drill({
   by,
   eventName,
   currency,
+  channel,
   qs,
 }: {
   title: string;
   by: "referrer" | "landing" | "pagePath";
   eventName: string;
   currency: string | null;
+  channel: string;
   qs: (extra?: Record<string, string>) => string;
 }) {
   const [rows, setRows] = useState<TrendRow[] | null>(null);
   useEffect(() => {
     let ignore = false;
-    fetch(`/api/ga/key-event-drill?${qs({ by, eventName })}`)
+    fetch(`/api/ga/key-event-drill?${qs({ by, eventName, channel })}`)
       .then((r) => r.json())
       .then((j) => !ignore && setRows(j.rows ?? []));
     return () => {
       ignore = true;
     };
-  }, [by, eventName, qs]);
+  }, [by, eventName, channel, qs]);
 
   return (
     <div className="rounded-lg border bg-surface">

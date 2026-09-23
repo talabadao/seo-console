@@ -568,6 +568,21 @@ export async function indexDashboard(siteId: number) {
   const indexed = urls.filter((u) => u.indexed).length;
   const inspected = urls.filter((u) => u.lastInspection).length;
 
+  // Self-heal: writeSnapshot() normally fires at the end of a completed
+  // runIndexCheck() round, but a round that gets killed by the platform's
+  // time limit mid-batch (plausible for a large sitemap) never reaches it —
+  // its url_inspections writes (each saved per-URL, inside the loop) still
+  // land, but today's snapshot silently never gets written, leaving the
+  // history chart empty despite there being real, current indexing data.
+  // Backfill it here whenever there's known state and today's row is missing.
+  if (inspected > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    const hasToday = await db
+      .prepare("SELECT 1 FROM index_snapshots WHERE site_id = ? AND snap_date = ?")
+      .get(siteId, today);
+    if (!hasToday) await writeSnapshot(siteId);
+  }
+
   // Current state breakdown (for the donut / legend), in the fixed display order.
   const counts: Record<string, number> = {};
   for (const u of urls) counts[u.stateLabel] = (counts[u.stateLabel] ?? 0) + 1;

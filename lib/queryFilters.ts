@@ -153,15 +153,27 @@ export function matchesAi(row: BreakdownRow): boolean {
 
 // ---------- AI Search Prompts: Offtopic / Bot labels ----------
 //
-// Rule-based only (no API/LLM call) — flags two concrete, non-semantic
-// patterns found in AI-referral query text. Neither rule is language-
-// dependent since both key off syntax/structure, not meaning. A third,
+// Rule-based only (no API/LLM call) — flags concrete, non-semantic patterns
+// found in AI-referral query text. None of these rules are language-
+// dependent since they key off syntax/structure, not meaning. A further,
 // genuinely off-topic-content pattern (e.g. a query entirely unrelated to
 // the site's subject matter, from an AI grounding mismatch) isn't included
 // here — telling "off-topic" from "on-topic" requires understanding what
 // the site is actually about, which isn't something a string rule can do
 // reliably; that would need a real semantic classifier (e.g. an LLM pass)
 // as a separate, opt-in step.
+//
+// Calibrated against two real GSC query exports (~6,900 rows total): the
+// "# role / # directive / ..." system-prompt pattern and the "-site:x.com"
+// search-operator pattern below both matched real rows exactly as expected.
+// That pass also surfaced a third pattern not originally covered — synthetic
+// "audience persona" prompts an AI tool generates before asking its actual
+// question, e.g. "I am a 55-64 or 65+ year old. My main motivations: ...
+// My main pain points: ... <the real question>" — 37 rows in one export,
+// always carrying both "my main motivation(s)" and "my main pain point(s)"
+// together, which is why both are listed as markers below (their co-
+// occurrence is what reaches the 2-marker threshold — no organic query
+// realistically contains either phrase at all).
 
 const BOT_MARKER_KEYWORDS = [
   "no greeting",
@@ -176,6 +188,8 @@ const BOT_MARKER_KEYWORDS = [
   "you are an ai",
   "do not mention",
   "internal monologue",
+  "my main motivation",
+  "my main pain point",
 ];
 
 /** Pattern A: prompt-injection text masquerading as a system prompt (starts with "#", or hits
@@ -207,6 +221,13 @@ export function isOfftopicFiller(key: string): boolean {
   const lower = k.toLowerCase();
   if (OFFTOPIC_FILLER_WORDS.has(lower)) return true;
   if (OFFTOPIC_OPTION_RE.test(lower)) return true;
+  // The short-length fallback only applies outside CJK/Hangul/Kana script —
+  // those pack far more meaning per character than Latin text, so a 2-
+  // character query like "价格" (price) or "越南" (Vietnam) is a complete,
+  // on-topic word, not filler. (Confirmed against a real ~6,900-row export:
+  // without this guard, common short CJK/Korean queries — price, cave,
+  // Vietnam, boat, bay — all got misflagged.)
+  if (isCjk(k)) return false;
   return k.length <= 2;
 }
 
