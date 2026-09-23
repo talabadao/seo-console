@@ -808,7 +808,7 @@ function KeyEventsTable({
                 {open === r.key && (
                   <tr className="border-b border-border/60 bg-background/50">
                     <td colSpan={4} className="px-6 py-3">
-                      <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="grid gap-4 lg:grid-cols-[2fr_1fr_1fr]">
                         <Drill title="By landing page (+ string)" by="landing" eventName={r.key} currency={currency} channel={channel} qs={qs} />
                         <Drill title="By referral page" by="referrer" eventName={r.key} currency={currency} channel={channel} qs={qs} />
                         <Drill title="By page path (+ string)" by="pagePath" eventName={r.key} currency={currency} channel={channel} qs={qs} />
