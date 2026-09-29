@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
-import { fetchLiveReport, fold, type BreakdownRow, type CrossFilter } from "@/lib/gscLive";
+import { fetchLiveReport, type CrossFilter } from "@/lib/gscLive";
 import {
   resolveComparison,
   resolveRange,
@@ -9,7 +9,6 @@ import {
   type Grain,
   type PresetId,
 } from "@/lib/dateRanges";
-import { applyFilters, filterActive, type FilterState } from "@/lib/queryFilters";
 import { siteConfigFor } from "@/lib/siteConfig";
 import type { SearchType } from "@/lib/google/searchconsole";
 
@@ -17,26 +16,6 @@ export const maxDuration = 120;
 
 const DIMENSIONS = ["query", "page", "country", "device"];
 const SEARCH_TYPES: SearchType[] = ["web", "image", "video", "news", "discover"];
-
-function parseFilters(p: URLSearchParams): FilterState {
-  return {
-    branded: (["all", "branded", "nonbranded"].includes(p.get("branded") || "")
-      ? p.get("branded")
-      : "all") as FilterState["branded"],
-    position: ([0, 3, 10, 20].includes(Number(p.get("position")))
-      ? Number(p.get("position"))
-      : 0) as FilterState["position"],
-    question: p.get("question") === "1",
-    longtail: p.get("longtail") === "1",
-    ai: p.get("ai") === "1",
-    contains: p.get("contains") || "",
-    trend: (["all", "growing", "decaying", "new"].includes(p.get("trend") || "")
-      ? p.get("trend")
-      : "all") as FilterState["trend"],
-    filterPage: p.get("filterPage") || "",
-    filterQuery: p.get("filterQuery") || "",
-  };
-}
 
 export async function GET(req: NextRequest) {
   const user = await currentUser();
@@ -55,15 +34,14 @@ export async function GET(req: NextRequest) {
     customEnd: p.get("end") || undefined,
   });
   const compareMode = (p.get("compare") || "none") as CompareMode;
-  const trendParam = p.get("trend") || "all";
-  const aiParam = p.get("ai") === "1";
-  // Growing / Decaying / New need a baseline even if the user hasn't turned on a
-  // visible comparison — fall back to the previous period for those. The AI
-  // Search Prompts filter also needs it: its "new, low-impression, non-integer
-  // position" branch (matchesAi) reads isNew, which is only ever true when a
-  // previous-period comparison was resolved.
-  const effectiveCompare: CompareMode =
-    compareMode === "none" && (trendParam !== "all" || aiParam) ? "previous" : compareMode;
+  // Always resolve a previous period, even when no visible comparison is on.
+  // The client now applies the Winning/Losing/New, position, branded, AI, etc.
+  // filters itself against the rows returned here (so toggling them costs no
+  // GSC round trip), and those need each row's previous-period numbers +
+  // isNew present. With comparison off we baseline against the immediately
+  // preceding window; this doesn't change what the UI shows, since the client
+  // only draws comparison deltas when the user actually enables comparison.
+  const effectiveCompare: CompareMode = compareMode === "none" ? "previous" : compareMode;
   const previous = resolveComparison(current, effectiveCompare, {
     matchWeekdays: p.get("matchWeekdays") === "1",
     customStart: p.get("compareStart") || undefined,
@@ -79,19 +57,18 @@ export async function GET(req: NextRequest) {
   const searchType = (SEARCH_TYPES.includes((p.get("searchType") || "web") as SearchType)
     ? p.get("searchType")
     : "web") as SearchType;
-  // 0 / absent -> return everything we fetched (bounded by LIVE_MAX_ROWS).
-  const limitParam = Number(p.get("limit") || 0);
-  const limit = limitParam > 0 ? Math.min(limitParam, 200000) : Infinity;
-  const filters = parseFilters(p);
 
-  // Cross-dimension scoping — e.g. viewing Queries but narrowed to one page,
-  // or viewing Pages but narrowed to queries containing some text. Only makes
-  // sense against the *other* dimension than the one being broken down by.
+  // Cross-dimension scoping is a real GSC dimensionFilter, so it must stay
+  // server-side: viewing Queries narrowed to one page, or Pages narrowed to
+  // one query. Every other filter is applied on the client against the rows
+  // returned here.
+  const filterPage = p.get("filterPage") || "";
+  const filterQuery = p.get("filterQuery") || "";
   const crossFilter: CrossFilter | undefined =
-    dimension === "query" && filters.filterPage
-      ? { dimension: "page", operator: "contains", value: filters.filterPage }
-      : dimension === "page" && filters.filterQuery
-        ? { dimension: "query", operator: "contains", value: filters.filterQuery }
+    dimension === "query" && filterPage
+      ? { dimension: "page", operator: "contains", value: filterPage }
+      : dimension === "page" && filterQuery
+        ? { dimension: "query", operator: "contains", value: filterQuery }
         : undefined;
 
   let token: string;
@@ -99,10 +76,7 @@ export async function GET(req: NextRequest) {
     token = await accessTokenFor(user);
   } catch (e) {
     if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "auth" },
-      { status: 502 },
-    );
+    return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 
   let report;
@@ -119,47 +93,34 @@ export async function GET(req: NextRequest) {
       crossFilter,
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
-      { status: 502 },
-    );
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
   }
 
-  const filtered = applyFilters(report.breakdown, filters, sc.config, dimension);
-  const active = filterActive(filters);
-
-  // When a filter narrows the set, the headline numbers should reflect it.
-  const displayTotals = active
-    ? fold(filtered)
-    : report.totals;
-  const displayPrevTotals =
-    previous && active
-      ? fold(
-          filtered.map((r) => ({
-            clicks: r.prevClicks,
-            impressions: r.prevImpressions,
-            position: r.prevPosition,
-          })),
-        )
-      : report.prevTotals;
-
-  const sliced: BreakdownRow[] = isFinite(limit) ? filtered.slice(0, limit) : filtered;
-
-  return NextResponse.json({
-    property,
-    range: current,
-    compareRange: previous,
-    grain,
-    dimension,
-    searchType,
-    totals: displayTotals,
-    prevTotals: displayPrevTotals,
-    series: report.series,
-    prevSeries: report.prevSeries,
-    breakdown: sliced,
-    breakdownCount: filtered.length,
-    truncated: report.truncated,
-    filterActive: active,
-    brandTerms: sc.config.brandTerms,
-  });
+  return NextResponse.json(
+    {
+      property,
+      range: current,
+      compareRange: previous,
+      grain,
+      dimension,
+      searchType,
+      totals: report.totals,
+      prevTotals: report.prevTotals,
+      series: report.series,
+      prevSeries: report.prevSeries,
+      breakdown: report.breakdown,
+      breakdownCount: report.breakdown.length,
+      truncated: report.truncated,
+      // The client needs these to reproduce the "branded" and "long-tail"
+      // filters locally (same logic as lib/queryFilters).
+      brandTerms: sc.config.brandTerms,
+      longtailMinWords: sc.config.longtailMinWords,
+    },
+    {
+      // GSC historical data is immutable — only the last day or two can still
+      // move — so a short private cache makes flipping back to a view you
+      // already loaded instant, without risking meaningfully stale numbers.
+      headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" },
+    },
+  );
 }

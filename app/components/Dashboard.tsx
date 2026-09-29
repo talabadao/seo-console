@@ -14,7 +14,13 @@ import { SettingsPanel } from "./SettingsPanel";
 import { GoogleReconnectBanner } from "./GoogleReconnect";
 import { SearchableSelect } from "./SearchableSelect";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
-import { EMPTY_FILTER, filterActive, type FilterState } from "@/lib/queryFilters";
+import {
+  DEFAULT_FILTER_CONFIG,
+  EMPTY_FILTER,
+  applyFilters,
+  filterActive,
+  type FilterState,
+} from "@/lib/queryFilters";
 import { resolveComparison, resolveRange } from "@/lib/dateRanges";
 
 interface SiteMeta {
@@ -36,7 +42,46 @@ interface PerfResponse {
   breakdown: BreakdownRow[];
   breakdownCount: number;
   truncated: boolean;
-  filterActive: boolean;
+  brandTerms?: string[];
+  longtailMinWords?: number;
+}
+
+type Totals = Record<MetricKey, number>;
+
+/** Impression-weighted roll-up of a set of rows — matches the server's `fold`, kept here so
+ * the metric cards can reflect client-side filters without a refetch. */
+function foldTotals(rows: BreakdownRow[]): Totals {
+  let clicks = 0,
+    impressions = 0,
+    posWeighted = 0;
+  for (const r of rows) {
+    clicks += r.clicks;
+    impressions += r.impressions;
+    posWeighted += r.position * r.impressions;
+  }
+  return {
+    clicks,
+    impressions,
+    ctr: impressions ? clicks / impressions : 0,
+    position: impressions ? posWeighted / impressions : 0,
+  };
+}
+
+function foldPrevTotals(rows: BreakdownRow[]): Totals {
+  let clicks = 0,
+    impressions = 0,
+    posWeighted = 0;
+  for (const r of rows) {
+    clicks += r.prevClicks;
+    impressions += r.prevImpressions;
+    posWeighted += r.prevPosition * r.prevImpressions;
+  }
+  return {
+    clicks,
+    impressions,
+    ctr: impressions ? clicks / impressions : 0,
+    position: impressions ? posWeighted / impressions : 0,
+  };
 }
 
 const DIMENSIONS = [
@@ -133,6 +178,13 @@ export function Dashboard({
     loadSites();
   }, [loadSites]);
 
+  // Only the "view" identity is sent to the server — property, date range,
+  // search type, dimension, and the cross-dimension page/query scoping (a real
+  // GSC dimensionFilter). The quick filters (Winning/Losing/New, position,
+  // branded, long-tail, AI, …) are applied locally against the returned rows
+  // in `visibleRows` below, so toggling them is instant with no GSC round trip.
+  const filterPage = dimension === "query" ? filters.filterPage : "";
+  const filterQuery = dimension === "page" ? filters.filterQuery : "";
   const loadPerf = useCallback(async () => {
     if (!property) return;
     setLoading(true);
@@ -140,16 +192,8 @@ export function Dashboard({
       const p = new URLSearchParams(coreQuery);
       p.set("property", property);
       p.set("dimension", dimension);
-      p.set("limit", "0"); // 0 = all rows (bounded server-side by LIVE_MAX_ROWS)
-      if (filters.contains) p.set("contains", filters.contains);
-      if (filters.branded !== "all") p.set("branded", filters.branded);
-      if (filters.position) p.set("position", String(filters.position));
-      if (filters.question) p.set("question", "1");
-      if (filters.longtail) p.set("longtail", "1");
-      if (filters.ai) p.set("ai", "1");
-      if (filters.trend !== "all") p.set("trend", filters.trend);
-      if (dimension === "query" && filters.filterPage) p.set("filterPage", filters.filterPage);
-      if (dimension === "page" && filters.filterQuery) p.set("filterQuery", filters.filterQuery);
+      if (filterPage) p.set("filterPage", filterPage);
+      if (filterQuery) p.set("filterQuery", filterQuery);
       const res = await fetch(`/api/performance?${p}`);
       const json = await res.json();
       if (json.needsReconnect) setNeedsReconnect(true);
@@ -158,11 +202,38 @@ export function Dashboard({
     } finally {
       setLoading(false);
     }
-  }, [property, dimension, coreQuery, filters]);
+  }, [property, dimension, coreQuery, filterPage, filterQuery]);
 
   useEffect(() => {
     loadPerf();
   }, [loadPerf]);
+
+  // Client-side application of the quick filters (no refetch). `applyFilters`
+  // is the exact same logic the server used to run — position, branded,
+  // long-tail, questions, AI, Winning/Losing/New — over the rows already in
+  // hand. The metric cards reflect the filtered set too.
+  const filterCfg = useMemo(
+    () => ({
+      ...DEFAULT_FILTER_CONFIG,
+      brandTerms: data?.brandTerms ?? [],
+      longtailMinWords: data?.longtailMinWords ?? DEFAULT_FILTER_CONFIG.longtailMinWords,
+    }),
+    [data?.brandTerms, data?.longtailMinWords],
+  );
+  const visibleRows = useMemo(
+    () => applyFilters(data?.breakdown ?? [], filters, filterCfg, dimension),
+    [data?.breakdown, filters, filterCfg, dimension],
+  );
+  const cheapFilterActive =
+    filters.branded !== "all" ||
+    filters.position !== 0 ||
+    filters.question ||
+    filters.longtail ||
+    filters.ai ||
+    filters.trend !== "all" ||
+    filters.contains.trim().length > 0;
+  const cardTotals = cheapFilterActive ? foldTotals(visibleRows) : data?.totals;
+  const cardPrevTotals = cheapFilterActive ? foldPrevTotals(visibleRows) : data?.prevTotals;
 
   async function runSync() {
     if (!property) return;
@@ -341,7 +412,7 @@ export function Dashboard({
               {loading && <span className="text-xs text-muted">Loading…</span>}
               <span className="ml-auto text-xs text-muted">
                 {data ? `${data.range.start} → ${data.range.end}` : ""}
-                {data?.compareRange
+                {compareOn && data?.compareRange
                   ? `  vs  ${data.compareRange.start} → ${data.compareRange.end}`
                   : ""}
               </span>
@@ -350,8 +421,8 @@ export function Dashboard({
             <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
               {METRICS.map((m) => {
                 const meta = METRIC_META[m];
-                const val = data?.totals?.[m] ?? 0;
-                const prevVal = data?.prevTotals?.[m];
+                const val = cardTotals?.[m] ?? 0;
+                const prevVal = showRowDeltas ? cardPrevTotals?.[m] : undefined;
                 const d = prevVal != null ? delta(val, prevVal, meta.kind) : null;
                 const on = activeMetrics.includes(m);
                 return (
@@ -418,8 +489,8 @@ export function Dashboard({
               </div>
               <BreakdownTable
                 dimension={dimension}
-                rows={data?.breakdown ?? []}
-                totalCount={data?.breakdownCount ?? 0}
+                rows={visibleRows}
+                totalCount={visibleRows.length}
                 active={activeMetrics}
                 compareOn={showRowDeltas}
                 trend={filters.trend}
