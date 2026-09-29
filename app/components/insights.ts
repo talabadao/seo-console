@@ -86,7 +86,7 @@ export interface UrlChange {
 export interface ReportData {
   windows: ReportWindows;
   config: KpiConfig;
-  availableEvents: { name: string; count: number }[];
+  availableEvents: { name: string; count: number; isKeyEvent: boolean }[];
   kpis: {
     trafficOrganic: KpiCard;
     trafficAi: KpiCard;
@@ -108,11 +108,15 @@ const pct1 = (v: number) => (isFinite(v) ? Math.abs(v).toFixed(1) : "–");
 
 /** Circle matching a KPI's pace, used to make the run-rate line scannable at a glance. */
 const PACE_EMOJI: Record<Pace, string> = { "on-track": "🟢", "at-risk": "🟡", "off-track": "🔴" };
-/** Color for the on-screen (HTML) run-rate line — same CSS variables as the Overview tiles. */
-const PACE_COLOR: Record<Pace, string> = {
-  "on-track": "var(--good)",
-  "at-risk": "var(--position)",
-  "off-track": "var(--bad)",
+// Fixed hex (not CSS variables) so the colors survive being copied to the
+// clipboard and pasted outside the app — e.g. into Asana — where var(--good)
+// wouldn't resolve. They read the same green/red in light and dark themes.
+const CHG_UP = "#16a34a"; // green — metric moved up (good)
+const CHG_DOWN = "#dc2626"; // red — metric moved down (bad)
+const PACE_HEX: Record<Pace, string> = {
+  "on-track": "#16a34a",
+  "at-risk": "#ca8a04",
+  "off-track": "#dc2626",
 };
 
 const SUMMARY_TITLE = "Summary";
@@ -129,6 +133,21 @@ function changeLine(cur: number, prev: number, unit: string): string {
   return `${arrow} ${pct1(pct)}% → ${n0(cur)} ${unit}`;
 }
 
+/** HTML version of changeLine — a coloured, arrowed Increased/Decreased indicator for the
+ * on-screen preview and the "Copy for Asana" rich paste. The plain-text changeLine above is
+ * unchanged and still feeds the Asana API body, which only accepts plain text. */
+function changeLineHtml(cur: number, prev: number, unit: string): string {
+  if (!prev) {
+    return cur > 0 ? `New this period → ${n0(cur)} ${esc(unit)}` : `No ${esc(unit)} recorded`;
+  }
+  const pct = ((cur - prev) / prev) * 100;
+  const up = pct >= 0;
+  return (
+    `<span style="color:${up ? CHG_UP : CHG_DOWN}"><strong>${up ? "▲" : "▼"} ` +
+    `${up ? "Increased" : "Decreased"} ${pct1(pct)}%</strong></span> (${n0(cur)} ${esc(unit)})`
+  );
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -136,6 +155,14 @@ function esc(s: string): string {
 function urlLine(u: UrlChange): string {
   const arrow = (u.pct ?? 0) >= 0 ? "▲" : "▼";
   return `${u.url} — ${arrow} ${pct1(u.pct ?? 0)}% → ${n0(u.cur)} sessions`;
+}
+
+function urlLineHtml(u: UrlChange): string {
+  const up = (u.pct ?? 0) >= 0;
+  return (
+    `${esc(u.url)} — <span style="color:${up ? CHG_UP : CHG_DOWN}"><strong>${up ? "▲" : "▼"} ` +
+    `${up ? "Increased" : "Decreased"} ${pct1(u.pct ?? 0)}%</strong></span> (${n0(u.cur)} sessions)`
+  );
 }
 
 interface SectionSpec {
@@ -161,10 +188,20 @@ function summaryParts(data: ReportData) {
     `Organic Search Lead: ${changeLine(s.leads.curTotals.organic, s.leads.prevTotals?.organic ?? 0, "leads")}`,
     `AI Lead: ${changeLine(s.leads.curTotals.ai, s.leads.prevTotals?.ai ?? 0, "leads")}`,
   ];
+  const sectionLinesHtml = (s: Section) => [
+    `Organic Traffic: ${changeLineHtml(s.traffic.curTotals.organic, s.traffic.prevTotals?.organic ?? 0, "sessions")}`,
+    `AI Traffic: ${changeLineHtml(s.traffic.curTotals.ai, s.traffic.prevTotals?.ai ?? 0, "sessions")}`,
+    `Organic Search Lead: ${changeLineHtml(s.leads.curTotals.organic, s.leads.prevTotals?.organic ?? 0, "leads")}`,
+    `AI Lead: ${changeLineHtml(s.leads.curTotals.ai, s.leads.prevTotals?.ai ?? 0, "leads")}`,
+  ];
 
   const topLines = data.topUrls.length ? data.topUrls.map(urlLine) : ["No qualifying URLs this week."];
   const bottomLines = data.bottomUrls.length
     ? data.bottomUrls.map(urlLine)
+    : ["No qualifying URLs this week."];
+  const topLinesHtml = data.topUrls.length ? data.topUrls.map(urlLineHtml) : ["No qualifying URLs this week."];
+  const bottomLinesHtml = data.bottomUrls.length
+    ? data.bottomUrls.map(urlLineHtml)
     : ["No qualifying URLs this week."];
 
   // Actual achieved so far this month, as a % of the monthly target — not a
@@ -185,15 +222,18 @@ function summaryParts(data: ReportData) {
   const aiPct = toDatePct(data.kpis.trafficAi.actualMtd, data.kpis.trafficAi.target);
   const runRateLine = `${PACE_EMOJI[paceFor(organicPct)]} Organic run rate: ${pct1(organicPct)}%    ${PACE_EMOJI[paceFor(aiPct)]} AI run rate: ${pct1(aiPct)}%`;
   const runRateHtml = [
-    `<span style="color:${PACE_COLOR[paceFor(organicPct)]}">Organic run rate: ${pct1(organicPct)}%</span>`,
-    `<span style="color:${PACE_COLOR[paceFor(aiPct)]}">AI run rate: ${pct1(aiPct)}%</span>`,
+    `<span style="color:${PACE_HEX[paceFor(organicPct)]}"><strong>Organic run rate: ${pct1(organicPct)}%</strong></span>`,
+    `<span style="color:${PACE_HEX[paceFor(aiPct)]}"><strong>AI run rate: ${pct1(aiPct)}%</strong></span>`,
   ].join("&nbsp;&nbsp;&nbsp;");
 
   return {
     mtdRange,
     sections: sectionSpecs.map(({ title, section }) => ({ title, lines: sectionLines(section) })),
+    sectionsHtml: sectionSpecs.map(({ title, section }) => ({ title, lines: sectionLinesHtml(section) })),
     topLines,
     bottomLines,
+    topLinesHtml,
+    bottomLinesHtml,
     runRateLine,
     runRateHtml,
   };
@@ -209,11 +249,17 @@ function summaryParts(data: ReportData) {
  */
 export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null): { html: string; text: string } {
   const { windows: w, config } = data;
-  const { mtdRange, sections, topLines, bottomLines, runRateLine, runRateHtml } = summaryParts(data);
+  const { mtdRange, sections, sectionsHtml, topLines, bottomLines, topLinesHtml, bottomLinesHtml, runRateLine, runRateHtml } =
+    summaryParts(data);
   const taskSections = taskSectionsFor(tasks);
 
   // ---------- HTML ----------
+  // `ul` escapes each line (plain text). `ulHtml` does not — its lines are the
+  // pre-built, already-safe coloured markup from changeLineHtml/urlLineHtml
+  // (which escape their own dynamic values), so escaping again would show the
+  // raw <span> tags.
   const ul = (lines: string[]) => `<ul>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
+  const ulHtml = (lines: string[]) => `<ul>${lines.map((l) => `<li>${l}</li>`).join("")}</ul>`;
   const html = [
     `<h2>${esc(SUMMARY_TITLE)}</h2>`,
     `<p><strong>${esc(w.monthLabel)} KPI:</strong></p>`,
@@ -222,14 +268,14 @@ export function buildInsights(data: ReportData, tasks: TaskBuckets | null = null
       `Organic Traffic Reached (${mtdRange}): ${n0(data.kpis.trafficOrganic.actualMtd)} sessions | AI Traffic Reached: ${n0(data.kpis.trafficAi.actualMtd)} sessions`,
     ]),
     `<ul><li>${runRateHtml}</li></ul>`,
-    ...sections.flatMap(({ title, lines }) => [
+    ...sectionsHtml.flatMap(({ title, lines }) => [
       `<p><strong><u>${esc(title)}</u></strong></p>`,
-      ul(lines),
+      ulHtml(lines),
     ]),
     `<h2>${esc(TOP_URLS_TITLE)}</h2>`,
-    ul(topLines),
+    ulHtml(topLinesHtml),
     `<h2>${esc(BOTTOM_URLS_TITLE)}</h2>`,
-    ul(bottomLines),
+    ulHtml(bottomLinesHtml),
     ...taskSections.flatMap(({ title, lines }) => [`<h2>${esc(title)}</h2>`, ul(lines)]),
   ].join("\n");
 

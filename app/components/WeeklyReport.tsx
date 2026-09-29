@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { fmtFull, pctLabel } from "./format";
@@ -737,20 +737,49 @@ function ConfigModal({
 }: {
   propertyId: string;
   config: KpiConfig;
-  availableEvents: { name: string; count: number }[];
+  availableEvents: { name: string; count: number; isKeyEvent: boolean }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
+  // Targets are kept as strings so the fields can be genuinely empty — a numeric
+  // 0 default rendered a stubborn "0" you couldn't clear before typing.
+  const numStr = (n: number) => (n ? String(n) : "");
   const [yearMonth, setYearMonth] = useState(config.yearMonth);
-  const [trafficOrganicTarget, setTrafficOrganicTarget] = useState(config.trafficOrganicTarget);
-  const [trafficAiTarget, setTrafficAiTarget] = useState(config.trafficAiTarget);
-  const [leadOrganicTarget, setLeadOrganicTarget] = useState(config.leadOrganicTarget);
-  const [leadAiTarget, setLeadAiTarget] = useState(config.leadAiTarget);
+  const [trafficOrganicTarget, setTrafficOrganicTarget] = useState(numStr(config.trafficOrganicTarget));
+  const [trafficAiTarget, setTrafficAiTarget] = useState(numStr(config.trafficAiTarget));
+  const [leadOrganicTarget, setLeadOrganicTarget] = useState(numStr(config.leadOrganicTarget));
+  const [leadAiTarget, setLeadAiTarget] = useState(numStr(config.leadAiTarget));
   const [leadEvents, setLeadEvents] = useState<string[]>(config.leadEvents);
   const [asanaProjectGid, setAsanaProjectGid] = useState(config.asanaProjectGid);
   const [asanaStatusTitle, setAsanaStatusTitle] = useState(config.asanaStatusTitle);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const initialMonth = useRef(config.yearMonth);
+
+  // The report only ever loads the *current* month's config, so when you pick a
+  // different (e.g. upcoming) month here, fetch that month's saved values and
+  // repopulate — otherwise editing a future month started from this month's
+  // numbers and its own saved targets were never shown.
+  useEffect(() => {
+    if (yearMonth === initialMonth.current) return; // already seeded from props
+    let ignore = false;
+    fetch(`/api/weekly-report/config?propertyId=${encodeURIComponent(propertyId)}&yearMonth=${yearMonth}`)
+      .then((r) => r.json())
+      .then((c: KpiConfig) => {
+        if (ignore || !c || !c.yearMonth) return;
+        setTrafficOrganicTarget(numStr(c.trafficOrganicTarget));
+        setTrafficAiTarget(numStr(c.trafficAiTarget));
+        setLeadOrganicTarget(numStr(c.leadOrganicTarget));
+        setLeadAiTarget(numStr(c.leadAiTarget));
+        setLeadEvents(c.leadEvents ?? []);
+        setAsanaProjectGid(c.asanaProjectGid ?? "");
+        setAsanaStatusTitle(c.asanaStatusTitle ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
+  }, [yearMonth, propertyId]);
 
   const toggleEvent = (name: string) =>
     setLeadEvents((cur) => (cur.includes(name) ? cur.filter((e) => e !== name) : [...cur, name]));
@@ -765,17 +794,19 @@ function ConfigModal({
         body: JSON.stringify({
           propertyId,
           yearMonth,
-          trafficOrganicTarget,
-          trafficAiTarget,
-          leadOrganicTarget,
-          leadAiTarget,
+          trafficOrganicTarget: Number(trafficOrganicTarget) || 0,
+          trafficAiTarget: Number(trafficAiTarget) || 0,
+          leadOrganicTarget: Number(leadOrganicTarget) || 0,
+          leadAiTarget: Number(leadAiTarget) || 0,
           leadEvents,
           asanaProjectGid,
           asanaStatusTitle,
         }),
       });
-      if (res.ok) onSaved();
-      else setMsg("Save failed.");
+      if (res.ok) {
+        setMsg("Saved.");
+        onSaved();
+      } else setMsg("Save failed.");
     } finally {
       setSaving(false);
     }
@@ -808,6 +839,9 @@ function ConfigModal({
           <NumberField label="Organic Leads target" value={leadOrganicTarget} onChange={setLeadOrganicTarget} />
           <NumberField label="AI Leads target" value={leadAiTarget} onChange={setLeadAiTarget} />
         </div>
+        <p className="mt-1 text-xs text-muted">
+          Pick a month above (including upcoming ones) to set its targets — leave a field blank for no target.
+        </p>
 
         <div className="mt-5">
           <p className="text-xs font-medium text-muted">
@@ -826,6 +860,14 @@ function ConfigModal({
                     onChange={() => toggleEvent(ev.name)}
                   />
                   {ev.name}
+                  {ev.isKeyEvent && (
+                    <span
+                      className="rounded bg-accent-soft px-1 text-[10px] font-semibold text-accent"
+                      title="Marked as a Key Event in GA4"
+                    >
+                      Key Event
+                    </span>
+                  )}
                 </span>
                 <span className="text-xs tabular-nums text-muted">{fmtFull(ev.count, "count")}</span>
               </label>
@@ -878,8 +920,8 @@ function NumberField({
   onChange,
 }: {
   label: string;
-  value: number;
-  onChange: (v: number) => void;
+  value: string;
+  onChange: (v: string) => void;
 }) {
   return (
     <label className="block">
@@ -888,7 +930,8 @@ function NumberField({
         type="number"
         min={0}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        placeholder="0"
+        onChange={(e) => onChange(e.target.value)}
         className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
       />
     </label>

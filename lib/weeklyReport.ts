@@ -191,20 +191,23 @@ export async function leadsPair(
   };
 }
 
-/** Distinct event names seen in the last 30 days, for the "select events as KPIs" picker. */
+/** Distinct event names seen in the last 30 days, for the "select events as KPIs" picker.
+ * `isKeyEvent` flags events GA4 has marked as Key Events (their `keyEvents` metric > 0). */
 export async function availableEvents(
   token: string,
   propertyId: string,
   range: Range,
-): Promise<{ name: string; count: number }[]> {
+): Promise<{ name: string; count: number; isKeyEvent: boolean }[]> {
   const { rows } = await runReport(token, propertyId, {
     dimensions: ["eventName"],
-    metrics: ["eventCount"],
+    metrics: ["eventCount", "keyEvents"],
     dateRanges: [toDateRange(range)],
     orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
     limit: 200,
   });
-  return rows.map((r) => ({ name: r.dims[0], count: r.metrics[0] ?? 0 })).filter((r) => r.name);
+  return rows
+    .map((r) => ({ name: r.dims[0], count: r.metrics[0] ?? 0, isKeyEvent: (r.metrics[1] ?? 0) > 0 }))
+    .filter((r) => r.name);
 }
 
 // ---------- top / bottom performing URLs ----------
