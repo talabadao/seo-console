@@ -71,6 +71,27 @@ interface IndexData {
   };
 }
 
+interface LiveInspection {
+  url: string;
+  ok: boolean;
+  error: string | null;
+  indexed: boolean;
+  coverageState: string | null;
+  stateLabel: string;
+  verdict: string | null;
+  robotsTxtState: string | null;
+  indexingState: string | null;
+  pageFetchState: string | null;
+  lastCrawlTime: string | null;
+  googleCanonical: string | null;
+  userCanonical: string | null;
+  crawledAs: string | null;
+  richResults: string | null;
+  richVerdict: string | null;
+  inspectLink: string | null;
+  inspectedAt: number;
+}
+
 const PAGE_SIZES = [25, 50, 100, 250];
 
 export function Indexing({ property, neverSynced }: { property: string; neverSynced?: boolean }) {
@@ -88,6 +109,14 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
   const [runProgress, setRunProgress] = useState<{ done: number; target: number } | null>(null);
   const [confirmSitemap, setConfirmSitemap] = useState<{ count: number; urls: string[] } | null>(null);
   const autoRunFor = useRef<string | null>(null);
+
+  // Manual "inspect specific URLs" panel (live URL Inspection, on demand).
+  const [showInspect, setShowInspect] = useState(false);
+  const [inspectInput, setInspectInput] = useState("");
+  const [inspecting, setInspecting] = useState(false);
+  const [liveResults, setLiveResults] = useState<LiveInspection[] | null>(null);
+  const [inspectProgress, setInspectProgress] = useState<{ done: number; total: number } | null>(null);
+  const [inspectMsg, setInspectMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!property) return null;
@@ -291,6 +320,150 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
     }
   }
 
+  // Live, on-demand inspection of a pasted list of URLs. Sent in small batches
+  // (each a real round trip to Google per URL) so no single request runs long;
+  // results stream in as each batch returns.
+  async function inspectManual() {
+    const urls = [...new Set(inspectInput.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))];
+    if (!urls.length) return;
+    setInspecting(true);
+    setInspectMsg(null);
+    setLiveResults([]);
+    setInspectProgress({ done: 0, total: urls.length });
+
+    const BATCH = 20;
+    const collected: LiveInspection[] = [];
+    let quota = data?.quotaLeft ?? 0;
+    let stopMsg: string | null = null;
+    try {
+      for (let i = 0; i < urls.length; i += BATCH) {
+        const chunk = urls.slice(i, i + BATCH);
+        const res = await fetch("/api/index/inspect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ property, urls: chunk }),
+        });
+        const j = await res.json();
+        if (!res.ok) {
+          stopMsg = j.error ?? "Inspection failed.";
+          break;
+        }
+        collected.push(...((j.results ?? []) as LiveInspection[]));
+        setLiveResults([...collected]);
+        quota = j.quotaLeft ?? quota;
+        setInspectProgress({ done: Math.min(urls.length, i + chunk.length), total: urls.length });
+        if (j.needsReconnect) {
+          stopMsg = "Reconnect Google — your sign-in can't inspect URLs for this property.";
+          break;
+        }
+      }
+      const okCount = collected.filter((r) => r.ok).length;
+      setInspectMsg(
+        stopMsg
+          ? stopMsg
+          : `Inspected ${okCount}/${collected.length} live. Inspection quota left today: ${quota}.`,
+      );
+      await load(); // manually-inspected URLs now show in the table below
+    } finally {
+      setInspecting(false);
+      setInspectProgress(null);
+    }
+  }
+
+  function exportLive() {
+    if (!liveResults?.length) return;
+    downloadCsv(
+      `url-inspection-manual-${slug(property)}-${today()}.csv`,
+      [
+        "URL",
+        "Result",
+        "Indexed",
+        "Coverage state",
+        "Verdict",
+        "Indexing allowed",
+        "robots.txt",
+        "Page fetch",
+        "Crawled as",
+        "Google canonical",
+        "Declared canonical",
+        "Rich results",
+        "Rich verdict",
+        "Last crawl",
+        "Inspected at",
+        "Search Console link",
+        "Error",
+      ],
+      liveResults.map((r) => [
+        r.url,
+        r.ok ? "ok" : "failed",
+        r.ok ? (r.indexed ? "yes" : "no") : "",
+        r.stateLabel,
+        r.verdict,
+        r.indexingState,
+        r.robotsTxtState,
+        r.pageFetchState,
+        r.crawledAs,
+        r.googleCanonical,
+        r.userCanonical,
+        r.richResults,
+        r.richVerdict,
+        r.lastCrawlTime ? new Date(r.lastCrawlTime).toISOString() : "",
+        new Date(r.inspectedAt).toISOString(),
+        r.inspectLink,
+        r.error,
+      ]),
+    );
+  }
+
+  function exportTable() {
+    if (!filtered.length) return;
+    downloadCsv(
+      `url-inspections-${slug(property)}-${today()}.csv`,
+      [
+        "URL",
+        "Clicks 30d",
+        "Impressions 30d",
+        "Status",
+        "Indexed",
+        "At risk",
+        "Coverage state",
+        "Indexing allowed",
+        "robots.txt",
+        "Page fetch",
+        "Crawled as",
+        "Google canonical",
+        "Declared canonical",
+        "Rich results",
+        "Rich verdict",
+        "Last crawl",
+        "Last inspection",
+        "Submitted at",
+        "Submit result",
+      ],
+      filtered.map((r) => [
+        r.url,
+        r.clicks,
+        r.impressions,
+        r.status ?? (r.lastInspection ? "" : "not inspected"),
+        r.lastInspection ? (r.indexed ? "yes" : "no") : "",
+        r.atRisk ? "yes" : "",
+        r.stateLabel,
+        r.indexingState,
+        r.robotsTxtState,
+        r.pageFetchState,
+        r.crawledAs,
+        r.googleCanonical,
+        r.userCanonical,
+        r.richResults,
+        r.richVerdict,
+        r.lastCrawl ? new Date(r.lastCrawl).toISOString() : "",
+        r.lastInspection ? new Date(r.lastInspection).toISOString() : "",
+        r.submittedAt ? new Date(r.submittedAt).toISOString() : "",
+        r.submitResult,
+      ]),
+    );
+  }
+
   const filtered = useMemo(() => {
     let r = data?.urls ?? [];
     if (tab === "indexed") r = r.filter((x) => x.indexed);
@@ -399,6 +572,148 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
                 })`}
           </button>
         </div>
+      </div>
+
+      {/* Manual, live URL inspection */}
+      <div className="mb-3 rounded-xl border bg-surface p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <strong className="text-sm">Inspect specific URLs</strong>
+            <p className="text-xs text-muted">
+              Live URL Inspection straight from Google — results are generated on request, not read
+              from stored data.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowInspect((v) => !v)}
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft"
+          >
+            {showInspect ? "Hide" : "Open"}
+          </button>
+        </div>
+
+        {showInspect && (
+          <div className="mt-3">
+            <textarea
+              value={inspectInput}
+              onChange={(e) => setInspectInput(e.target.value)}
+              placeholder={
+                "Paste URLs to inspect, one per line…\nhttps://example.com/page-a\nhttps://example.com/page-b"
+              }
+              rows={4}
+              className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                onClick={inspectManual}
+                disabled={inspecting || !inspectInput.trim() || !property}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {inspecting ? "Inspecting…" : "Inspect URLs"}
+              </button>
+              {liveResults && liveResults.length > 0 && (
+                <button
+                  onClick={exportLive}
+                  className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft"
+                >
+                  Export results (CSV)
+                </button>
+              )}
+              <span className="text-xs text-muted">
+                Uses your daily inspection quota · {data?.quotaLeft ?? "…"} left today
+              </span>
+            </div>
+
+            {inspectProgress && (
+              <div className="mt-3">
+                <div className="mb-1.5 flex items-center justify-between text-sm">
+                  <span className="font-medium">Inspecting…</span>
+                  <span className="tabular-nums text-muted">
+                    {inspectProgress.done} / {inspectProgress.total}
+                  </span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded-full border bg-background">
+                  <div
+                    className="h-full rounded-full bg-accent transition-all"
+                    style={{
+                      width: `${Math.max(3, Math.round((inspectProgress.done / inspectProgress.total) * 100))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {inspectMsg && (
+              <div className="mt-2 rounded-lg border bg-background p-2 text-sm">{inspectMsg}</div>
+            )}
+
+            {liveResults && liveResults.length > 0 && (
+              <div className="mt-3 max-h-80 overflow-auto rounded-lg border">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="sticky top-0 bg-surface text-left text-muted">
+                    <tr className="border-b">
+                      <th className="px-3 py-2 font-medium">URL</th>
+                      <th className="px-3 py-2 font-medium">Status</th>
+                      <th className="px-3 py-2 font-medium">Last crawl</th>
+                      <th className="px-3 py-2 font-medium">Rich results</th>
+                      <th className="px-3 py-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveResults.map((r, i) => (
+                      <tr key={`${r.url}-${i}`} className="border-b border-border/60 align-top">
+                        <td className="max-w-xs truncate px-3 py-2" title={r.url}>
+                          <a
+                            href={r.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-accent hover:underline"
+                          >
+                            {shortUrl(r.url)}
+                          </a>
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.ok ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{
+                                  background: r.indexed ? "var(--good)" : "var(--bad)",
+                                }}
+                              />
+                              <span style={{ color: r.indexed ? "var(--good)" : "var(--bad)" }}>
+                                {r.coverageState ?? (r.indexed ? "Indexed" : "Not indexed")}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-bad">{r.error ?? "failed"}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-muted">{crawl(r.lastCrawlTime)}</td>
+                        <td className="px-3 py-2 text-muted">
+                          {r.richResults || (r.richVerdict === "PASS" ? "OK" : "—")}
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.inspectLink && (
+                            <a
+                              href={r.inspectLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-accent hover:underline"
+                              title="Open in Search Console"
+                            >
+                              View ↗
+                            </a>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {confirmSitemap && (
@@ -568,6 +883,14 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
               </option>
             ))}
           </select>
+          <button
+            onClick={exportTable}
+            disabled={!filtered.length}
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent-soft disabled:opacity-50"
+            title="Download the URLs shown (current filter) as a CSV"
+          >
+            Export CSV
+          </button>
         </div>
         <div className="max-h-[36rem] overflow-auto">
           <table className="w-full border-collapse text-sm">
@@ -880,4 +1203,28 @@ function crawl(isoStr: string | null): string {
   if (!isoStr) return "—";
   const days = Math.round((Date.now() - new Date(isoStr).getTime()) / 86400000);
   return days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+function slug(s: string): string {
+  return s.replace(/^sc-domain:/, "").replace(/^https?:\/\//, "").replace(/[^a-z0-9.-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "property";
+}
+function csvCell(v: string | number | null): string {
+  const s = v === null || v === undefined ? "" : String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+/** Builds a CSV (UTF-8 BOM so Excel reads it correctly) and triggers a download. */
+function downloadCsv(filename: string, header: string[], rows: (string | number | null)[][]) {
+  const body = [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob(["﻿" + body], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
