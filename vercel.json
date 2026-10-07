@@ -24,6 +24,9 @@
     { "path": "/api/cron/index-check?hour=20", "schedule": "0 20 * * *" },
     { "path": "/api/cron/index-check?hour=21", "schedule": "0 21 * * *" },
     { "path": "/api/cron/index-check?hour=22", "schedule": "0 22 * * *" },
-    { "path": "/api/cron/index-check?hour=23", "schedule": "0 23 * * *" }
+    { "path": "/api/cron/index-check?hour=23", "schedule": "0 23 * * *" },
+    { "path": "/api/cron/pagespeed", "schedule": "30 1 * * *" },
+    { "path": "/api/cron/pagespeed", "schedule": "30 2 * * *" },
+    { "path": "/api/cron/pagespeed", "schedule": "30 3 * * *" }
   ]
 }

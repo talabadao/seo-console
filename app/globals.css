@@ -14,6 +14,8 @@
   --position: #f9ab00;
   --good: #188038;
   --bad: #d93025;
+  --series-a: #4285f4;
+  --series-b: #e8710a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -31,6 +33,8 @@
     --position: #ffca28;
     --good: #4ade80;
     --bad: #f87171;
+    --series-a: #4c8dff;
+    --series-b: #c96a1b;
   }
 }
 
@@ -48,6 +52,8 @@
   --position: #ffca28;
   --good: #4ade80;
   --bad: #f87171;
+  --series-a: #4c8dff;
+  --series-b: #c96a1b;
 }
 
 @theme inline {

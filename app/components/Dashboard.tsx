@@ -10,6 +10,7 @@ import { Indexing } from "./Indexing";
 import { Opportunities } from "./Opportunities";
 import { Analytics } from "./Analytics";
 import { WeeklyReport } from "./WeeklyReport";
+import { PageSpeed } from "./PageSpeed";
 import { SettingsPanel } from "./SettingsPanel";
 import { GoogleReconnectBanner } from "./GoogleReconnect";
 import { ProjectManager, ProjectPicker, type Project, type ProjectView } from "./ProjectManager";
@@ -112,10 +113,17 @@ const INITIAL_RANGE: RangeValue = {
   matchWeekdays: false,
 };
 
-type Tab = "performance" | "opportunities" | "analytics" | "indexing" | "weekly-report";
+type Tab =
+  | "performance"
+  | "opportunities"
+  | "analytics"
+  | "indexing"
+  | "weekly-report"
+  | "pagespeed";
 
-// Tabs fed by the project's Search Console property; the rest use its GA4 property.
+// Tabs fed by the project's Search Console property, and by its GA4 property.
 const GSC_TABS: Tab[] = ["performance", "opportunities", "indexing"];
+const GA_TABS: Tab[] = ["analytics", "weekly-report"];
 
 function MissingAsset({
   asset,
@@ -411,6 +419,7 @@ export function Dashboard({
               ["analytics", "Analytics"],
               ["weekly-report", "Weekly Report"],
               ["indexing", "Indexing"],
+              ["pagespeed", "Page Speed"],
             ] as const
           ).map(([t, label]) => (
             <button
@@ -462,7 +471,7 @@ export function Dashboard({
             project={project.name}
             onEdit={() => setProjectView(project.id)}
           />
-        ) : !GSC_TABS.includes(tab) && !gaPropertyId ? (
+        ) : GA_TABS.includes(tab) && !gaPropertyId ? (
           <MissingAsset
             asset="Google Analytics (GA4) property"
             project={project.name}
@@ -477,6 +486,9 @@ export function Dashboard({
             {tab === "weekly-report" && <WeeklyReport key={gaPropertyId} fixedPropertyId={gaPropertyId} />}
             {tab === "opportunities" && (
               <Opportunities property={property} searchType={searchType} />
+            )}
+            {tab === "pagespeed" && (
+              <PageSpeed key={project.id} projectId={project.id} websiteUrl={project.websiteUrl} />
             )}
           </>
         )}

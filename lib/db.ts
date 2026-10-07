@@ -327,6 +327,40 @@ async function migrate(): Promise<void> {
       updated_at          BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+
+    -- Pages a project tracks in PageSpeed Insights, and one stored result per
+    -- page, strategy (mobile/desktop) and day.
+    CREATE TABLE IF NOT EXISTS psi_pages (
+      id         BIGSERIAL PRIMARY KEY,
+      project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      url        TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      UNIQUE(project_id, url)
+    );
+
+    CREATE TABLE IF NOT EXISTS psi_runs (
+      id             BIGSERIAL PRIMARY KEY,
+      page_id        BIGINT NOT NULL REFERENCES psi_pages(id) ON DELETE CASCADE,
+      strategy       TEXT NOT NULL,
+      run_date       TEXT NOT NULL,
+      fetched_at     BIGINT NOT NULL,
+      score          INTEGER,
+      fcp            DOUBLE PRECISION,
+      lcp            DOUBLE PRECISION,
+      tbt            DOUBLE PRECISION,
+      cls            DOUBLE PRECISION,
+      si             DOUBLE PRECISION,
+      field_lcp      DOUBLE PRECISION,
+      field_inp      DOUBLE PRECISION,
+      field_cls      DOUBLE PRECISION,
+      field_fcp      DOUBLE PRECISION,
+      field_ttfb     DOUBLE PRECISION,
+      field_category TEXT,
+      field_origin   BOOLEAN NOT NULL DEFAULT false,
+      recs_json      TEXT,
+      error          TEXT,
+      UNIQUE(page_id, strategy, run_date)
+    );
   `);
 
   // Additive safety net for columns added after a table's first release.
