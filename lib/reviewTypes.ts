@@ -22,6 +22,8 @@ export interface Review {
   time: number;
   reply: string | null;
   replyTime: number | null;
+  /** The review on Google Maps. */
+  link: string | null;
   sentiment: Sentiment;
   points: ReviewPoint[];
   /** False while the review still has only its star-based sentiment. */
@@ -29,18 +31,30 @@ export interface Review {
 }
 
 export interface ReviewsData {
-  location: string;
-  locationTitle: string;
+  placeTitle: string;
+  address: string | null;
+  placeType: string | null;
   averageRating: number | null;
   totalReviews: number | null;
   syncedAt: number | null;
   syncError: string | null;
   aspects: string[];
+  /** Keywords Google highlights across all of the place's reviews. */
+  topics: { keyword: string; mentions: number }[];
   reviews: Review[];
   /** Reviews with text that haven't been through the classifier yet. */
   pending: number;
   /** Whether a classifier key is configured on the server. */
   classifier: boolean;
+  /** Searches left on the project's SerpApi key (null when it couldn't be read). */
+  creditsLeft: number | null;
+  keyError: string | null;
+  /** SerpApi credits this place has used so far. */
+  creditsSpent: number;
+  /** 1 when the Maps link has no place id and the first fetch must look the place up. */
+  lookupCredit: number;
+  /** Whether older reviews remain that a "fetch older" run can continue into. */
+  olderAvailable: boolean;
 }
 
 export const OTHER = "Other";
@@ -48,15 +62,4 @@ export const OTHER = "Other";
 /** Sentiment when all we have is the star rating. */
 export function starSentiment(star: number): Sentiment {
   return star >= 4 ? "positive" : star === 3 ? "neutral" : "negative";
-}
-
-/**
- * Google returns auto-translated reviews as
- * "(Translated by Google) <english> (Original) <original>". Split that back
- * into the customer's own words and the English version.
- */
-export function splitTranslated(comment: string): { original: string; english: string | null } {
-  const m = /^\s*\(Translated by Google\)\s*([\s\S]*?)\s*\(Original\)\s*([\s\S]*)$/.exec(comment);
-  if (m && m[2].trim()) return { original: m[2].trim(), english: m[1].trim() || null };
-  return { original: comment.trim(), english: null };
 }

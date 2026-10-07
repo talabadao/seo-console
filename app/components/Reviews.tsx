@@ -20,7 +20,16 @@ import {
   type Sentiment,
 } from "@/lib/reviewTypes";
 
-type Data = ReviewsData & { needsReconnect: boolean };
+type Data = ReviewsData;
+
+// SerpApi returns 8 reviews on the first page and 20 on each page after it;
+// every page costs one credit. Mirrors lib/serpapi.ts.
+const FIRST_PAGE = 8;
+const NEXT_PAGE = 20;
+const creditsFor = (count: number) =>
+  count <= 0 ? 0 : 1 + Math.ceil(Math.max(0, count - FIRST_PAGE) / NEXT_PAGE);
+
+const LIMITS = [50, 200, 500, 1000, 5000];
 
 const PERIODS = [
   { id: "7d", label: "7 days", days: 7 },
@@ -142,9 +151,10 @@ export function Reviews({
 }) {
   const [data, setData] = useState<Data | null>(null);
   const [period, setPeriod] = useState<PeriodId>("12m");
-  const [busy, setBusy] = useState<"sync" | "analyze" | null>(null);
+  const [limit, setLimit] = useState(200);
+  const [busy, setBusy] = useState<"refresh" | "older" | "analyze" | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [msg, setMsg] = useState<{ text: string; enableUrl?: string | null } | null>(null);
+  const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
   const [sentiment, setSentiment] = useState<Sentiment | "all">("all");
   const [q, setQ] = useState("");
   const [aspectFilter, setAspectFilter] = useState<AspectFilter | null>(null);
@@ -181,7 +191,7 @@ export function Reviews({
             error?: string;
           };
           if (!res.ok || j.error) {
-            setMsg({ text: `Review analysis stopped: ${j.error ?? "the request failed"}` });
+            setMsg({ text: `Review analysis stopped: ${j.error ?? "the request failed"}`, bad: true });
             break;
           }
           remaining = j.remaining ?? 0;
@@ -197,36 +207,49 @@ export function Reviews({
     [projectId, load],
   );
 
-  const sync = useCallback(async () => {
-    setBusy("sync");
-    setMsg(null);
-    let fresh: Data | null = null;
-    try {
-      const res = await fetch("/api/reviews/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) setMsg({ text: j.error ?? "Couldn't fetch reviews from Google.", enableUrl: j.enableUrl });
-      fresh = await load();
-    } finally {
-      setBusy(null);
-    }
-    if (fresh?.classifier && fresh.pending > 0) await analyze(fresh.pending);
-  }, [projectId, load, analyze]);
+  /** Spends SerpApi credits — only ever called from a button the user pressed. */
+  const sync = useCallback(
+    async (mode: "refresh" | "older") => {
+      setBusy(mode);
+      setMsg(null);
+      let fresh: Data | null = null;
+      try {
+        const res = await fetch("/api/reviews/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, mode, max: limit }),
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          added?: number;
+          creditsUsed?: number;
+          error?: string;
+        };
+        if (!res.ok) setMsg({ text: j.error ?? "Couldn't fetch reviews.", bad: true });
+        else {
+          const credits = j.creditsUsed ?? 0;
+          setMsg({
+            text: `${j.added ? `Saved ${j.added.toLocaleString()} new review${j.added === 1 ? "" : "s"}` : "No new reviews"} · ${credits} SerpApi credit${credits === 1 ? "" : "s"} used.`,
+          });
+        }
+        fresh = await load();
+      } finally {
+        setBusy(null);
+      }
+      if (fresh?.classifier && fresh.pending > 0) await analyze(fresh.pending);
+    },
+    [projectId, limit, load, analyze],
+  );
 
-  // First visit: fetch from Google straight away; later visits just resume any
-  // analysis that was left unfinished.
+  // Opening the tab only reads saved reviews (no SerpApi credits). Analysis
+  // left unfinished by an earlier visit is resumed, since that costs none.
   useEffect(() => {
     (async () => {
       const j = await load();
-      if (!j || autoStarted.current || j.needsReconnect) return;
+      if (!j || autoStarted.current) return;
       autoStarted.current = true;
-      if (!j.syncedAt) await sync();
-      else if (j.classifier && j.pending > 0) await analyze(j.pending);
+      if (j.classifier && j.pending > 0) await analyze(j.pending);
     })();
-  }, [load, sync, analyze]);
+  }, [load, analyze]);
 
   const view = useMemo(() => {
     const all = data?.reviews ?? [];
@@ -288,6 +311,14 @@ export function Reviews({
   if (!data) return <p className="py-10 text-center text-sm text-muted">Loading reviews…</p>;
 
   const analysed = data.reviews.some((r) => r.analyzed && r.points.length);
+  const saved = data.reviews.length;
+  const fetchedBefore = data.syncedAt != null;
+  // What pressing each button will cost, worked out before anything is spent.
+  const firstFetch = data.lookupCredit + creditsFor(Math.min(limit, data.totalReviews ?? limit));
+  const olderCount = Math.min(limit, Math.max(0, (data.totalReviews ?? saved + limit) - saved));
+  const olderCredits = Math.ceil(olderCount / NEXT_PAGE);
+  const refreshCost = fetchedBefore ? 1 : firstFetch;
+  const notEnough = data.creditsLeft != null && data.creditsLeft < refreshCost;
 
   return (
     <div className="space-y-4">
@@ -295,53 +326,112 @@ export function Reviews({
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-surface p-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-base font-semibold">{data.locationTitle || projectName}</h2>
+            <h2 className="truncate text-base font-semibold">{data.placeTitle || projectName}</h2>
             <span className="rounded bg-accent-soft px-1.5 py-0.5 text-xs font-medium text-accent">
-              Google Business Profile
+              Google Maps
             </span>
           </div>
+          {(data.placeType || data.address) && (
+            <p className="mt-0.5 truncate text-sm text-muted">
+              {[data.placeType, data.address].filter(Boolean).join(" · ")}
+            </p>
+          )}
           <p className="mt-0.5 text-sm text-muted">
             {[
               data.averageRating != null ? `${data.averageRating.toFixed(1)} ★ on Google` : null,
               data.totalReviews != null ? `${data.totalReviews.toLocaleString()} reviews on Google` : null,
-              `${data.reviews.length.toLocaleString()} saved`,
-              data.syncedAt ? `updated ${format(data.syncedAt, "MMM d, HH:mm")}` : "not fetched yet",
+              `${saved.toLocaleString()} saved${
+                data.totalReviews ? ` (${Math.min(100, Math.round((saved / data.totalReviews) * 100))}%)` : ""
+              }`,
+              data.syncedAt ? `updated ${format(data.syncedAt, "MMM d, yyyy")}` : "not fetched yet",
+              `${data.creditsSpent} SerpApi credit${data.creditsSpent === 1 ? "" : "s"} spent so far`,
             ]
               .filter(Boolean)
               .join(" · ")}
           </p>
         </div>
-        <button
-          onClick={sync}
-          disabled={busy !== null || data.needsReconnect}
-          className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
+        <span
+          className="rounded-md border px-3 py-1.5 text-sm"
+          title="Searches left on this project's SerpApi key. Each page of reviews uses one."
         >
-          {busy === "sync" ? "Fetching…" : "Refresh"}
+          SerpApi{" "}
+          <strong className="tabular-nums">
+            {data.creditsLeft != null ? data.creditsLeft.toLocaleString() : "?"}
+          </strong>{" "}
+          searches left
+        </span>
+        <select
+          value={limit}
+          onChange={(e) => setLimit(Number(e.target.value))}
+          className="rounded-md border bg-background px-2 py-1.5 text-sm"
+          title="The most new reviews one fetch will save"
+        >
+          {LIMITS.map((n) => (
+            <option key={n} value={n}>
+              {n === 5000 ? "All reviews" : `Up to ${n.toLocaleString()} reviews`}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => sync("refresh")}
+          disabled={busy !== null || notEnough || Boolean(data.keyError)}
+          className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
+          title={
+            fetchedBefore
+              ? "Checks for new reviews: 1 credit if nothing is new, plus 1 for every 20 new reviews."
+              : `First fetch: up to ${firstFetch} credits for ${limit === 5000 ? "all" : `up to ${limit}`} reviews.`
+          }
+        >
+          {busy === "refresh"
+            ? "Fetching…"
+            : fetchedBefore
+              ? "Refresh · from 1 credit"
+              : `Fetch reviews · up to ${firstFetch} credit${firstFetch === 1 ? "" : "s"}`}
         </button>
+        {fetchedBefore && data.olderAvailable && olderCredits > 0 && (
+          <button
+            onClick={() => sync("older")}
+            disabled={busy !== null || (data.creditsLeft != null && data.creditsLeft < 1)}
+            className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
+            title={`Continues from the oldest saved review: about ${olderCredits} credits for the next ${olderCount.toLocaleString()} reviews.`}
+          >
+            {busy === "older" ? "Fetching…" : `Fetch older · about ${olderCredits} credit${olderCredits === 1 ? "" : "s"}`}
+          </button>
+        )}
         <button onClick={onEditProject} className="text-sm text-muted hover:text-foreground">
-          Change location
+          Settings
         </button>
       </div>
 
-      {data.needsReconnect && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
-          <span>
-            <strong>Google Business Profile isn&apos;t connected.</strong> Sign in again and approve the
-            Business Profile permission to fetch reviews.
-          </span>
-          <a href="/api/auth/google" className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white">
-            Reconnect Google
-          </a>
+      {data.keyError && (
+        <div className="rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">{data.keyError}</div>
+      )}
+      {notEnough && !data.keyError && (
+        <div className="rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
+          This SerpApi key has {data.creditsLeft} search{data.creditsLeft === 1 ? "" : "es"} left, fewer than
+          the {refreshCost} this fetch may need. Lower the review limit or add credits to the key.
         </div>
       )}
       {(msg || data.syncError) && (
-        <div className="rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
-          {msg?.text ?? `The last refresh failed: ${data.syncError}`}{" "}
-          {msg?.enableUrl && (
-            <a href={msg.enableUrl} target="_blank" rel="noreferrer" className="text-accent underline">
-              Enable it in Google Cloud ↗
-            </a>
-          )}
+        <div
+          className={`rounded-lg border p-3 text-sm ${
+            !msg || msg.bad ? "border-bad/40 bg-bad/10" : "bg-surface"
+          }`}
+        >
+          {msg?.text ?? `The last fetch failed: ${data.syncError}`}
+        </div>
+      )}
+      {!fetchedBefore && !busy && (
+        <div className="rounded-xl border bg-surface p-6 text-sm">
+          <p className="font-medium">No reviews fetched yet.</p>
+          <p className="mt-1 text-muted">
+            Reviews are only fetched when you ask, to save SerpApi credits. Fetching{" "}
+            {limit === 5000 ? "all reviews" : `up to ${limit.toLocaleString()} reviews`} uses at most{" "}
+            {firstFetch} credit{firstFetch === 1 ? "" : "s"}
+            {data.lookupCredit ? " (including 1 to look the business up from its Maps link)" : ""}: 1 for the
+            first {FIRST_PAGE} reviews, then 1 for every {NEXT_PAGE}. Fewer are used if the business has fewer
+            reviews.
+          </p>
         </div>
       )}
       {!data.classifier && data.reviews.length > 0 && (
@@ -445,6 +535,31 @@ export function Reviews({
             Praise and criticism by aspect appear here once the reviews have been analysed.
           </div>
         )
+      )}
+
+      {data.topics.length > 0 && (
+        <div className="rounded-xl border bg-surface">
+          <div className="flex flex-wrap items-baseline gap-x-3 border-b px-4 py-3">
+            <h3 className="text-sm font-semibold">Google&apos;s review topics</h3>
+            <span className="text-xs text-muted">keywords Google highlights across all reviews</span>
+          </div>
+          <div className="flex flex-wrap gap-2 p-4">
+            {data.topics.map((t) => (
+              <button
+                key={t.keyword}
+                onClick={() => {
+                  setQ(t.keyword);
+                  setShown(20);
+                  listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className="rounded-full border px-3 py-1 text-sm hover:bg-accent-soft"
+                title="Search saved reviews for this keyword"
+              >
+                {t.keyword} <span className="tabular-nums text-muted">{t.mentions.toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* review list */}
@@ -904,6 +1019,11 @@ function ReviewItem({ r }: { r: Review }) {
           <Dot color={SENTIMENT[r.sentiment].color} />
           {SENTIMENT[r.sentiment].label}
         </span>
+        {r.link && (
+          <a href={r.link} target="_blank" rel="noreferrer" className="ml-auto text-accent hover:underline">
+            View on Google
+          </a>
+        )}
       </div>
       {text ? (
         <p className="mt-2 whitespace-pre-line text-sm">

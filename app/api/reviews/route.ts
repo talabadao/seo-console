@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { hasBusinessScope } from "@/lib/google/oauth";
-import { getProject } from "@/lib/projects";
-import { reviewsData, type ReviewProject } from "@/lib/reviews";
+import { reviewContext } from "@/lib/reviewContext";
+import { reviewsData } from "@/lib/reviews";
 
+/** Saved reviews plus the SerpApi balance. Reads storage only — spends no credits. */
 export async function GET(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const project = await getProject(user.id, Number(req.nextUrl.searchParams.get("projectId")));
-  if (!project) return NextResponse.json({ error: "unknown project" }, { status: 404 });
-  if (!project.gbpLocation) return NextResponse.json({ error: "no location linked" }, { status: 400 });
-  return NextResponse.json({
-    ...(await reviewsData(project as ReviewProject)),
-    needsReconnect: !hasBusinessScope(user.google_scopes),
-  });
+  const ctx = await reviewContext(user.id, Number(req.nextUrl.searchParams.get("projectId")));
+  if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
+  return NextResponse.json(await reviewsData(ctx.project, ctx.key));
 }

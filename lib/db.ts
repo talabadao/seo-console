@@ -362,7 +362,7 @@ async function migrate(): Promise<void> {
       UNIQUE(page_id, strategy, run_date)
     );
 
-    -- Google Business Profile reviews for a project's linked location, with
+    -- Google Maps reviews for a project's business (fetched through SerpApi), with
     -- the classifier's output (sentiment, English text, praise/criticism
     -- points). classified_at is NULL until a review has been analysed.
     CREATE TABLE IF NOT EXISTS gbp_reviews (
@@ -408,6 +408,17 @@ async function migrate(): Promise<void> {
   await ensureColumn(sql, "weekly_kpi_config", "asana_status_title", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn(sql, "ga_properties", "time_zone", "TEXT");
   await ensureColumn(sql, "users", "projects_seeded", "BOOLEAN NOT NULL DEFAULT false");
+  // Reviews come from SerpApi's Google Maps data: each project keeps its own
+  // SerpApi key and Maps link; gbp_location holds the resolved place id.
+  await ensureColumn(sql, "projects", "maps_url", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(sql, "projects", "serpapi_key", "TEXT");
+  await ensureColumn(sql, "gbp_reviews", "source_en", "TEXT");
+  await ensureColumn(sql, "gbp_reviews", "link", "TEXT");
+  await ensureColumn(sql, "gbp_state", "topics_json", "TEXT");
+  await ensureColumn(sql, "gbp_state", "address", "TEXT");
+  await ensureColumn(sql, "gbp_state", "place_type", "TEXT");
+  await ensureColumn(sql, "gbp_state", "credits_spent", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn(sql, "gbp_state", "next_token", "TEXT");
 
   // longtailMinWords' configuration UI was removed in favor of a fixed
   // default — correct any site still sitting at the old default of 4.

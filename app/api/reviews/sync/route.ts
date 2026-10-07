@@ -1,29 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor, hasBusinessScope } from "@/lib/google/oauth";
-import { BusinessProfileError } from "@/lib/google/businessProfile";
-import { getProject } from "@/lib/projects";
-import { syncReviews, type ReviewProject } from "@/lib/reviews";
+import { reviewContext } from "@/lib/reviewContext";
+import { syncReviews } from "@/lib/reviews";
 
 export const maxDuration = 300;
 
-/** Pulls the latest reviews for the project's Business Profile location from Google. */
+/**
+ * Fetches reviews through SerpApi — only ever on an explicit request, since
+ * each page costs a credit. `mode: "refresh"` picks up new reviews; "older"
+ * extends history from where the last run stopped. `max` caps new reviews.
+ */
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const body = (await req.json().catch(() => ({}))) as { projectId?: number };
-  const project = await getProject(user.id, Number(body.projectId));
-  if (!project?.gbpLocation) return NextResponse.json({ error: "no location linked" }, { status: 400 });
-  if (!hasBusinessScope(user.google_scopes)) return NextResponse.json({ needsReconnect: true });
+  const body = (await req.json().catch(() => ({}))) as { projectId?: number; mode?: string; max?: number };
+  const ctx = await reviewContext(user.id, Number(body.projectId));
+  if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
 
+  const max = Math.min(5000, Math.max(8, Math.round(Number(body.max)) || 200));
   try {
-    const token = await accessTokenFor(user);
-    return NextResponse.json(await syncReviews(token, project as ReviewProject));
+    return NextResponse.json(
+      await syncReviews(ctx.project, ctx.key, {
+        mode: body.mode === "older" ? "older" : "refresh",
+        max,
+        budgetMs: 230_000,
+      }),
+    );
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
-    if (e instanceof BusinessProfileError) {
-      return NextResponse.json({ error: e.message, enableUrl: e.enableUrl }, { status: 502 });
-    }
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
   }
 }

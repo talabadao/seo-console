@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { brandFromHost, faviconFor, hostOf, matchGa, normalizeUrl } from "@/lib/projectMatch";
+import { normalizeMapsUrl } from "@/lib/serpapi";
 
 export interface Project {
   id: number;
@@ -8,8 +9,13 @@ export interface Project {
   faviconUrl: string;
   gscProperty: string | null;
   gaPropertyId: string | null;
+  /** Google Maps link of the business whose reviews are tracked. */
+  mapsUrl: string;
+  /** Place id resolved from the Maps link, and the business name Google returns for it. */
   gbpLocation: string | null;
   gbpLocationTitle: string | null;
+  /** Whether a SerpApi key is saved. The key itself never leaves the server. */
+  hasSerpKey: boolean;
   asanaProjectGid: string;
   asanaProjectName: string;
 }
@@ -20,16 +26,17 @@ export interface ProjectInput {
   faviconUrl?: string;
   gscProperty?: string | null;
   gaPropertyId?: string | null;
-  /** Business Profile location path ("accounts/…/locations/…") and its display name. */
-  gbpLocation?: string | null;
-  gbpLocationTitle?: string | null;
+  mapsUrl?: string;
+  /** Omit to keep the saved key; an empty string removes it. */
+  serpApiKey?: string;
   asanaProjectGid?: string;
   asanaProjectName?: string;
 }
 
 const COLUMNS = `id, name, website_url AS "websiteUrl", favicon_url AS "faviconUrl",
   gsc_property AS "gscProperty", ga_property_id AS "gaPropertyId",
-  gbp_location AS "gbpLocation", gbp_location_title AS "gbpLocationTitle",
+  maps_url AS "mapsUrl", gbp_location AS "gbpLocation", gbp_location_title AS "gbpLocationTitle",
+  (serpapi_key IS NOT NULL AND serpapi_key <> '') AS "hasSerpKey",
   asana_project_gid AS "asanaProjectGid", asana_project_name AS "asanaProjectName"`;
 
 export async function listProjects(userId: number): Promise<Project[]> {
@@ -91,40 +98,54 @@ async function clean(userId: number, input: ProjectInput, base?: Project) {
     if (!owns) throw new ProjectValidationError("That GA4 property isn't on this account.");
   }
 
-  // Access to the location is enforced by Google when its reviews are read.
-  const gbpLocation =
-    input.gbpLocation !== undefined ? input.gbpLocation || null : (base?.gbpLocation ?? null);
-  if (gbpLocation && !/^accounts\/[\w-]+\/locations\/[\w-]+$/.test(gbpLocation)) {
-    throw new ProjectValidationError("That Business Profile location isn't valid.");
-  }
-  const gbpLocationTitle = !gbpLocation
-    ? null
-    : input.gbpLocationTitle !== undefined
-      ? (input.gbpLocationTitle ?? "").trim().slice(0, 200) || null
-      : (base?.gbpLocationTitle ?? null);
-
   return {
     name: name.slice(0, 120),
     websiteUrl,
     faviconUrl,
     gscProperty,
     gaPropertyId,
-    gbpLocation,
-    gbpLocationTitle,
     asanaProjectGid: (input.asanaProjectGid ?? base?.asanaProjectGid ?? "").trim(),
     asanaProjectName: (input.asanaProjectName ?? base?.asanaProjectName ?? "").trim(),
   };
 }
 
+/** The project's SerpApi key, for server-side calls only. */
+export async function serpKeyFor(projectId: number): Promise<string | null> {
+  const row = (await db.prepare("SELECT serpapi_key FROM projects WHERE id = ?").get(projectId)) as
+    | { serpapi_key: string | null }
+    | undefined;
+  return row?.serpapi_key || null;
+}
+
+function cleanMapsUrl(input: ProjectInput): string | undefined {
+  if (input.mapsUrl === undefined) return undefined;
+  if (!input.mapsUrl.trim()) return "";
+  const url = normalizeMapsUrl(input.mapsUrl);
+  if (!url) throw new ProjectValidationError("That isn't a Google Maps link.");
+  return url;
+}
+
+/** Saves the Maps link and SerpApi key. A new link clears the resolved place so it is looked up again. */
+async function saveReviewSource(id: number, mapsUrl: string | undefined, input: ProjectInput, base?: Project) {
+  if (mapsUrl !== undefined && mapsUrl !== (base?.mapsUrl ?? "")) {
+    await db
+      .prepare("UPDATE projects SET maps_url = ?, gbp_location = NULL, gbp_location_title = NULL WHERE id = ?")
+      .run(mapsUrl, id);
+  }
+  if (input.serpApiKey !== undefined) {
+    await db.prepare("UPDATE projects SET serpapi_key = ? WHERE id = ?").run(input.serpApiKey.trim() || null, id);
+  }
+}
+
 export async function createProject(userId: number, input: ProjectInput): Promise<Project> {
+  const mapsUrl = cleanMapsUrl(input);
   const c = await clean(userId, input);
   const now = Date.now();
   const res = await db
     .prepare(
       `INSERT INTO projects (user_id, name, website_url, favicon_url, gsc_property, ga_property_id,
-                             gbp_location, gbp_location_title,
                              asana_project_gid, asana_project_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .run(
       userId,
@@ -133,14 +154,14 @@ export async function createProject(userId: number, input: ProjectInput): Promis
       c.faviconUrl,
       c.gscProperty,
       c.gaPropertyId,
-      c.gbpLocation,
-      c.gbpLocationTitle,
       c.asanaProjectGid,
       c.asanaProjectName,
       now,
       now,
     );
-  return (await getProject(userId, Number(res.rows[0].id)))!;
+  const id = Number(res.rows[0].id);
+  await saveReviewSource(id, mapsUrl, input);
+  return (await getProject(userId, id))!;
 }
 
 export async function updateProject(
@@ -150,12 +171,12 @@ export async function updateProject(
 ): Promise<Project | null> {
   const base = await getProject(userId, id);
   if (!base) return null;
+  const mapsUrl = cleanMapsUrl(input);
   const c = await clean(userId, input, base);
   await db
     .prepare(
       `UPDATE projects SET name = ?, website_url = ?, favicon_url = ?, gsc_property = ?,
-              ga_property_id = ?, gbp_location = ?, gbp_location_title = ?,
-              asana_project_gid = ?, asana_project_name = ?, updated_at = ?
+              ga_property_id = ?, asana_project_gid = ?, asana_project_name = ?, updated_at = ?
         WHERE user_id = ? AND id = ?`,
     )
     .run(
@@ -164,14 +185,13 @@ export async function updateProject(
       c.faviconUrl,
       c.gscProperty,
       c.gaPropertyId,
-      c.gbpLocation,
-      c.gbpLocationTitle,
       c.asanaProjectGid,
       c.asanaProjectName,
       Date.now(),
       userId,
       id,
     );
+  await saveReviewSource(id, mapsUrl, input, base);
   return getProject(userId, id);
 }
 

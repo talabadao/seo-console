@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { getProject } from "@/lib/projects";
-import { classifyPending, type ReviewProject } from "@/lib/reviews";
+import { reviewContext } from "@/lib/reviewContext";
+import { classifyPending } from "@/lib/reviews";
 
 export const maxDuration = 300;
 
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as { projectId?: number };
-  const project = await getProject(user.id, Number(body.projectId));
-  if (!project?.gbpLocation) return NextResponse.json({ error: "no location linked" }, { status: 400 });
-  return NextResponse.json(await classifyPending(project as ReviewProject, 170_000));
+  const ctx = await reviewContext(user.id, Number(body.projectId));
+  if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
+  return NextResponse.json(await classifyPending(ctx.project, 170_000));
 }

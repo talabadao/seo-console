@@ -480,9 +480,9 @@ export function Dashboard({
             project={project.name}
             onEdit={() => setProjectView(project.id)}
           />
-        ) : tab === "reviews" && !project.gbpLocation ? (
+        ) : tab === "reviews" && !(project.mapsUrl && project.hasSerpKey) ? (
           <MissingAsset
-            asset="Google Business Profile location"
+            asset="Google Maps link and SerpApi key"
             project={project.name}
             onEdit={() => setProjectView(project.id)}
           />
@@ -490,7 +490,7 @@ export function Dashboard({
           <>
             {tab === "reviews" && (
               <Reviews
-                key={`${project.id}:${project.gbpLocation}`}
+                key={`${project.id}:${project.mapsUrl}`}
                 projectId={project.id}
                 projectName={project.name}
                 onEditProject={() => setProjectView(project.id)}

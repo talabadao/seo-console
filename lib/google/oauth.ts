@@ -4,7 +4,6 @@ import type { UserRow } from "@/lib/session";
 
 export const INDEXING_SCOPE = "https://www.googleapis.com/auth/indexing";
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
-export const BUSINESS_SCOPE = "https://www.googleapis.com/auth/business.manage";
 
 export const SCOPES = [
   "openid",
@@ -17,9 +16,6 @@ export const SCOPES = [
   INDEXING_SCOPE,
   // Read GA4 properties (Admin API) + reports (Data API).
   ANALYTICS_SCOPE,
-  // Read Business Profile locations and their reviews. Google offers no
-  // read-only variant of this scope; the console only ever reads with it.
-  BUSINESS_SCOPE,
 ];
 
 /** Whether a stored space-separated scope string includes a given scope. */
@@ -29,7 +25,6 @@ export function hasScope(scopes: string | null | undefined, scope: string): bool
 
 export const hasIndexingScope = (s: string | null | undefined) => hasScope(s, INDEXING_SCOPE);
 export const hasAnalyticsScope = (s: string | null | undefined) => hasScope(s, ANALYTICS_SCOPE);
-export const hasBusinessScope = (s: string | null | undefined) => hasScope(s, BUSINESS_SCOPE);
 
 export function oauthClient() {
   return new OAuth2Client({
