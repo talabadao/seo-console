@@ -20,6 +20,9 @@ export interface ProjectInput {
   faviconUrl?: string;
   gscProperty?: string | null;
   gaPropertyId?: string | null;
+  /** Business Profile location path ("accounts/…/locations/…") and its display name. */
+  gbpLocation?: string | null;
+  gbpLocationTitle?: string | null;
   asanaProjectGid?: string;
   asanaProjectName?: string;
 }
@@ -88,12 +91,26 @@ async function clean(userId: number, input: ProjectInput, base?: Project) {
     if (!owns) throw new ProjectValidationError("That GA4 property isn't on this account.");
   }
 
+  // Access to the location is enforced by Google when its reviews are read.
+  const gbpLocation =
+    input.gbpLocation !== undefined ? input.gbpLocation || null : (base?.gbpLocation ?? null);
+  if (gbpLocation && !/^accounts\/[\w-]+\/locations\/[\w-]+$/.test(gbpLocation)) {
+    throw new ProjectValidationError("That Business Profile location isn't valid.");
+  }
+  const gbpLocationTitle = !gbpLocation
+    ? null
+    : input.gbpLocationTitle !== undefined
+      ? (input.gbpLocationTitle ?? "").trim().slice(0, 200) || null
+      : (base?.gbpLocationTitle ?? null);
+
   return {
     name: name.slice(0, 120),
     websiteUrl,
     faviconUrl,
     gscProperty,
     gaPropertyId,
+    gbpLocation,
+    gbpLocationTitle,
     asanaProjectGid: (input.asanaProjectGid ?? base?.asanaProjectGid ?? "").trim(),
     asanaProjectName: (input.asanaProjectName ?? base?.asanaProjectName ?? "").trim(),
   };
@@ -105,8 +122,9 @@ export async function createProject(userId: number, input: ProjectInput): Promis
   const res = await db
     .prepare(
       `INSERT INTO projects (user_id, name, website_url, favicon_url, gsc_property, ga_property_id,
+                             gbp_location, gbp_location_title,
                              asana_project_gid, asana_project_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .run(
       userId,
@@ -115,6 +133,8 @@ export async function createProject(userId: number, input: ProjectInput): Promis
       c.faviconUrl,
       c.gscProperty,
       c.gaPropertyId,
+      c.gbpLocation,
+      c.gbpLocationTitle,
       c.asanaProjectGid,
       c.asanaProjectName,
       now,
@@ -134,7 +154,8 @@ export async function updateProject(
   await db
     .prepare(
       `UPDATE projects SET name = ?, website_url = ?, favicon_url = ?, gsc_property = ?,
-              ga_property_id = ?, asana_project_gid = ?, asana_project_name = ?, updated_at = ?
+              ga_property_id = ?, gbp_location = ?, gbp_location_title = ?,
+              asana_project_gid = ?, asana_project_name = ?, updated_at = ?
         WHERE user_id = ? AND id = ?`,
     )
     .run(
@@ -143,6 +164,8 @@ export async function updateProject(
       c.faviconUrl,
       c.gscProperty,
       c.gaPropertyId,
+      c.gbpLocation,
+      c.gbpLocationTitle,
       c.asanaProjectGid,
       c.asanaProjectName,
       Date.now(),

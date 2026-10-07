@@ -14,6 +14,7 @@
   --position: #f9ab00;
   --good: #188038;
   --bad: #d93025;
+  --neutral-soft: #c4c9d0;
   --series-a: #4285f4;
   --series-b: #e8710a;
 }
@@ -33,6 +34,7 @@
     --position: #ffca28;
     --good: #4ade80;
     --bad: #f87171;
+    --neutral-soft: #4a5361;
     --series-a: #4c8dff;
     --series-b: #c96a1b;
   }
@@ -52,6 +54,7 @@
   --position: #ffca28;
   --good: #4ade80;
   --bad: #f87171;
+  --neutral-soft: #4a5361;
   --series-a: #4c8dff;
   --series-b: #c96a1b;
 }

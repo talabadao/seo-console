@@ -13,6 +13,20 @@ interface GaProperty {
   accountName: string | null;
 }
 
+interface GbpLocation {
+  name: string;
+  title: string;
+  address: string;
+  websiteUri: string;
+}
+
+/** Business Profile locations for the form, plus why the list may be empty. */
+interface GbpList {
+  locations: GbpLocation[];
+  needsReconnect?: boolean;
+  error?: string;
+}
+
 interface KpiConfig {
   yearMonth: string;
   trafficOrganicTarget: number;
@@ -179,6 +193,7 @@ export function ProjectManager({
 }) {
   const [view, setView] = useState<ProjectView>(initialView);
   const [gaProps, setGaProps] = useState<GaProperty[]>([]);
+  const [gbp, setGbp] = useState<GbpList>({ locations: [] });
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -188,6 +203,12 @@ export function ProjectManager({
       .then((r) => r.json())
       .then((j: { properties?: GaProperty[] }) => {
         if (!ignore) setGaProps(j.properties ?? []);
+      })
+      .catch(() => {});
+    fetch("/api/reviews/locations")
+      .then((r) => r.json())
+      .then((j: GbpList) => {
+        if (!ignore) setGbp({ ...j, locations: j.locations ?? [] });
       })
       .catch(() => {});
     return () => {
@@ -241,6 +262,9 @@ export function ProjectManager({
                       {[
                         p.gscProperty ? `Search Console: ${p.gscProperty}` : "No Search Console",
                         p.gaPropertyId ? `GA4: ${gaName(p.gaPropertyId)}` : "No GA4",
+                        p.gbpLocation
+                          ? `Business Profile: ${p.gbpLocationTitle ?? "linked"}`
+                          : "No Business Profile",
                       ].join(" · ")}
                     </div>
                   </div>
@@ -293,6 +317,7 @@ export function ProjectManager({
             project={editing}
             gscProperties={gscProperties}
             gaProps={gaProps}
+            gbp={gbp}
             onCancel={() => (projects.length ? setView("list") : onClose())}
             onSaved={async (id) => {
               await onChanged(id);
@@ -311,12 +336,14 @@ function ProjectForm({
   project,
   gscProperties,
   gaProps,
+  gbp,
   onCancel,
   onSaved,
 }: {
   project?: Project;
   gscProperties: string[];
   gaProps: GaProperty[];
+  gbp: GbpList;
   onCancel: () => void;
   onSaved: (id: number) => Promise<void> | void;
 }) {
@@ -325,6 +352,7 @@ function ProjectForm({
   const [faviconUrl, setFaviconUrl] = useState(project?.faviconUrl ?? "");
   const [gscProperty, setGscProperty] = useState(project?.gscProperty ?? "");
   const [gaPropertyId, setGaPropertyId] = useState(project?.gaPropertyId ?? "");
+  const [gbpLocation, setGbpLocation] = useState(project?.gbpLocation ?? "");
   const [asanaProjectGid, setAsanaProjectGid] = useState(project?.asanaProjectGid ?? "");
   const [asanaProjectName, setAsanaProjectName] = useState(project?.asanaProjectName ?? "");
   // Fields the user has set by hand stop following the website URL.
@@ -333,6 +361,7 @@ function ProjectForm({
     favicon: Boolean(project),
     gsc: Boolean(project?.gscProperty),
     ga: Boolean(project?.gaPropertyId),
+    gbp: Boolean(project?.gbpLocation),
   });
 
   const [kpi, setKpi] = useState<KpiConfig | null>(null);
@@ -350,7 +379,23 @@ function ProjectForm({
     if (!touched.favicon) setFaviconUrl(faviconFor(h));
     if (!touched.gsc) setGscProperty(matchGsc(h, gscProperties) ?? "");
     if (!touched.ga) setGaPropertyId(matchGa(h, ga) ?? "");
+    if (!touched.gbp) setGbpLocation(matchGbp(h));
   }
+
+  /** The Business Profile whose listed website is on this host. */
+  function matchGbp(h: string): string {
+    const bare = (x: string) => x.replace(/^www\./, "");
+    return gbp.locations.find((l) => l.websiteUri && bare(hostOf(l.websiteUri)) === bare(h))?.name ?? "";
+  }
+
+  // The linked location stays selectable even when the list couldn't be loaded.
+  const gbpOptions = [
+    { value: "", label: "None" },
+    ...gbp.locations.map((l) => ({ value: l.name, label: l.title, sublabel: l.address || undefined })),
+    ...(project?.gbpLocation && !gbp.locations.some((l) => l.name === project.gbpLocation)
+      ? [{ value: project.gbpLocation, label: project.gbpLocationTitle ?? "Linked location" }]
+      : []),
+  ];
 
   // GA4 properties load after the form opens; retry the GA match once they arrive.
   useEffect(() => {
@@ -359,6 +404,12 @@ function ProjectForm({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gaProps]);
+
+  // Same for Business Profile locations.
+  useEffect(() => {
+    if (!touched.gbp && !gbpLocation && host && gbp.locations.length) setGbpLocation(matchGbp(host));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gbp.locations]);
 
   // This month's KPI targets for the linked GA4 property.
   useEffect(() => {
@@ -396,6 +447,11 @@ function ProjectForm({
           faviconUrl,
           gscProperty: gscProperty || null,
           gaPropertyId: gaPropertyId || null,
+          gbpLocation: gbpLocation || null,
+          gbpLocationTitle:
+            gbp.locations.find((l) => l.name === gbpLocation)?.title ??
+            (gbpLocation === project?.gbpLocation ? project?.gbpLocationTitle : null) ??
+            null,
           asanaProjectGid,
           asanaProjectName,
         }),
@@ -526,9 +582,33 @@ function ProjectForm({
             />
           </div>
         </div>
+        <div className="mt-4">
+          <span className={label}>Google Business Profile location</span>
+          <SearchableSelect
+            className="mt-1"
+            value={gbpLocation}
+            onChange={(v) => {
+              setGbpLocation(v);
+              setTouched((t) => ({ ...t, gbp: true }));
+            }}
+            placeholder="None"
+            options={gbpOptions}
+          />
+          {gbp.needsReconnect ? (
+            <p className="mt-1 text-xs text-muted">
+              To list your Business Profiles,{" "}
+              <a href="/api/auth/google" className="text-accent underline">
+                reconnect Google
+              </a>{" "}
+              and approve the Business Profile permission.
+            </p>
+          ) : gbp.error ? (
+            <p className="mt-1 text-xs text-bad">{gbp.error}</p>
+          ) : null}
+        </div>
         <p className="mt-2 text-xs text-muted">
           Performance, Opportunities and Indexing use the Search Console property; Analytics and
-          the Weekly Report use the GA4 property.
+          the Weekly Report use the GA4 property; Reviews uses the Business Profile location.
         </p>
       </section>
 

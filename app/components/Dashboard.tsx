@@ -11,6 +11,7 @@ import { Opportunities } from "./Opportunities";
 import { Analytics } from "./Analytics";
 import { WeeklyReport } from "./WeeklyReport";
 import { PageSpeed } from "./PageSpeed";
+import { Reviews } from "./Reviews";
 import { SettingsPanel } from "./SettingsPanel";
 import { GoogleReconnectBanner } from "./GoogleReconnect";
 import { ProjectManager, ProjectPicker, type Project, type ProjectView } from "./ProjectManager";
@@ -119,7 +120,8 @@ type Tab =
   | "analytics"
   | "indexing"
   | "weekly-report"
-  | "pagespeed";
+  | "pagespeed"
+  | "reviews";
 
 // Tabs fed by the project's Search Console property, and by its GA4 property.
 const GSC_TABS: Tab[] = ["performance", "opportunities", "indexing"];
@@ -420,6 +422,7 @@ export function Dashboard({
               ["weekly-report", "Weekly Report"],
               ["indexing", "Indexing"],
               ["pagespeed", "Page Speed"],
+              ["reviews", "Reviews"],
             ] as const
           ).map(([t, label]) => (
             <button
@@ -477,8 +480,22 @@ export function Dashboard({
             project={project.name}
             onEdit={() => setProjectView(project.id)}
           />
+        ) : tab === "reviews" && !project.gbpLocation ? (
+          <MissingAsset
+            asset="Google Business Profile location"
+            project={project.name}
+            onEdit={() => setProjectView(project.id)}
+          />
         ) : (
           <>
+            {tab === "reviews" && (
+              <Reviews
+                key={`${project.id}:${project.gbpLocation}`}
+                projectId={project.id}
+                projectName={project.name}
+                onEditProject={() => setProjectView(project.id)}
+              />
+            )}
             {tab === "indexing" && (
               <Indexing property={property} neverSynced={!currentSite?.lastSync?.finished_at} />
             )}

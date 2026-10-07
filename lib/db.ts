@@ -361,6 +361,41 @@ async function migrate(): Promise<void> {
       error          TEXT,
       UNIQUE(page_id, strategy, run_date)
     );
+
+    -- Google Business Profile reviews for a project's linked location, with
+    -- the classifier's output (sentiment, English text, praise/criticism
+    -- points). classified_at is NULL until a review has been analysed.
+    CREATE TABLE IF NOT EXISTS gbp_reviews (
+      id            BIGSERIAL PRIMARY KEY,
+      project_id    BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      location      TEXT NOT NULL,
+      review_id     TEXT NOT NULL,
+      reviewer_name TEXT,
+      star          INTEGER NOT NULL DEFAULT 0,
+      comment       TEXT NOT NULL DEFAULT '',
+      create_time   BIGINT NOT NULL DEFAULT 0,
+      update_time   BIGINT NOT NULL DEFAULT 0,
+      reply_comment TEXT,
+      reply_time    BIGINT,
+      sentiment     TEXT,
+      comment_en    TEXT,
+      points_json   TEXT,
+      classified_at BIGINT,
+      UNIQUE(project_id, location, review_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gbp_reviews_time ON gbp_reviews(project_id, location, create_time DESC);
+
+    -- Per-location sync status and the fixed aspect list reviews are tagged with.
+    CREATE TABLE IF NOT EXISTS gbp_state (
+      project_id     BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      location       TEXT NOT NULL,
+      average_rating DOUBLE PRECISION,
+      total_reviews  INTEGER,
+      synced_at      BIGINT,
+      sync_error     TEXT,
+      aspects_json   TEXT,
+      PRIMARY KEY (project_id, location)
+    );
   `);
 
   // Additive safety net for columns added after a table's first release.
