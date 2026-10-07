@@ -1,5 +1,8 @@
 # SEO Console (MVP)
 
+<!-- workflow-check: verifying GitHub -> Vercel auto-deploy pipeline, safe to remove -->
+
+
 A cleaner, more customizable view of **Google Search Console** performance data,
 with **Bing Webmaster Tools** support and a **URL Inspection** tool for technical SEO.
 Runs locally, stores data in a local SQLite file, and builds daily history over time.
