@@ -92,6 +92,14 @@ export async function accessTokenFor(user: UserRow): Promise<string> {
         .run(now, user.id);
       throw new GoogleReauthRequiredError();
     }
+    // Google rejected the app itself, not the user: the client ID and secret
+    // this deployment is configured with don't belong together (or the client
+    // or secret was deleted). Signing in again can't fix that.
+    if (code === "invalid_client" || /invalid_client/i.test(msg)) {
+      throw new Error(
+        "Google rejected this app's OAuth credentials (invalid_client). GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the hosting settings must come from the same, still-existing OAuth client; fix them and redeploy.",
+      );
+    }
     throw e;
   }
   const accessToken = credentials.access_token!;
