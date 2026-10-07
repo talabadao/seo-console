@@ -36,7 +36,8 @@ const PACE_LABEL: Record<KpiCardData["pace"], string> = {
   "off-track": "Off track",
 };
 
-export function WeeklyReport() {
+/** `fixedPropertyId` pins the GA4 property (the selected project's) and hides the picker. */
+export function WeeklyReport({ fixedPropertyId }: { fixedPropertyId?: string } = {}) {
   const [props, setProps] = useState<GaProperty[]>([]);
   const [propertyId, setPropertyId] = useState("");
   const [sub, setSub] = useState<"overview" | "insights">("overview");
@@ -58,11 +59,13 @@ export function WeeklyReport() {
     }
     setProps(j.properties ?? []);
     setPropertyId((cur) =>
-      cur && (j.properties ?? []).some((p: GaProperty) => p.propertyId === cur)
-        ? cur
-        : (j.properties?.[0]?.propertyId ?? ""),
+      fixedPropertyId
+        ? fixedPropertyId
+        : cur && (j.properties ?? []).some((p: GaProperty) => p.propertyId === cur)
+          ? cur
+          : (j.properties?.[0]?.propertyId ?? ""),
     );
-  }, []);
+  }, [fixedPropertyId]);
 
   useEffect(() => {
     loadProps();
@@ -112,17 +115,19 @@ export function WeeklyReport() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <SearchableSelect
-          value={propertyId}
-          onChange={setPropertyId}
-          className="max-w-xs"
-          placeholder="No GA4 properties"
-          options={props.map((p) => ({
-            value: p.propertyId,
-            label: p.displayName,
-            sublabel: p.accountName || undefined,
-          }))}
-        />
+        {!fixedPropertyId && (
+          <SearchableSelect
+            value={propertyId}
+            onChange={setPropertyId}
+            className="max-w-xs"
+            placeholder="No GA4 properties"
+            options={props.map((p) => ({
+              value: p.propertyId,
+              label: p.displayName,
+              sublabel: p.accountName || undefined,
+            }))}
+          />
+        )}
 
         <div className="flex rounded-md border p-0.5 text-sm">
           {(

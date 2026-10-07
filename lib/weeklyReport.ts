@@ -8,6 +8,7 @@ import {
   subDays,
 } from "date-fns";
 import { db } from "@/lib/db";
+import { projectForGa } from "@/lib/projects";
 import { resolveComparison, enumerateBuckets, type Range } from "@/lib/dateRanges";
 import {
   classifyTraffic,
@@ -352,7 +353,14 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
         asana_status_title: string | null;
       }
     | undefined;
-  if (!row) return defaultConfig(yearMonth);
+  // The Asana target lives on the project this GA4 property belongs to; the
+  // per-month columns are only the fallback for a property with no project.
+  const project = await projectForGa(userId, propertyId);
+  const asana = (gid: string, title: string) => ({
+    asanaProjectGid: project?.asanaProjectGid || gid,
+    asanaStatusTitle: project?.asanaProjectName || title,
+  });
+  if (!row) return { ...defaultConfig(yearMonth), ...asana("", "") };
   let leadEvents: string[] = [];
   try {
     const parsed = JSON.parse(row.lead_events);
@@ -367,8 +375,7 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
     leadOrganicTarget: Number(row.lead_organic_target) || 0,
     leadAiTarget: Number(row.lead_ai_target) || 0,
     leadEvents,
-    asanaProjectGid: row.asana_project_gid ?? "",
-    asanaStatusTitle: row.asana_status_title ?? "",
+    ...asana(row.asana_project_gid ?? "", row.asana_status_title ?? ""),
   };
 }
 
@@ -403,4 +410,11 @@ export async function saveConfig(userId: number, propertyId: string, cfg: KpiCon
       cfg.asanaStatusTitle.trim(),
       Date.now(),
     );
+  // Keep the owning project's Asana target in step with what was just saved.
+  await db
+    .prepare(
+      `UPDATE projects SET asana_project_gid = ?, asana_project_name = ?, updated_at = ?
+        WHERE user_id = ? AND ga_property_id = ?`,
+    )
+    .run(cfg.asanaProjectGid.trim(), cfg.asanaStatusTitle.trim(), Date.now(), userId, propertyId);
 }

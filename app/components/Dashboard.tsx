@@ -12,7 +12,7 @@ import { Analytics } from "./Analytics";
 import { WeeklyReport } from "./WeeklyReport";
 import { SettingsPanel } from "./SettingsPanel";
 import { GoogleReconnectBanner } from "./GoogleReconnect";
-import { SearchableSelect } from "./SearchableSelect";
+import { ProjectManager, ProjectPicker, type Project, type ProjectView } from "./ProjectManager";
 import { METRICS, METRIC_META, type MetricKey, delta, deltaLabel, fmt } from "./format";
 import {
   DEFAULT_FILTER_CONFIG,
@@ -101,6 +101,8 @@ const SEARCH_TYPES = [
 
 // Computed once at module load. Only used as the seed for the "custom" preset —
 // every other preset is resolved from `preset` on each request, server-side.
+const PROJECT_KEY = "seo-project";
+
 const INITIAL_RANGE: RangeValue = {
   preset: "28d",
   start: format(new Date(Date.now() - 28 * 86400000), "yyyy-MM-dd"),
@@ -110,6 +112,36 @@ const INITIAL_RANGE: RangeValue = {
   matchWeekdays: false,
 };
 
+type Tab = "performance" | "opportunities" | "analytics" | "indexing" | "weekly-report";
+
+// Tabs fed by the project's Search Console property; the rest use its GA4 property.
+const GSC_TABS: Tab[] = ["performance", "opportunities", "indexing"];
+
+function MissingAsset({
+  asset,
+  project,
+  onEdit,
+}: {
+  asset: string;
+  project: string;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="rounded-xl border bg-surface p-6 text-sm">
+      <p className="font-medium">
+        {project} has no {asset} linked.
+      </p>
+      <p className="mt-1 text-muted">Link one in the project settings to see this tab.</p>
+      <button
+        onClick={onEdit}
+        className="mt-3 rounded-md bg-accent px-3 py-1.5 font-medium text-white"
+      >
+        Edit project
+      </button>
+    </div>
+  );
+}
+
 export function Dashboard({
   user,
   bingConnected,
@@ -118,7 +150,10 @@ export function Dashboard({
   bingConnected: boolean;
 }) {
   const [sites, setSites] = useState<SiteMeta[]>([]);
-  const [property, setProperty] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [projectView, setProjectView] = useState<ProjectView | null>(null);
   const [range, setRange] = useState<RangeValue>(INITIAL_RANGE);
   const [searchType, setSearchType] = useState("web");
   const [dimension, setDimension] = useState("query");
@@ -127,9 +162,7 @@ export function Dashboard({
   const [data, setData] = useState<PerfResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [tab, setTab] = useState<
-    "performance" | "opportunities" | "analytics" | "indexing" | "weekly-report"
-  >("performance");
+  const [tab, setTab] = useState<Tab>("performance");
   const [showSettings, setShowSettings] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [needsReconnect, setNeedsReconnect] = useState(false);
@@ -167,16 +200,46 @@ export function Dashboard({
     if (!res.ok) return;
     const json = await res.json();
     if (json.needsReconnect) setNeedsReconnect(true);
-    const list: SiteMeta[] = json.sites ?? [];
-    setSites(list);
-    setProperty((cur) =>
-      cur && list.some((s) => s.property === cur) ? cur : (list[0]?.property ?? ""),
-    );
+    setSites(json.sites ?? []);
   }, []);
 
+  // `selectId` switches to that project (after creating/editing one); otherwise
+  // the current selection is kept, falling back to the one used last time.
+  const loadProjects = useCallback(async (selectId?: number) => {
+    const res = await fetch("/api/projects");
+    if (!res.ok) return;
+    const list: Project[] = (await res.json()).projects ?? [];
+    setProjects(list);
+    setProjectsLoaded(true);
+    setProjectId((cur) => {
+      let stored: number | null = null;
+      try {
+        stored = Number(localStorage.getItem(PROJECT_KEY)) || null;
+      } catch {}
+      const pick = [selectId, cur, stored].find((id) => id != null && list.some((p) => p.id === id));
+      return pick ?? list[0]?.id ?? null;
+    });
+  }, []);
+
+  // Sites first: the one-time project seeding on the server pairs projects
+  // with the Search Console properties that request has just refreshed.
   useEffect(() => {
-    loadSites();
-  }, [loadSites]);
+    (async () => {
+      await loadSites();
+      await loadProjects();
+    })();
+  }, [loadSites, loadProjects]);
+
+  useEffect(() => {
+    if (projectId == null) return;
+    try {
+      localStorage.setItem(PROJECT_KEY, String(projectId));
+    } catch {}
+  }, [projectId]);
+
+  const project = projects.find((p) => p.id === projectId) ?? null;
+  const property = project?.gscProperty ?? "";
+  const gaPropertyId = project?.gaPropertyId ?? "";
 
   // Only the "view" identity is sent to the server — property, date range,
   // search type, dimension, and the cross-dimension page/query scoping (a real
@@ -288,16 +351,12 @@ export function Dashboard({
         <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-3 px-5 py-3">
           <span className="text-base font-semibold">SEO Console</span>
 
-          <SearchableSelect
-            value={property}
-            onChange={setProperty}
-            className="w-64"
-            placeholder="No properties"
-            options={sites.map((s) => ({
-              value: s.property,
-              label: s.property,
-              sublabel: s.source === "bing" ? "Bing" : undefined,
-            }))}
+          <ProjectPicker
+            projects={projects}
+            value={projectId}
+            onChange={setProjectId}
+            onManage={() => setProjectView("list")}
+            onNew={() => setProjectView("new")}
           />
 
           <select
@@ -381,20 +440,48 @@ export function Dashboard({
 
         {needsReconnect ? (
           <GoogleReconnectBanner detail="Google stopped accepting this app's Search Console access — sign in again to reconnect Performance, Opportunities, and Indexing." />
+        ) : !project ? (
+          projectsLoaded && (
+            <div className="mx-auto max-w-lg rounded-2xl border bg-surface p-8 text-center">
+              <h2 className="text-lg font-semibold">Create your first project</h2>
+              <p className="mt-2 text-sm text-muted">
+                A project groups one brand&apos;s website with its Search Console and Google
+                Analytics properties, so every tab shows that brand&apos;s data together.
+              </p>
+              <button
+                onClick={() => setProjectView("new")}
+                className="mt-5 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white"
+              >
+                New project
+              </button>
+            </div>
+          )
+        ) : GSC_TABS.includes(tab) && !property ? (
+          <MissingAsset
+            asset="Search Console property"
+            project={project.name}
+            onEdit={() => setProjectView(project.id)}
+          />
+        ) : !GSC_TABS.includes(tab) && !gaPropertyId ? (
+          <MissingAsset
+            asset="Google Analytics (GA4) property"
+            project={project.name}
+            onEdit={() => setProjectView(project.id)}
+          />
         ) : (
           <>
             {tab === "indexing" && (
               <Indexing property={property} neverSynced={!currentSite?.lastSync?.finished_at} />
             )}
-            {tab === "analytics" && <Analytics />}
-            {tab === "weekly-report" && <WeeklyReport />}
+            {tab === "analytics" && <Analytics key={gaPropertyId} fixedPropertyId={gaPropertyId} />}
+            {tab === "weekly-report" && <WeeklyReport key={gaPropertyId} fixedPropertyId={gaPropertyId} />}
             {tab === "opportunities" && (
               <Opportunities property={property} searchType={searchType} />
             )}
           </>
         )}
 
-        {!needsReconnect && tab === "performance" && (
+        {!needsReconnect && property && tab === "performance" && (
           <>
             <div className="mb-5 flex flex-wrap items-center gap-3">
               <DateRangePicker
@@ -514,6 +601,16 @@ export function Dashboard({
           </>
         )}
       </main>
+
+      {projectView != null && (
+        <ProjectManager
+          projects={projects}
+          gscProperties={sites.filter((s) => s.source === "google").map((s) => s.property)}
+          initialView={projectView}
+          onClose={() => setProjectView(null)}
+          onChanged={loadProjects}
+        />
+      )}
 
       {showSettings && (
         <SettingsPanel

@@ -306,6 +306,27 @@ async function migrate(): Promise<void> {
       updated_at              BIGINT NOT NULL,
       UNIQUE(user_id, property_id, year_month)
     );
+
+    -- A project groups the assets that belong to one brand/website: a Search
+    -- Console property, a GA4 property and a Business Profile location, plus
+    -- its display details and Asana target. Everything in the console is
+    -- viewed through the selected project.
+    CREATE TABLE IF NOT EXISTS projects (
+      id                  BIGSERIAL PRIMARY KEY,
+      user_id             BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name                TEXT NOT NULL,
+      website_url         TEXT NOT NULL DEFAULT '',
+      favicon_url         TEXT NOT NULL DEFAULT '',
+      gsc_property        TEXT,
+      ga_property_id      TEXT,
+      gbp_location        TEXT,
+      gbp_location_title  TEXT,
+      asana_project_gid   TEXT NOT NULL DEFAULT '',
+      asana_project_name  TEXT NOT NULL DEFAULT '',
+      created_at          BIGINT NOT NULL,
+      updated_at          BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
   `);
 
   // Additive safety net for columns added after a table's first release.
@@ -317,6 +338,7 @@ async function migrate(): Promise<void> {
   await ensureColumn(sql, "weekly_kpi_config", "asana_project_gid", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn(sql, "weekly_kpi_config", "asana_status_title", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn(sql, "ga_properties", "time_zone", "TEXT");
+  await ensureColumn(sql, "users", "projects_seeded", "BOOLEAN NOT NULL DEFAULT false");
 
   // longtailMinWords' configuration UI was removed in favor of a fixed
   // default — correct any site still sitting at the old default of 4.
