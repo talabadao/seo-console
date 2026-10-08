@@ -17,6 +17,7 @@ import {
   type TaskBuckets,
 } from "./insights";
 import { SearchableSelect } from "./SearchableSelect";
+import { useSubTab } from "./useSubTab";
 
 const STATUS_OPTIONS: { value: "on_track" | "at_risk" | "off_track" | "on_hold"; label: string }[] = [
   { value: "on_track", label: "On track" },
@@ -37,10 +38,19 @@ const PACE_LABEL: Record<KpiCardData["pace"], string> = {
 };
 
 /** `fixedPropertyId` pins the GA4 property (the selected project's) and hides the picker. */
-export function WeeklyReport({ fixedPropertyId }: { fixedPropertyId?: string } = {}) {
+export function WeeklyReport({
+  fixedPropertyId,
+  sub: subSlug,
+  onSub,
+}: {
+  fixedPropertyId?: string;
+  /** Sub-tab segment from the page address, and a callback to update it. */
+  sub?: string;
+  onSub?: (slug: string) => void;
+} = {}) {
   const [props, setProps] = useState<GaProperty[]>([]);
   const [propertyId, setPropertyId] = useState("");
-  const [sub, setSub] = useState<"overview" | "insights">("overview");
+  const [sub, setSub] = useSubTab(["overview", "insights"] as const, "overview", subSlug, onSub);
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);

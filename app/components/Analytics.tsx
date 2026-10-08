@@ -18,6 +18,7 @@ import { downloadCsv } from "./csv";
 import { countryByName, flagSrc } from "@/lib/geo";
 import { ChannelSelect } from "./ChannelSelect";
 import { SearchableSelect } from "./SearchableSelect";
+import { useSubTab } from "./useSubTab";
 import { LandingPagesHeatmap } from "./LandingPagesHeatmap";
 
 interface GaProperty {
@@ -79,11 +80,25 @@ function money(n: number, currency: string | null): string {
 }
 
 /** `fixedPropertyId` pins the GA4 property (the selected project's) and hides the picker. */
-export function Analytics({ fixedPropertyId }: { fixedPropertyId?: string } = {}) {
+export function Analytics({
+  fixedPropertyId,
+  sub: subSlug,
+  onSub,
+}: {
+  fixedPropertyId?: string;
+  /** Sub-tab segment from the page address, and a callback to update it. */
+  sub?: string;
+  onSub?: (slug: string) => void;
+} = {}) {
   const [props, setProps] = useState<GaProperty[]>([]);
   const [propertyId, setPropertyId] = useState("");
   const [range, setRange] = useState<RangeValue>(INITIAL_RANGE);
-  const [sub, setSub] = useState<"sourceMedium" | "keyEvents" | "landingPages" | "geo">("sourceMedium");
+  const [sub, setSub] = useSubTab(
+    ["sourceMedium", "keyEvents", "landingPages", "geo"] as const,
+    "sourceMedium",
+    subSlug,
+    onSub,
+  );
   const [geoDim, setGeoDim] = useState<"country" | "city">("country");
   const [trend, setTrend] = useState<"all" | "growing" | "decaying" | "new">("all");
   const [q, setQ] = useState("");

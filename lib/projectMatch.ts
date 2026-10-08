@@ -64,6 +64,24 @@ export function matchGsc(host: string, properties: string[]): string | null {
   return best?.property ?? null;
 }
 
+/** URL-safe form of a name: "KiN Hotel & Spa" → "kin-hotel-spa". */
+export function slugify(name: string): string {
+  return (
+    name
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "project"
+  );
+}
+
+/** A project's address segment: its name, plus its id when two projects share a name. */
+export function projectSlug(project: { id: number; name: string }, all: { id: number; name: string }[]): string {
+  const base = slugify(project.name);
+  return all.some((p) => p.id !== project.id && slugify(p.name) === base) ? `${base}-${project.id}` : base;
+}
+
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** GA4 property whose display name mentions the host's registrable name, if any. */

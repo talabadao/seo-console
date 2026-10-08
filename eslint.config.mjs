@@ -19,6 +19,11 @@ const eslintConfig = defineConfig([
       // Data-fetching effects (fetch on mount, refetch on dependency change)
       // legitimately flip a loading flag synchronously. Keep as a warning.
       "react-hooks/set-state-in-effect": "warn",
+      // The console is served by one catch-all page (app/[[...path]]), which
+      // makes this rule read every internal href as a page. The only plain
+      // <a> links are to /api/auth/google, an API redirect that has to be a
+      // full navigation.
+      "@next/next/no-html-link-for-pages": "off",
     },
   },
 ]);

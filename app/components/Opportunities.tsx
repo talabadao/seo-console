@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSubTab } from "./useSubTab";
 import { format } from "date-fns";
 import { DateRangePicker, type RangeValue } from "./DateRangePicker";
 import { resolveRange } from "@/lib/dateRanges";
@@ -59,11 +60,21 @@ const TABS: { id: Kind; label: string; blurb: string }[] = [
 export function Opportunities({
   property,
   searchType,
+  sub: subSlug,
+  onSub,
 }: {
   property: string;
   searchType: string;
+  /** Sub-tab segment from the page address, and a callback to update it. */
+  sub?: string;
+  onSub?: (slug: string) => void;
 }) {
-  const [kind, setKind] = useState<Kind>("cannibalization");
+  const [kind, setKind] = useSubTab<Kind>(
+    TABS.map((t) => t.id),
+    "cannibalization",
+    subSlug,
+    onSub,
+  );
   const [range, setRange] = useState<RangeValue>(INITIAL_RANGE);
   const [posFrom, setPosFrom] = useState(4);
   const [posTo, setPosTo] = useState(10);

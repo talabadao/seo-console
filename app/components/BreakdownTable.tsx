@@ -117,6 +117,7 @@ export function BreakdownTable({
   onTrend,
   onDrill,
   aiPromptMode,
+  loadQueryPages,
 }: {
   dimension: string;
   rows: BreakdownRow[];
@@ -129,7 +130,11 @@ export function BreakdownTable({
   onDrill?: (key: string) => void;
   /** Query dimension + the "AI search prompts" filter active — shows Bot/Offtopic/New labels. */
   aiPromptMode?: boolean;
+  /** Queries only: fetches each query's top-ranking URL, added to the CSV export as a column. */
+  loadQueryPages?: () => Promise<Record<string, string>>;
 }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("clicks");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
@@ -159,12 +164,28 @@ export function BreakdownTable({
     }
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     const label = DIMENSION_LABELS[dimension] ?? dimension;
+    // For queries, look up which URL ranks for each one. If that lookup fails
+    // the export still goes ahead, with the URL column left empty.
+    let pages: Record<string, string> | null = null;
+    setExportNote(null);
+    if (loadQueryPages) {
+      setExporting(true);
+      try {
+        pages = await loadQueryPages();
+      } catch {
+        pages = {};
+        setExportNote("Exported without URLs — Search Console didn't return them. Try again.");
+      } finally {
+        setExporting(false);
+      }
+    }
     downloadCsv(`${dimension}-${new Date().toISOString().slice(0, 10)}.csv`, [
-      [label, "Clicks", "Impressions", "CTR", "Position"],
+      [label, ...(pages ? ["URL"] : []), "Clicks", "Impressions", "CTR", "Position"],
       ...filtered.map((r) => [
         r.key,
+        ...(pages ? [pages[r.key] ?? ""] : []),
         r.clicks,
         r.impressions,
         (r.ctr * 100).toFixed(2) + "%",
@@ -230,10 +251,13 @@ export function BreakdownTable({
         </select>
         <button
           onClick={exportCsv}
-          className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft"
+          disabled={exporting}
+          className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
+          title={loadQueryPages ? "Includes the URL that ranks for each query" : undefined}
         >
-          Export CSV
+          {exporting ? "Preparing…" : "Export CSV"}
         </button>
+        {exportNote && <span className="text-xs text-bad">{exportNote}</span>}
       </div>
 
       <div className="max-h-[34rem] overflow-auto">

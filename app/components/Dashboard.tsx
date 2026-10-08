@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { Chart, type SeriesPoint } from "./Chart";
 import { BreakdownTable, type BreakdownRow } from "./BreakdownTable";
@@ -24,6 +24,7 @@ import {
   type FilterState,
 } from "@/lib/queryFilters";
 import { resolveComparison, resolveRange } from "@/lib/dateRanges";
+import { projectSlug } from "@/lib/projectMatch";
 
 interface SiteMeta {
   id: number;
@@ -126,6 +127,34 @@ type Tab =
 // Tabs fed by the project's Search Console property, and by its GA4 property.
 const GSC_TABS: Tab[] = ["performance", "opportunities", "indexing"];
 const GA_TABS: Tab[] = ["analytics", "weekly-report"];
+const ALL_TABS: Tab[] = [
+  "performance",
+  "opportunities",
+  "analytics",
+  "weekly-report",
+  "indexing",
+  "pagespeed",
+  "reviews",
+];
+
+/** Reads /<project>/<tab>/<sub-tab> (or just /<tab>) from an address path. */
+function parsePath(segments: string[]): { project: string | null; tab: Tab | null; sub: string } {
+  const isTab = (s: string | undefined): s is Tab => ALL_TABS.includes(s as Tab);
+  if (isTab(segments[0])) return { project: null, tab: segments[0], sub: segments[1] ?? "" };
+  return { project: segments[0] ?? null, tab: isTab(segments[1]) ? segments[1] : null, sub: segments[2] ?? "" };
+}
+
+const pathSegments = (pathname: string) =>
+  pathname
+    .split("/")
+    .filter(Boolean)
+    .map((s) => {
+      try {
+        return decodeURIComponent(s);
+      } catch {
+        return s;
+      }
+    });
 
 function MissingAsset({
   asset,
@@ -155,9 +184,12 @@ function MissingAsset({
 export function Dashboard({
   user,
   bingConnected,
+  initialPath,
 }: {
   user: { email: string; name: string | null; picture: string | null };
   bingConnected: boolean;
+  /** Address segments the page was opened on: [project, tab, sub-tab]. */
+  initialPath: string[];
 }) {
   const [sites, setSites] = useState<SiteMeta[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -172,7 +204,10 @@ export function Dashboard({
   const [data, setData] = useState<PerfResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [tab, setTab] = useState<Tab>("performance");
+  const [tab, setTab] = useState<Tab>(() => parsePath(initialPath).tab ?? "performance");
+  // Sub-tab segment of the address (empty = the tab's default section).
+  const [sub, setSub] = useState(() => parsePath(initialPath).sub);
+  const urlSynced = useRef(false);
   const [showSettings, setShowSettings] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [needsReconnect, setNeedsReconnect] = useState(false);
@@ -226,7 +261,12 @@ export function Dashboard({
       try {
         stored = Number(localStorage.getItem(PROJECT_KEY)) || null;
       } catch {}
-      const pick = [selectId, cur, stored].find((id) => id != null && list.some((p) => p.id === id));
+      // The project named in the address wins on first load, then the last one used.
+      const slug = parsePath(pathSegments(window.location.pathname)).project;
+      const fromUrl = slug ? list.find((p) => projectSlug(p, list) === slug)?.id : null;
+      const pick = [selectId, cur, fromUrl, stored].find(
+        (id) => id != null && list.some((p) => p.id === id),
+      );
       return pick ?? list[0]?.id ?? null;
     });
   }, []);
@@ -248,6 +288,34 @@ export function Dashboard({
   }, [projectId]);
 
   const project = projects.find((p) => p.id === projectId) ?? null;
+
+  // Keep the address in step with the view: /<project>/<tab>/<sub-tab>. The
+  // first sync replaces the entry the page was opened on; later changes add
+  // history entries so Back and Forward move between views.
+  useEffect(() => {
+    if (!project) return;
+    const want = `/${projectSlug(project, projects)}/${tab}${sub ? `/${sub}` : ""}`;
+    if (window.location.pathname !== want) {
+      if (urlSynced.current) window.history.pushState(null, "", want);
+      else window.history.replaceState(null, "", want + window.location.search);
+    }
+    urlSynced.current = true;
+  }, [project, projects, tab, sub]);
+
+  // Back / Forward: follow the address.
+  useEffect(() => {
+    const onPop = () => {
+      const p = parsePath(pathSegments(window.location.pathname));
+      if (p.tab) setTab(p.tab);
+      setSub(p.sub);
+      if (p.project) {
+        const match = projects.find((x) => projectSlug(x, projects) === p.project);
+        if (match) setProjectId(match.id);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [projects]);
   const property = project?.gscProperty ?? "";
   const gaPropertyId = project?.gaPropertyId ?? "";
 
@@ -307,6 +375,21 @@ export function Dashboard({
     filters.contains.trim().length > 0;
   const cardTotals = cheapFilterActive ? foldTotals(visibleRows) : data?.totals;
   const cardPrevTotals = cheapFilterActive ? foldPrevTotals(visibleRows) : data?.prevTotals;
+
+  /** For the Queries export: the URL that ranks for each query in the current view. */
+  const loadQueryPages = useCallback(async (): Promise<Record<string, string>> => {
+    const p = new URLSearchParams({
+      property,
+      start: resolved.r.start,
+      end: resolved.r.end,
+      searchType,
+    });
+    if (filterPage) p.set("filterPage", filterPage);
+    const res = await fetch(`/api/performance/query-pages?${p}`);
+    const j = await res.json();
+    if (!res.ok || j.error) throw new Error(j.error ?? "Couldn't load URLs");
+    return j.pages ?? {};
+  }, [property, resolved, searchType, filterPage]);
 
   async function runSync() {
     if (!property) return;
@@ -427,7 +510,10 @@ export function Dashboard({
           ).map(([t, label]) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => {
+                setTab(t);
+                setSub("");
+              }}
               className={`border-b-2 px-3 py-2 text-sm font-medium ${
                 tab === t
                   ? "border-accent text-accent"
@@ -499,10 +585,10 @@ export function Dashboard({
             {tab === "indexing" && (
               <Indexing property={property} neverSynced={!currentSite?.lastSync?.finished_at} />
             )}
-            {tab === "analytics" && <Analytics key={gaPropertyId} fixedPropertyId={gaPropertyId} />}
-            {tab === "weekly-report" && <WeeklyReport key={gaPropertyId} fixedPropertyId={gaPropertyId} />}
+            {tab === "analytics" && <Analytics key={gaPropertyId} fixedPropertyId={gaPropertyId} sub={sub} onSub={setSub} />}
+            {tab === "weekly-report" && <WeeklyReport key={gaPropertyId} fixedPropertyId={gaPropertyId} sub={sub} onSub={setSub} />}
             {tab === "opportunities" && (
-              <Opportunities property={property} searchType={searchType} />
+              <Opportunities property={property} searchType={searchType} sub={sub} onSub={setSub} />
             )}
             {tab === "pagespeed" && (
               <PageSpeed key={project.id} projectId={project.id} websiteUrl={project.websiteUrl} />
@@ -612,6 +698,7 @@ export function Dashboard({
                 trend={filters.trend}
                 onTrend={(t) => setFilters((f) => ({ ...f, trend: t }))}
                 aiPromptMode={dimension === "query" && filters.ai}
+                loadQueryPages={dimension === "query" ? loadQueryPages : undefined}
                 onDrill={
                   dimension === "page"
                     ? (key) => {
