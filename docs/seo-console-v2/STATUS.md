@@ -1,108 +1,113 @@
 # STATUS
 
-_Last updated: 2026-10-15 (afternoon): allowlist is now five accounts; local design review available; Preview partly configured. Nothing merged or deployed to production; no production migrations run._
+_Last updated: 2026-10-15 (evening). Dashboards redesigned (#8); Preview database connected and verified empty; three Preview variables still missing. Nothing merged or deployed to production; no production migrations run._
 
-## Review the new console now (local, mock data)
+## Review the console now (local, mock data)
 - Open http://localhost:3000/portfolio while the dev server runs on this machine.
 - It runs from branch `preview` with a git-ignored `.env.development.local` containing `V2_MOCK=1` and `V2_SHELL=1`.
-- To restart it later:
+- To restart it:
   ```powershell
   git checkout preview
   Set-Content .env.development.local "V2_MOCK=1`nV2_SHELL=1"
   npm run dev
   ```
-- Data shown:
-  - Fixture projects: Example Hotel, Sample Spa, Demo Restaurant Group.
-  - Demo screens: invented "Lumen Coast Resort (demo)" data.
-  - No database and no sign-in.
-- Mock mode needs `next dev`, and refuses to run when `VERCEL_ENV` is set, so it never reaches a deployment.
+- **Data:** 30 invented projects, every number labelled Demo. Some fixtures show the not connected, stale and error states. No database, no sign-in.
+- **Safety:** mock mode can't run on any Vercel deployment.
 
 ## Pull requests
-| PR | Branch | Base | Content | Checks |
+| PR | Branch | Base | Content | Vercel |
 |---|---|---|---|---|
-| #2 | `docs/v2-repository-audit` | `main` | Audit, plan, owner decisions, route map, roadmap, this file | Vercel ✓ |
-| #3 | `chore/v2-foundations` | `main` | **01a**: README, Vitest + tests, CSV formula fix, migration tooling (not run) | Vercel ✓ |
-| #4 | `feat/login-allowlist` | #3 | **Five-account** sign-in allowlist; impact query and smoke test (`SMOKE-TEST.md`) | see below |
-| #5 | `chore/preview-isolation` | #3 | Preview-only database; no writes or schedules in Preview; session key fails closed; **"Preview not configured" page instead of a 500**; setup checklist (`PREVIEW-SETUP.md`) | see below |
-| #6 | `fix/indexing-eligibility` | #3 | Indexing API only for JobPosting / livestream pages | Vercel ✓ |
-| #7 | `feat/v2-shell` | #3 | **01b**: new shell behind `V2_SHELL=1`, demo screens, screenshots | Vercel ✓ |
+| #2 | `docs/v2-repository-audit` | `main` | Audit, plan, decisions, route map, roadmap, this file | ✓ |
+| #3 | `chore/v2-foundations` | `main` | **01a** foundations, Vitest, migration tooling (not run) | ✓ |
+| #4 | `feat/login-allowlist` | #3 | Five-account sign-in allowlist; impact query; smoke test | ✓ |
+| #5 | `chore/preview-isolation` | #3 | Preview-only database (also accepts the Neon integration's `PREVIEW_DATABASE_URL_DATABASE_URL`); session key fails closed; "Preview not configured" page; read-only database readiness in `/api/preview-status`; demo projects for the signed-in user; `migrate:preview` / `seed:preview` read the git-ignored `.env.preview-migrate`; setup checklist | ✓ |
+| #6 | `fix/indexing-eligibility` | #3 | Indexing API only for JobPosting / livestream pages | ✓ |
+| #7 | `feat/v2-shell` | #3 | **01b** shell behind `V2_SHELL=1` | ✓ |
+| #8 | `feat/v2-dashboards` | #7 | **01e** project dashboard, All projects performance table, Project settings sections, summary adapters (`DASHBOARDS.md`) | ✓ |
 
-**Merge order:** #2, then #3. Once #3 is merged, retarget #4–#7 to `main` (`gh pr edit <n> --base main` if GitHub doesn't do it), then re-check each diff and its checks before merging.
+**Merge order:**
+1. #2, then #3.
+2. Retarget #4–#7 to `main`, re-check each diff and its checks, then merge.
+3. Retarget #8 to `main` after #7.
 
-**Known overlaps** (resolved on the `preview` branch):
-- #4 and #5 both add an import to `lib/session.ts`; keep both.
-- #4, #5 and #7 all edit `app/[[...path]]/page.tsx`. Order inside `Home`:
-  1. local mock mode
+**Overlaps** (resolved on `preview`):
+- `lib/session.ts` (#4 + #5)
+- `app/[[...path]]/page.tsx` (#4 + #5 + #7). Order inside `Home`:
+  1. mock mode
   2. Preview-not-configured check
   3. `currentUser` and the allowlist error on the sign-in page
   4. shell routing
 
+## Deployed Preview: https://seo-console-git-preview-zoro-hoang.vercel.app
+Vercel login as `tinledoihoa@gmail.com` (team zoro-hoang owner) first; protection stays on.
+
+| Check | Result |
+|---|---|
+| Build (commit 2982941) | ✅ READY |
+| Database target | ✅ `ep-spring-firefly-b7804i0v-pooler.c-13.us-east-1.aws.neon.tech/neondb`, the Neon store connected to Preview only |
+| Database readiness | ✅ reachable; empty (no schema, no migrations). Production has a schema, so this isn't production |
+| `V2_SHELL=1`, `GOOGLE_REDIRECT_URI` (branch `preview`) | ✅ set |
+| External writes / schedules | ✅ off / off |
+| `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Preview) | ❌ missing |
+| Usable app | ❌ shows "Missing Preview settings" |
+| Real sign-in | not tested |
+
 ## Sign-in allowlist (#4)
-- Exactly these five addresses, one list for Preview and Production (`lib/auth/allowlist.ts`):
+- **List:** exactly five addresses, the same for Preview and Production:
   - `analytics@headsonpillows.com`
   - `analytics@artemisdigital.com`
   - `tinledoihoa@gmail.com`
   - `tin@headsonpillows.com`
   - `tin@artemisdigital.com`
-- Checked on the server against Google's verified ID token (`email_verified` must be true).
-- Whitespace is trimmed and case ignored before comparing. Exact addresses only, never whole domains.
-- Each account sees only the projects it owns: users are matched by their own email, and projects by user id. Being on the list grants nothing in another account's projects.
+- **Matching:** Google's verified ID token; whitespace trimmed and case ignored; exact addresses, never domains.
+- **Ownership:** each account sees only its own projects.
+- **Google's own check:** the OAuth consent screen's test-user list is a separate gate (`PREVIEW-SETUP.md` step 3).
 
-## Deployed Preview
-- **Stable URL:** https://seo-console-git-preview-zoro-hoang.vercel.app
-  - This is Vercel's automatic branch URL for `preview`, confirmed in the deployment's aliases.
-  - `seo-console-preview.vercel.app` was never attached, hence its 404. It shouldn't be added: Deployment Protection is "all except custom domains", so an added domain would be public.
-- **Access:** Vercel Authentication stays on. Log in to Vercel as `tinledoihoa@gmail.com` (username `tinledoihoa-6361`, owner of team zoro-hoang; GitHub `talabadao`), the team's only member.
-- **Preview variables, branch `preview`:**
-  - Set by Claude: `V2_SHELL=1`, `GOOGLE_REDIRECT_URI=https://seo-console-git-preview-zoro-hoang.vercel.app/api/auth/google/callback`
-  - Still missing: `PREVIEW_DATABASE_URL`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- **Verified state** (deployment `seo-console-19udzrs4r-zoro-hoang.vercel.app`, commit 05d8614):
-  - The build is READY. That only means the code compiles.
-  - The app isn't usable yet: the page shows "Missing Preview settings". `/api/preview-status` reports no database, `externalWrites:false`, `schedules:false` and the missing setting names.
-  - The previous build returned a 500 here; that's fixed in #5.
-  - Unauthenticated requests get a 302 to Vercel's login, so protection is on.
+## Dashboards (#8)
+- **Project dashboard:**
+  - Search Console performance with trend
+  - GA4 organic traffic (revenue only in its own currency)
+  - monthly KPIs vs target with the status rule shown
+  - Asana work, counting completions by completion date
+  - content progress (demo)
+  - needs attention, built only from real data
+- **All projects:** a compact performance table with optional columns.
+  - Summaries load for the visible page only, 3 at a time, with caching.
+  - Cards count projects and never add metrics across them.
+- **Project settings:** General, Integrations (the connection list moved here), KPI targets, Tracking, Budgets and limits, Sync and history.
+- **Shell:**
+  - readable sidebar labels
+  - no milestone numbers in the UI
+  - the Settings section is kept when switching projects
+- **"1 Issue" badge** in the review screenshots: a momentary merge-conflict parse error while the dev server ran during a merge. It's gone after a reload; no issues are reported on any page.
 
-## Checks (run locally, 2026-10-15)
+## Checks (2026-10-15)
 | Branch | typecheck | lint | tests | build |
 |---|---|---|---|---|
-| #3 | ✓ | 0 errors / 18 warnings | 47/47 | ✓ |
-| #4 | ✓ | 0 / 18 | 52/52 | Vercel |
-| #5 | ✓ | 0 / 18 | 56/56 | Vercel |
-| #6 | ✓ | 0 / 18 | 55/55 | ✓ |
-| #7 | ✓ | 0 / 19 (+1: sidebar collapse state) | 57/57 | ✓ |
-| `preview` (all) | ✓ | 0 / 19 | 79/79 | Vercel |
+| #4 | ✓ | 0 errors / 18 warnings | 52/52 | Vercel ✓ |
+| #5 | ✓ | 0 / 18 | 59/59 | Vercel ✓ |
+| #8 | ✓ | 0 / 18 | 73/73 | Vercel ✓ |
+| `preview` (all) | ✓ | 0 / 18 | 98/98 | Vercel ✓ |
 
-Local mock review in the browser (this round):
-- `/portfolio` shows 3 fixture projects
-- the project row opens `/p/1/dashboard/overview`
-- the sidebar opens Keyword explorer (Demo); expanding Technical SEO shows Structured Data / Schema (Planned)
-- the switcher moves to Sample Spa on the same page
-- Competitor overview, Backlinks, Editorial board and Monthly report all render with the Demo label
-- no horizontal overflow
-
-## Verified facts
-- `CRON_SECRET` is not set in any Vercel environment. Both cron routes return 401 without it, so scheduled jobs have not been running. Fix: `PREVIEW-SETUP.md`, last section.
-- The installed Neon integration's Free plan allows 100 projects, with no card. A separate Preview database costs nothing.
-- `PAGESPEED_API_KEY` is stored as a non-sensitive variable (Vercel flags it "readable-secret"). Optional: re-add it marked Sensitive.
-- The repository is **public**. Committed screenshots use fixture data only. The five allowlisted addresses are visible in the code.
+Browser checks in local mock mode:
+- All projects lazy loading and paging
+- project dashboard
+- settings sections and KPI form
+- project switching keeps the page and the settings section
+- stale and error states
+- no page-level horizontal scroll at 375, 1024 and 1440
+- screenshots in `screenshots/01e/`
 
 ## Owner actions needed
-1. **Preview setup**, `PREVIEW-SETUP.md` steps A–D:
-   - Neon Free database `seo-console-preview`, connected to Preview with prefix `PREVIEW`
-   - new Google OAuth client for the branch URL; test users = the five addresses (if the app is in Testing)
-   - three Sensitive Preview variables
-   - four PowerShell commands for schema and fixtures
-2. **Allowlist impact:** run the read-only query in `SMOKE-TEST.md` §1 and send the counts. Don't ship #4 until that's reviewed.
-3. **Sign-in smoke test:** `SMOKE-TEST.md` §3 on the Preview with all five accounts plus one refused account.
-4. **`CRON_SECRET`** for Production (`PREVIEW-SETUP.md`, last section), then redeploy production.
+1. **Preview** (`PREVIEW-SETUP.md`, "Remaining steps"):
+   - rotate the exposed Preview database password and confirm Vercel updated it
+   - add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and a new `SESSION_SECRET` as Preview variables, branch `preview`, Sensitive
+   - confirm the OAuth test users are the five addresses, if the app is in Testing
+2. **Schema:** put the rotated connection string in `.env.preview-migrate` so Claude can run and verify the migrations, or let the app create the schema on first sign-in.
+3. **Allowlist impact:** run the read-only query in `SMOKE-TEST.md` §1. Don't ship #4 before that.
+4. **Sign-in smoke test:** `SMOKE-TEST.md` §3 on the Preview.
+5. **`CRON_SECRET`** for Production, then redeploy production.
+6. **Optional hardening:** untick Preview on the production Neon store's variables, so PR previews without #5 can't reach production.
 
-## Blockers
-- A usable deployed Preview, migration tests and live checks of the shell's existing views wait on owner action 1.
-- Shipping #4 waits on owner action 2.
-
-## Next smallest task
-When owner action 1 is done:
-- Claude redeploys `preview` and verifies status, database host and the Google redirect.
-- Then the sign-in smoke test.
-
-No new milestone starts before that. After it, **Milestone 01d**: legacy `/<slug>/<tab>` addresses redirect to `/p/<id>/…` when the flag is on.
+## Next
+After owner action 1, Claude redeploys `preview` and reports build, database and sign-in separately. Then come the live dashboard numbers on the Preview, and Milestone 01d (legacy-address redirects). No new milestone starts before the Preview is verified.

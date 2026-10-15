@@ -26,7 +26,7 @@ Project identity in the address is the immutable project id (spec §2), never th
 |---|---|---|
 | `/portfolio` | Live: the account's own projects | — (All projects) |
 | `/portfolio/<group>/<item>` | Live: choose a project for a project-only page | — |
-| `/p/<id>/dashboard/overview` | Live | — |
+| `/p/<id>/dashboard/overview` | Live: project dashboard (PR #8) | — |
 | `/p/<id>/search-console/performance` | Live (existing view) | `/<slug>/performance` |
 | `/p/<id>/search-console/opportunities[/<kind>]` | Live (existing view) | `/<slug>/opportunities/<kind>` |
 | `/p/<id>/analytics/overview[/<sub>]` | Live (existing view) | `/<slug>/analytics/<sub>` |
@@ -46,7 +46,7 @@ Project identity in the address is the immutable project id (spec §2), never th
 | `/p/<id>/content/board` | Demo | — |
 | `/p/<id>/ai-area/overview` | Planned (10) | — |
 | `/p/<id>/automation/workflows` | Planned (13) | — |
-| `/p/<id>/settings/project` | Live | Settings panel / project manager |
+| `/p/<id>/settings/project[/<section>]` | Live: sections general, integrations, kpi, tracking, budgets, sync (PR #8) | Settings panel / project manager |
 | `/docs` | Planned (13) | — |
 
 ## Compatibility behaviour
