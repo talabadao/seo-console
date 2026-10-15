@@ -193,11 +193,12 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
                     pair={pair("avgPosition")}
                     lowerIsBetter
                     absolute
-                    hint="Mean position of keywords ranking in the top 100; unranked keywords are excluded. Not the Search Console average."
+                    hint="SE Ranking's average: every checked keyword, with keywords outside the top 100 counted as 100. Not the Search Console average."
                   />
                 </div>
                 <p className="mt-3 text-xs text-muted">
-                  Cumulative counts of {fmtInt(c.trackedKeywords)} tracked keywords ({fmtInt(d.current.ranked)} in the top 100). {c.engine}
+                  Cumulative counts of {fmtInt(c.trackedKeywords)} tracked keywords ({fmtInt(d.current.ranked)} in the top 100; average of ranked
+                  keywords only {fmtPos(d.current.rankedAvgPosition)}). {c.engine}
                   {c.region ? ` · ${c.region}` : ""}
                   {c.language ? ` · ${c.language}` : ""}
                   {c.device ? ` · ${c.device}` : ""} · {c.keywordGroup}. Checked {c.latestDate}
