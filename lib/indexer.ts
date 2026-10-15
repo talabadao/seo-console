@@ -3,6 +3,7 @@ import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
 import { inspectUrl, listSitemaps, type UrlInspectionResult } from "@/lib/google/searchconsole";
 import { publishUrl, serviceAccountConfigured } from "@/lib/google/indexingApi";
 import type { UserRow } from "@/lib/session";
+import { checkEligibility } from "@/lib/indexingEligibility";
 
 export interface SiteRow {
   id: number;
@@ -672,6 +673,11 @@ function isSubmittable(
   if (submitResult === "ok" && submittedAt && Date.now() - submittedAt < RESUBMIT_COOLDOWN_MS) {
     return false;
   }
+  // Found ineligible recently: don't offer it again until the cooldown passes
+  // (the page may gain JobPosting / livestream markup later).
+  if (submitResult?.startsWith(INELIGIBLE_PREFIX) && submittedAt && Date.now() - submittedAt < RESUBMIT_COOLDOWN_MS) {
+    return false;
+  }
   if (!status) return true;
   return /unknown to google|not indexed|discovered|crawled/i.test(status);
 }
@@ -874,10 +880,15 @@ export async function indexDashboard(siteId: number) {
 // ---------- submit to Google Indexing API ----------
 
 export interface SubmitOutcome {
-  results: { url: string; ok: boolean; message: string }[];
+  results: { url: string; ok: boolean; message: string; ineligible?: boolean }[];
   skipped: number; // over daily quota
+  /** Pages not sent because they aren't eligible for the Indexing API. */
+  ineligible: number;
   quotaLeft: number;
 }
+
+/** submit_result prefix for pages refused by the eligibility check. */
+export const INELIGIBLE_PREFIX = "not eligible: ";
 
 export async function submitUrls(
   site: SiteRow,
@@ -893,9 +904,32 @@ export async function submitUrls(
      VALUES (?, ?, 0, 1) ON CONFLICT(site_id, url) DO NOTHING`,
   );
 
+  // Google supports the Indexing API only for JobPosting and livestream pages.
+  // Each page's own structured data is checked first (a few at a time);
+  // ineligible pages are recorded, not sent, and use no quota.
+  const verdicts = new Map<string, Awaited<ReturnType<typeof checkEligibility>>>();
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: 6 }, async () => {
+      while (next < urls.length) {
+        const url = urls[next++];
+        verdicts.set(url, await checkEligibility(url, site.property));
+      }
+    }),
+  );
+  const eligible = urls.filter((u) => verdicts.get(u)?.eligible);
+  for (const url of urls) {
+    const v = verdicts.get(url);
+    if (v?.eligible) continue;
+    const message = INELIGIBLE_PREFIX + (v?.reason ?? "unknown");
+    await ensureRow.run(site.id, url);
+    await mark.run(Date.now(), message, site.id, url);
+    results.push({ url, ok: false, message, ineligible: true });
+  }
+
   const budget = Math.max(0, await submitQuotaLeft(site.id));
-  const doNow = urls.slice(0, budget);
-  const skipped = urls.length - doNow.length;
+  const doNow = eligible.slice(0, budget);
+  const skipped = eligible.length - doNow.length;
 
   let spent = 0;
   for (const url of doNow) {
@@ -917,7 +951,12 @@ export async function submitUrls(
   }
   if (spent) await bumpSubmitQuota(site.id, spent);
 
-  return { results, skipped, quotaLeft: await submitQuotaLeft(site.id) };
+  return {
+    results,
+    skipped,
+    ineligible: urls.length - eligible.length,
+    quotaLeft: await submitQuotaLeft(site.id),
+  };
 }
 
 /** Turn a raw "Indexing API 403: {json}" string into something readable. */

@@ -70,8 +70,8 @@ export async function POST(req: NextRequest) {
       | undefined)?.google_scopes ?? user.google_scopes;
   if (!hasIndexingScope(scopes)) return fail(RECONNECT_MSG, { needsReconnect: true });
 
-  const { results, skipped, quotaLeft } = await submitUrls(site, urls, token);
-  const failed = results.filter((r) => !r.ok);
+  const { results, skipped, ineligible, quotaLeft } = await submitUrls(site, urls, token);
+  const failed = results.filter((r) => !r.ok && !r.ineligible);
   const needsReconnect = failed.some((r) =>
     /insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(r.message),
   );
@@ -80,6 +80,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     submitted: results.filter((r) => r.ok).length,
     failed: failed.length,
+    ineligible,
     skipped,
     quotaLeft,
     needsReconnect,
