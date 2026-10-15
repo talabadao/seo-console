@@ -1,4 +1,4 @@
-// Navigation and addresses for the v2 console shell (Milestone 01b).
+// Navigation and addresses for the v2 console shell.
 // Pure data and functions, shared by the shell UI and its tests.
 //
 // Addresses:
@@ -19,7 +19,7 @@ export interface NavItem {
   label: string;
   status: ItemStatus;
   requires?: Requirement;
-  /** Roadmap milestone that delivers a demo/planned item for real. */
+  /** Roadmap milestone that delivers a demo/planned item for real (docs and tests only; never shown in the UI). */
   milestone?: string;
   /** One sentence shown on demo and placeholder pages. */
   description?: string;
@@ -37,7 +37,7 @@ export const NAV: NavGroup[] = [
     id: "dashboard",
     label: "Dashboard",
     icon: "home",
-    items: [{ id: "overview", label: "Project overview", status: "live" }],
+    items: [{ id: "overview", label: "Dashboard", status: "live" }],
   },
   {
     id: "keyword-research",
@@ -55,7 +55,7 @@ export const NAV: NavGroup[] = [
   },
   {
     id: "competitive-research",
-    label: "Competitive Research",
+    label: "Competitors",
     icon: "compare",
     items: [
       {
@@ -83,7 +83,7 @@ export const NAV: NavGroup[] = [
   },
   {
     id: "organic-serp",
-    label: "Organic SERP",
+    label: "Rank tracking",
     icon: "chart",
     items: [
       {
@@ -95,19 +95,19 @@ export const NAV: NavGroup[] = [
       },
       {
         id: "google",
-        label: "Google Search Tracking",
+        label: "Google",
         status: "planned",
         milestone: "07",
         description: "SERP snapshots for selected keywords through SerpApi, checked on demand or on a schedule you enable.",
       },
-      { id: "bing", label: "Bing Search Tracking", status: "planned", milestone: "07", description: "Bing SERP tracking through SerpApi." },
-      { id: "yandex", label: "Yandex Search Tracking", status: "planned", milestone: "07", description: "Yandex SERP tracking through SerpApi." },
-      { id: "naver", label: "Naver Search Tracking", status: "planned", milestone: "07", description: "Naver SERP tracking through SerpApi." },
+      { id: "bing", label: "Bing", status: "planned", milestone: "07", description: "Bing SERP tracking through SerpApi." },
+      { id: "yandex", label: "Yandex", status: "planned", milestone: "07", description: "Yandex SERP tracking through SerpApi." },
+      { id: "naver", label: "Naver", status: "planned", milestone: "07", description: "Naver SERP tracking through SerpApi." },
     ],
   },
   {
     id: "search-console",
-    label: "Google Search Console",
+    label: "Search Console",
     icon: "gsc",
     items: [
       { id: "performance", label: "Performance", status: "live", requires: "gsc" },
@@ -116,7 +116,7 @@ export const NAV: NavGroup[] = [
   },
   {
     id: "analytics",
-    label: "Google Analytics 4",
+    label: "Analytics (GA4)",
     icon: "analytics",
     items: [{ id: "overview", label: "Analytics", status: "live", requires: "ga4" }],
   },
@@ -127,12 +127,12 @@ export const NAV: NavGroup[] = [
     items: [
       {
         id: "business-profile",
-        label: "Google Business Profile",
+        label: "Business Profile",
         status: "planned",
         milestone: "08",
         description: "Public listing analysis with evidence-based recommendations, compared with competitors.",
       },
-      { id: "reviews", label: "Google Maps Reviews", status: "live", requires: "reviews" },
+      { id: "reviews", label: "Maps reviews", status: "live", requires: "reviews" },
     ],
   },
   {
@@ -142,19 +142,19 @@ export const NAV: NavGroup[] = [
     items: [
       {
         id: "site-audit",
-        label: "Site Audit",
+        label: "Site audit",
         status: "planned",
         milestone: "09c",
         description: "A bounded crawl of your site checking status codes, redirects, canonicals, titles, headings and internal links.",
       },
-      { id: "pagespeed", label: "PageSpeed Insights", status: "live" },
+      { id: "pagespeed", label: "PageSpeed", status: "live" },
       { id: "indexing", label: "Indexing", status: "live", requires: "gsc" },
       {
         id: "structured-data",
         label: "Structured Data / Schema",
         status: "planned",
         milestone: "09d",
-        description: "Checks the structured data (schema.org JSON-LD and microdata) on your pages for errors and missing recommended fields. The checking engine comes in a separate Technical SEO milestone.",
+        description: "Checks the structured data (schema.org JSON-LD and microdata) on your pages for errors and missing recommended fields. The checking engine isn't built yet.",
       },
     ],
   },
@@ -202,13 +202,13 @@ export const NAV: NavGroup[] = [
   },
   {
     id: "reports",
-    label: "Report",
+    label: "Reports",
     icon: "report",
     items: [
-      { id: "weekly", label: "Weekly Report", status: "live", requires: "ga4" },
+      { id: "weekly", label: "Weekly report", status: "live", requires: "ga4" },
       {
         id: "monthly",
-        label: "Monthly Report",
+        label: "Monthly report",
         status: "demo",
         milestone: "12",
         description: "Executive summary, KPIs, search and analytics results, completed work and next month's plan.",
@@ -274,12 +274,17 @@ export function buildShellPath(loc: ShellLocation): string {
 
 /**
  * Where to go when the project switcher changes. Switching between projects
- * keeps the current page (but not its sub-tab or any data); "All projects"
- * goes to the portfolio.
+ * keeps the current page (but not its data sub-tab, except a Settings
+ * section); "All projects" goes to the portfolio.
  */
 export function switchProject(current: ShellLocation, projectId: number | null): ShellLocation {
   if (projectId == null) return { kind: "portfolio" };
-  if (current.kind === "project" || current.kind === "pick") {
+  if (current.kind === "project") {
+    // Settings sections are the same for every project, so they carry over; data sub-tabs don't.
+    const sub = current.group === "settings" ? current.sub : "";
+    return { kind: "project", projectId, group: current.group, item: current.item, sub };
+  }
+  if (current.kind === "pick") {
     return { kind: "project", projectId, group: current.group, item: current.item, sub: "" };
   }
   return { kind: "project", projectId, ...DEFAULT_ITEM, sub: "" };
