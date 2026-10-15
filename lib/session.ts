@@ -1,6 +1,7 @@
 import { getIronSession, type SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
 import { db } from "./db";
+import { isAllowedEmail } from "./auth/allowlist";
 
 export interface SessionData {
   userId?: number;
@@ -43,5 +44,8 @@ export async function currentUser(): Promise<UserRow | null> {
   const row = (await db.prepare("SELECT * FROM users WHERE id = ?").get(session.userId)) as
     | UserRow
     | undefined;
-  return row ?? null;
+  // Sessions from before the allowlist (or for an account later removed from
+  // it) stop working on the next request; the account's data is left untouched.
+  if (!row || !isAllowedEmail(row.email)) return null;
+  return row;
 }

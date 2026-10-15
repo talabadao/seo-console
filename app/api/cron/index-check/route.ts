@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { discoverSitemapUrls, runIndexCheck, type SiteRow } from "@/lib/indexer";
 import type { UserRow } from "@/lib/session";
+import { isAllowedEmail } from "@/lib/auth/allowlist";
 
 export const maxDuration = 300;
 
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest) {
 
   const results: { property: string; discovered?: number; checked?: number; error?: string }[] = [];
   for (const row of rows) {
+    // Accounts that may no longer sign in don't get work run on their behalf.
+    if (!isAllowedEmail(row.email)) continue;
     const site: SiteRow = { id: row.siteId, user_id: row.userId, source: row.source, property: row.property };
     const user: UserRow = {
       id: row.uId,
