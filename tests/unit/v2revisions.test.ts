@@ -113,8 +113,12 @@ describe("SE Ranking thresholds", () => {
     expect(rankOf(101)).toBeNull();
     const c = rankCounts([0, 0, null, undefined, 4, 6]);
     expect(c.ranked).toBe(2);
-    expect(c.avgPosition).toBe(5);
-    expect(rankCounts([0, null]).avgPosition).toBeNull();
+    expect(c.checked).toBe(4);
+    // SE Ranking's average: the two unranked keywords count as 100; the two without a check are left out.
+    expect(c.avgPosition).toBe(52.5);
+    expect(c.rankedAvgPosition).toBe(5);
+    expect(rankCounts([null, undefined]).avgPosition).toBeNull();
+    expect(rankCounts([0]).rankedAvgPosition).toBeNull();
   });
 
   it("uses the latest check on or before the comparison date", () => {
