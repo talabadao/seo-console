@@ -265,13 +265,15 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
     setSubmitting(urls.length === 1 ? urls[0] : "bulk");
     setMsg(null);
 
-    // The API takes 100 URLs per request — send in chunks.
+    // Each page's structured data is fetched before submitting, so requests
+    // are kept small enough to finish well inside the server's time limit.
     const chunks: string[][] = [];
-    for (let i = 0; i < urls.length; i += 100) chunks.push(urls.slice(i, i + 100));
+    for (let i = 0; i < urls.length; i += 25) chunks.push(urls.slice(i, i + 25));
 
     let submitted = 0;
     let failed = 0;
     let skipped = 0;
+    let ineligible = 0;
     let quotaLeft = data?.submitQuotaLeft ?? 0;
     let firstFail = "";
     let stopReason: "reconnect" | "owner" | "quota" | null = null;
@@ -291,10 +293,12 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
         submitted += j.submitted ?? 0;
         failed += j.failed ?? 0;
         skipped += j.skipped ?? 0;
+        ineligible += j.ineligible ?? 0;
         quotaLeft = j.quotaLeft ?? quotaLeft;
         if (!firstFail) {
           firstFail =
-            j.results?.find((r: { ok: boolean; message: string }) => !r.ok)?.message ?? "";
+            j.results?.find((r: { ok: boolean; message: string; ineligible?: boolean }) => !r.ok && !r.ineligible)
+              ?.message ?? "";
         }
         if (j.needsReconnect) stopReason = "reconnect";
         else if (j.notOwner) stopReason = "owner";
@@ -309,10 +313,13 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
         setMsg(firstFail || "This Google account isn't an Owner of the property.");
       } else {
         setMsg(
-          `Submitted ${submitted}` +
+          `Sent ${submitted} to Google` +
+            (ineligible
+              ? `, ${ineligible} not sent (no JobPosting or livestream structured data, which the Indexing API requires)`
+              : "") +
             (failed ? `, ${failed} failed (${firstFail})` : "") +
             (skipped ? `, ${skipped} left for tomorrow (daily quota)` : "") +
-            `. Indexing quota left today: ${quotaLeft}.`,
+            `. Indexing quota left today: ${quotaLeft}. A submission only notifies Google; use URL Inspection to confirm indexing.`,
         );
       }
       await load();
@@ -558,7 +565,7 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             title={
               submitAllowed
-                ? ""
+                ? "Checks each not-indexed page's structured data first. Only JobPosting or livestream pages are sent, because those are the only pages Google's Indexing API supports."
                 : data?.indexing.hasScope === false
                   ? "Reconnect Google to grant the Indexing permission"
                   : "You must be an Owner of this property in Search Console"
@@ -566,7 +573,7 @@ export function Indexing({ property, neverSynced }: { property: string; neverSyn
           >
             {submitting === "bulk"
               ? "Submitting…"
-              : `Submit Index Now (${Math.min(data?.submittableCount ?? 0, data?.submitQuotaLeft ?? 0)}${
+              : `Submit eligible pages (${Math.min(data?.submittableCount ?? 0, data?.submitQuotaLeft ?? 0)}${
                   (data?.submittableCount ?? 0) > (data?.submitQuotaLeft ?? 0)
                     ? ` of ${data?.submittableCount}`
                     : ""
@@ -1042,7 +1049,12 @@ function RowGroup({
         </td>
         <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
           {r.submitResult === "ok" && !canSubmit ? (
-            <span className="text-xs text-good">sent {crawl(iso(r.submittedAt))}</span>
+            <span
+              className="text-xs text-muted"
+              title="Google was notified. This is not confirmation that the page is indexed; check URL Inspection."
+            >
+              submitted {crawl(iso(r.submittedAt))}
+            </span>
           ) : canSubmit ? (
             <button
               onClick={onSubmit}
