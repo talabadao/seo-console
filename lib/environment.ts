@@ -81,3 +81,18 @@ export function schedulesAllowed(env: Env = process.env): boolean {
 export const PREVIEW_WRITES_BLOCKED =
   "Disabled in Preview deployments: this action writes to an external service or spends paid credits. " +
   "Use production, or set ALLOW_PREVIEW_EXTERNAL_WRITES=1 for this Preview on purpose.";
+
+/**
+ * Preview only: names (never values) of the settings this Preview still needs
+ * before anyone can sign in. Empty when ready, and always empty elsewhere.
+ */
+export function missingPreviewSettings(env: Env = process.env): string[] {
+  if (deploymentOf(env) !== "preview") return [];
+  const missing: string[] = [];
+  if (!env.PREVIEW_DATABASE_URL?.trim()) missing.push("PREVIEW_DATABASE_URL");
+  if ((env.SESSION_SECRET?.trim().length ?? 0) < 32) missing.push("SESSION_SECRET");
+  for (const key of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"]) {
+    if (!env[key]?.trim()) missing.push(key);
+  }
+  return missing;
+}

@@ -4,6 +4,7 @@ import {
   databaseUrlFor,
   deploymentOf,
   externalWritesAllowed,
+  missingPreviewSettings,
   schedulesAllowed,
   sessionSecretFor,
 } from "@/lib/environment";
@@ -64,5 +65,32 @@ describe("external writes and schedules", () => {
     expect(schedulesAllowed({ VERCEL_ENV: "production" })).toBe(true);
     expect(schedulesAllowed({ VERCEL_ENV: "preview" })).toBe(false);
     expect(schedulesAllowed({})).toBe(false);
+  });
+});
+
+describe("missingPreviewSettings", () => {
+  const ready = {
+    VERCEL_ENV: "preview",
+    PREVIEW_DATABASE_URL: PREVIEW_DB,
+    SESSION_SECRET: "x".repeat(32),
+    GOOGLE_CLIENT_ID: "id",
+    GOOGLE_CLIENT_SECRET: "secret",
+    GOOGLE_REDIRECT_URI: "https://example.invalid/api/auth/google/callback",
+  };
+
+  it("lists every missing Preview setting by name", () => {
+    expect(missingPreviewSettings({ VERCEL_ENV: "preview", DATABASE_URL: PROD_DB, SESSION_SECRET: "short" })).toEqual([
+      "PREVIEW_DATABASE_URL",
+      "SESSION_SECRET",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_REDIRECT_URI",
+    ]);
+  });
+
+  it("is empty for a configured Preview, and never applies outside Preview", () => {
+    expect(missingPreviewSettings(ready)).toEqual([]);
+    expect(missingPreviewSettings({ VERCEL_ENV: "production" })).toEqual([]);
+    expect(missingPreviewSettings({})).toEqual([]);
   });
 });
