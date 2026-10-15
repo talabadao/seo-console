@@ -98,7 +98,7 @@ export function demoLlmReport(
     timeZone: "Asia/Ho_Chi_Minh",
     period,
     aiDomains: DEFAULT_AI_DOMAINS,
-    platforms: platforms.map(({ sessions: _s, ...p }) => p),
+    platforms: platforms.map((p) => ({ id: p.id, name: p.name, color: p.color, value: p.value })),
     total,
     share:
       metric === "sessions"
