@@ -1,104 +1,136 @@
 # Preview environment — setup and verification checklist
 
-Goal: one stable Preview address, **https://seo-console-preview.vercel.app**, served from the `preview` branch. It uses an empty, separate database with synthetic fixtures, its own Google OAuth client and session key, and no production credentials, schedules, publishing or paid actions.
+**Stable Preview address:** https://seo-console-git-preview-zoro-hoang.vercel.app
+
+This is the branch URL Vercel assigns automatically to the `preview` branch. Verified 2026-10-15 in the deployment's aliases. It always serves the latest `preview` deployment.
+
+It replaces the earlier plan for `seo-console-preview.vercel.app`. That name was never attached, so it returns 404 DEPLOYMENT_NOT_FOUND. It should not be added either: this project's Deployment Protection is **Vercel Authentication, "all except custom domains"**. A domain added under Settings → Domains would bypass the protection and make the Preview public. The automatic branch URL stays protected.
+
+**Who can open it:** Vercel shows its own login screen first. Log in to Vercel as the owner of team **zoro-hoang**: Vercel account `tinledoihoa@gmail.com`, username `tinledoihoa-6361`, GitHub login `talabadao`. That's the only team member on the Hobby plan. After that, the app's own Google sign-in applies the five-address allowlist. One browser logged in to Vercel can test every Google account. Keep Deployment Protection on.
 
 Never paste secret values into chat. You enter them directly into Neon, Google Cloud, Vercel or your own terminal.
 
 ## What the code guarantees (PR #5, `chore/preview-isolation`)
-- In Preview (`VERCEL_ENV=preview`) the database is **only** `PREVIEW_DATABASE_URL`. The production `DATABASE_URL` / `POSTGRES_*` variables that the Neon integration also exposes to Preview are ignored. If it's missing, pages that need the database show an error rather than reaching production.
+- In Preview (`VERCEL_ENV=preview`), the database is **only** `PREVIEW_DATABASE_URL`.
+  - The production `DATABASE_URL` / `POSTGRES_*` variables that the Neon integration also exposes to Preview are ignored.
+  - If `PREVIEW_DATABASE_URL` is missing, pages that need the database show an error rather than reaching production.
 - Session cookies need a `SESSION_SECRET` of at least 32 characters on every deployment. The built-in development key is used only in local development.
-- External writes and paid actions (Asana status updates, Indexing API submissions, SerpApi review fetches, OpenAI analysis) are refused in Preview. Cron routes do nothing outside Production.
+- External writes and paid actions are refused in Preview: Asana status updates, Indexing API submissions, SerpApi review fetches and OpenAI analysis. Cron routes do nothing outside Production.
 - `/api/preview-status` reports the connected database as `host/database` (never credentials) and whether writes and schedules are off. It returns 404 in Production.
-- Sign-in keeps its OAuth `state` check, Google ID-token verification and the two-account allowlist (PR #4).
+- Sign-in keeps its OAuth `state` check, Google ID-token verification and the five-address allowlist (PR #4). The allowlist is the same for Preview and Production.
+- Local mock mode (`V2_MOCK=1`) can't run on any Vercel deployment.
 
-## Checklist
+## Status on 2026-10-15
 
-### A. Separate Preview database (Neon)
-1. Neon console (from Vercel: **Storage → your Neon database → Open in Neon**) → **New Project**:
-   - name `seo-console-preview`
-   - same region and Postgres version as production
-   - **before you click Create, confirm it fits your current Neon plan.** If Neon asks for a paid upgrade, stop and tell me.
-   - Expected: a new, empty project with its own host, shown as `ep-…` in the connection string, different from production's.
-2. In the new project → **Connection details** → copy the **pooled** connection string.
-   - Do **not** create a branch of the production project instead: a branch copies production data and keeps the production password.
+| Preview setting (branch `preview`) | State |
+|---|---|
+| `V2_SHELL=1` | ✅ **Set** by Claude: Preview, branch `preview`, plain |
+| `GOOGLE_REDIRECT_URI` = `https://seo-console-git-preview-zoro-hoang.vercel.app/api/auth/google/callback` | ✅ **Set** by Claude: Preview, branch `preview`, plain (not a secret) |
+| `PREVIEW_DATABASE_URL` (isolated database) | ❌ Missing. Step A |
+| `SESSION_SECRET` (separate from production) | ❌ Missing. Step C |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ❌ Missing. Steps B and C |
+| Preview schema and fixtures | ❌ Not created. Step D |
 
-### B. Stable Preview hostname (Vercel)
-3. Vercel → project **seo-console** → **Settings → Domains → Add** `seo-console-preview.vercel.app`.
-   - Connect it to the **Preview** environment, **Git branch `preview`**.
-   - Expected: the domain shows as assigned to branch `preview`. The `preview` branch already exists on GitHub.
+Claude didn't set the secret values itself: they would have passed through the chat transcript.
 
-### C. Google OAuth client for Preview (Google Cloud)
-The sign-in callback path comes from the code: the route `app/api/auth/google/callback/route.ts` serves `/api/auth/google/callback`, and `lib/google/oauth.ts` sends Google the address in `GOOGLE_REDIRECT_URI`.
+## Checklist (only the steps that need you)
 
-4. Google Cloud Console → the project that owns the production OAuth client (project number **721552382367**) → **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+### A. Separate Preview database (Vercel → Storage, Neon Free plan)
+The installed Neon integration's **Free** plan allows up to 100 projects, with no payment method. A second database costs nothing. If any screen asks for a paid plan or a card, stop and tell me.
+
+1. Vercel → team **zoro-hoang** → **Storage** → **Create Database** → **Neon** → **Continue**.
+   - Plan: **Free**. Region: same as production. Database name: `seo-console-preview` → **Create**.
+   - Expected: a new database listed next to the production one, with its own `ep-…` host.
+2. On the **Connect Project** screen, project **seo-console**:
+   - **Environments:** tick **Preview** only. Untick Production and Development.
+   - **Custom Prefix:** `PREVIEW`
+   - Click **Connect**.
+   - Expected: under seo-console → Settings → Environment Variables, new Preview-only variables starting with `PREVIEW_`, including **`PREVIEW_DATABASE_URL`**.
+   - If the variable is named differently, open the new database → **.env.local** tab → **Show secret** → copy the `DATABASE_URL` value. Then add it yourself: **Add Environment Variable**, key `PREVIEW_DATABASE_URL`, Environment **Preview**, **Sensitive** on.
+   - Do **not** use a branch of the production database: a branch copies production data and keeps the production password.
+
+### B. Google OAuth client for Preview (Google Cloud)
+The callback path comes from the code: `app/api/auth/google/callback/route.ts` serves `/api/auth/google/callback`, and `lib/google/oauth.ts` sends Google the address in `GOOGLE_REDIRECT_URI`.
+
+3. Google Cloud Console → project number **721552382367** (the one with the production client) → **APIs & Services → Credentials → + Create credentials → OAuth client ID**:
    - Application type: **Web application**
    - Name: `SEO Console Preview`
-   - Authorized JavaScript origins: `https://seo-console-preview.vercel.app`
-   - Authorized redirect URIs: `https://seo-console-preview.vercel.app/api/auth/google/callback`
-   - Expected: a new client ID and secret, separate from production's. Keep the secret for step 5.
-5. **OAuth consent screen → Audience**: if the app is in **Testing**, make sure `analytics@headsonpillows.com` and `analytics@artemisdigital.com` are listed as test users.
+   - Authorized JavaScript origins: `https://seo-console-git-preview-zoro-hoang.vercel.app`
+   - Authorized redirect URIs: `https://seo-console-git-preview-zoro-hoang.vercel.app/api/auth/google/callback`
+   - **Create**. Expected: a dialog with a new Client ID and Client secret, different from production's. Leave it open for step 5.
+4. **Google Auth Platform → Audience** (older consoles: **OAuth consent screen**):
+   - If Publishing status is **Testing**, under **Test users** make sure all five approved addresses are listed. Add any that are missing:
+     - `analytics@headsonpillows.com`
+     - `analytics@artemisdigital.com`
+     - `tinledoihoa@gmail.com`
+     - `tin@headsonpillows.com`
+     - `tin@artemisdigital.com`
+   - Expected: five test users.
+   - This list belongs to the Cloud project, so production uses it too. The three new accounts need it there as well once PR #4 ships.
+   - If the status is **In production**, there's nothing to add.
 
-### D. Vercel environment variables
-6. Vercel → **seo-console → Settings → Environment Variables**. Add each of these with **Environment = Preview only** (untick Production and Development) and **Sensitive** on:
+### C. Secret Preview variables (Vercel)
+5. Vercel → **seo-console → Settings → Environment Variables → Add Environment Variable**. For each key below:
+   - **Environments:** Preview only
+   - **Branch:** `preview`
+   - **Sensitive:** on
+   - **Save**
 
-| Key | Value | Scope |
-|---|---|---|
-| `PREVIEW_DATABASE_URL` | Pooled connection string from step 2 | Preview |
-| `SESSION_SECRET` | A **new** random value, different from production's (command below) | Preview |
-| `GOOGLE_CLIENT_ID` | Client ID from step 4 | Preview |
-| `GOOGLE_CLIENT_SECRET` | Client secret from step 4 | Preview |
-| `GOOGLE_REDIRECT_URI` | `https://seo-console-preview.vercel.app/api/auth/google/callback` | Preview |
-| `V2_SHELL` | `1` (turns on the new console shell, PR 01b; leave unset in Production) | Preview |
+| Key | Value |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Client ID from step 3 |
+| `GOOGLE_CLIENT_SECRET` | Client secret from step 3 |
+| `SESSION_SECRET` | A **new** random value, never production's. Generate it with the PowerShell command below, then paste into the Value field |
 
-Generate the session secret locally; copy the output straight into Vercel:
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+   This PowerShell command copies a new session secret to the clipboard without displaying it:
+   ```powershell
+   node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))" | clip
+   ```
 
-Leave these **unset in Preview**: `CRON_SECRET`, `OPENAI_API_KEY`, `PAGESPEED_API_KEY`, `ALLOW_PREVIEW_EXTERNAL_WRITES`.
+   Expected: the list shows these three plus `V2_SHELL` and `GOOGLE_REDIRECT_URI` with the **Preview (preview)** badge. The Production entries with the same names are unchanged.
 
-The existing Production-scoped `GOOGLE_*` and `SESSION_SECRET` entries stay as they are. Vercel keeps a separate value per environment for the same key.
+   Leave these **unset in Preview**: `CRON_SECRET`, `OPENAI_API_KEY`, `PAGESPEED_API_KEY`, `ALLOW_PREVIEW_EXTERNAL_WRITES`.
 
-### E. Build the Preview schema and fixtures (your terminal)
-Run these in the repository on branch `preview` (or `chore/preview-isolation`), after `npm install`. Use the connection string from step 2 in place of `<preview-connection-string>`.
+### D. Build the Preview schema and synthetic fixtures (your PowerShell)
+Run these in the repository folder. First copy the **Preview** connection string to the clipboard: Vercel → Storage → `seo-console-preview` → **.env.local** → copy the `DATABASE_URL` value. It's then read from the clipboard and never shown.
 
-7. Check the target (read-only):
-   ```bash
-   MIGRATE_DATABASE_URL='<preview-connection-string>' npm run migrate
+6. Prepare (read-only):
+   ```powershell
+   git checkout preview; git pull; npm install
+   $env:MIGRATE_DATABASE_URL = Get-Clipboard
+   npm run migrate
    ```
    Expected:
-   - `Target: ep-…/neondb` — **confirm this host is the Preview project's, not production's, before going on**
+   - `Target: ep-…/neondb`. **Check that this host is the new Preview database's host (Storage → seo-console-preview), not production's, before going on.**
    - `Migrations table: not created yet`
    - `Applied: none`
    - `Pending: 0001_baseline`
-8. Create the schema. Use the `host/database` printed in step 7:
-   ```bash
-   MIGRATE_DATABASE_URL='<preview-connection-string>' npm run migrate -- --apply --confirm=<host/database>
+7. Create the schema, with the `host/database` printed in step 6:
+   ```powershell
+   npm run migrate -- --apply --confirm=<host/database>
    ```
-   Expected: `Applied 0001_baseline: Schema as of production 05f0c1d …`
-9. Re-check:
-   ```bash
-   MIGRATE_DATABASE_URL='<preview-connection-string>' npm run migrate
+   Expected: `Applied 0001_baseline: …`. Running `npm run migrate` again shows `Pending: none`.
+8. Load the synthetic fixtures:
+   ```powershell
+   npm run seed:preview -- --confirm=<host/database>
    ```
-   Expected: `Applied: 0001_baseline`, `Pending: none`.
-10. Load synthetic fixtures:
-    ```bash
-    MIGRATE_DATABASE_URL='<preview-connection-string>' npm run seed:preview -- --confirm=<host/database>
-    ```
-    Expected: `Seeded fixtures into <host/database> (user preview-fixture@example.invalid, project "Example Hotel (fixture)").` Running it again prints the same line and creates no duplicates.
+   Expected: `Seeded fixtures into <host/database> (user preview-fixture@example.invalid, project "Example Hotel (fixture)").` It's safe to repeat.
+9. Close the PowerShell window, or run `Remove-Item Env:MIGRATE_DATABASE_URL`.
 
-### F. Deploy and verify the Preview
-11. Redeploy branch `preview` (Vercel → Deployments → latest `preview` deployment → **Redeploy**, so the new variables apply), or tell me and I'll push a fresh commit.
-12. Open https://seo-console-preview.vercel.app/api/preview-status (Vercel may ask you to log in to Vercel first; previews are protected). Expected:
-    ```json
-    {"deployment":"preview","database":"<the Preview host/database from step 7>","databaseError":null,"externalWrites":false,"schedules":false}
-    ```
-13. Tell me it's done. I'll check the same endpoint and run the sign-in smoke test with you (`SMOKE-TEST.md`).
+You can also save the string in a git-ignored file `.env.preview-migrate` in the repository folder, as one line `MIGRATE_DATABASE_URL=…`, and tell me. I'll then run steps 6–8 and show you the host before writing anything.
+
+### E. Deploy and verify (Claude does this; tell me when A–C are done)
+- Claude starts a fresh deployment of branch `preview`, since variables only apply to new deployments, and checks:
+  - **Build:** deployment state READY. This only proves the code compiles.
+  - **Isolation:** `/api/preview-status` returns `{"deployment":"preview","database":"<Preview host/database>","databaseError":null,"externalWrites":false,"schedules":false}`
+  - **Usable app:** the sign-in page renders, and "Continue with Google" reaches Google's account chooser for the Preview client, not an `invalid_client` or `redirect_uri_mismatch` error.
+- You then complete the sign-in itself with the approved accounts (`SMOKE-TEST.md` §3). Claude can't sign in with your Google accounts.
 
 ## Notes
-- Signing in on the Preview brings that Google account's property list and any data you open into the **Preview** database, not production. Reset it by dropping and recreating the Preview Neon project, then repeating steps 7–10.
-- The Neon integration's own variables still list Preview as a target. The code ignores them in Preview; removing Preview from them is optional, if Vercel allows editing integration-managed variables.
-- Only the `preview` branch gets the stable hostname and working sign-in. Other branch previews still build, but can't sign in, because their addresses aren't registered with Google.
+- Signing in on the Preview brings that Google account's property list, and any data you open, into the **Preview** database, never production. Reset by deleting and recreating the Preview database, then repeating step D.
+- The v2 demo screens (Keyword explorer, Competitors, Backlinks, Editorial board, Monthly report) show only the invented "Lumen Coast Resort (demo)" data.
+- The Neon integration's production variables still list Preview as a target. The code ignores them in Preview.
+- Only the `preview` branch has working sign-in. Other branch previews build, but their addresses aren't registered with Google.
 
 ## Production fix, separate from Preview: `CRON_SECRET` (AUDIT 4.13)
 Verified 2026-10-15 in Vercel's environment variables: `CRON_SECRET` is not set for any environment. Both cron routes return 401 without it, so the scheduled jobs in `vercel.json` cannot have run.
@@ -117,7 +149,7 @@ Jobs that start running:
 | `/api/cron/index-check?hour=N` | 24 entries, one per hour | Sites with **Settings → Indexing automation → Auto-inspect daily** on and that hour selected. Off by default, so nothing runs until a site is opted in |
 | `/api/cron/pagespeed` | 01:30, 02:30, 03:30 | Every tracked Page Speed page without a result today |
 
-With PR #4 merged, both skip projects of accounts outside the allowlist.
+With PR #4 merged, both skip projects of accounts outside the five-address allowlist.
 
 How to check after the next scheduled time:
 - Vercel → project → **Settings → Cron Jobs**: each job's recent invocations show status 200 instead of 401. Hobby keeps runtime logs for about an hour, so look soon after a run.
