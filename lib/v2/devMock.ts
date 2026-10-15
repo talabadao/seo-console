@@ -7,6 +7,7 @@
 // The fixtures are invented (example.com domains, no tokens).
 
 import { demoSummary } from "./summary/demo";
+import { demoLlmReport } from "./llm/demo";
 import { DEFAULT_COMPARE, DEFAULT_PRESET, isCompare, isPreset, resolvePeriod, type CompareMode, type RangePreset } from "./summary/period";
 import { ALL_PARTS, type SummaryPart } from "./summary/types";
 
@@ -116,6 +117,18 @@ export function mockApi(url: string): { status: number; body: unknown } {
     // One fixture shows what a failed provider request looks like.
     if (project.id === 6 && s.ga4) s.ga4 = { state: "error", source: "Google Analytics 4", message: "Mock mode: a failed request, shown as an error rather than numbers." };
     return { status: 200, body: s };
+  }
+  const llm = path.match(/^\/api\/v2\/llm-traffic\/(\d+)$/);
+  if (llm) {
+    const project = MOCK_PROJECTS.find((p) => p.id === Number(llm[1]));
+    if (!project) return { status: 404, body: { error: "unknown project" } };
+    if (!project.gaPropertyId) return { status: 200, body: { state: "not-connected", source: "Google Analytics 4", message: "No GA4 property linked to this project." } };
+    const q = new URLSearchParams(url.split("?")[1] ?? "");
+    const preset = isPreset(q.get("preset")) ? (q.get("preset") as RangePreset) : DEFAULT_PRESET;
+    const compare = isCompare(q.get("compare")) ? (q.get("compare") as CompareMode) : DEFAULT_COMPARE;
+    const metric = q.get("metric") === "users" ? "users" : "sessions";
+    const g = q.get("granularity") === "week" ? "week" : q.get("granularity") === "month" ? "month" : "day";
+    return { status: 200, body: { state: "demo", report: demoLlmReport(project.id, resolvePeriod(preset, compare), metric, g, q.get("platform") ?? "all") } };
   }
   if (path === "/api/weekly-report/config") {
     const ym = new URLSearchParams(url.split("?")[1] ?? "").get("yearMonth") ?? new Date().toISOString().slice(0, 7);

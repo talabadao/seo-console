@@ -121,7 +121,7 @@ export async function gscSection(token: string, project: Project, period: Period
   }
 }
 
-async function gaContext(user: UserRow, token: string, propertyId: string) {
+export async function gaContext(user: UserRow, token: string, propertyId: string) {
   const row = (await db
     .prepare("SELECT time_zone, currency_code FROM ga_properties WHERE user_id = ? AND property_id = ?")
     .get(user.id, propertyId)) as { time_zone: string | null; currency_code: string | null } | undefined;
@@ -135,7 +135,7 @@ async function gaContext(user: UserRow, token: string, propertyId: string) {
   return { timeZone, currency };
 }
 
-async function gaPreconditions(user: UserRow, project: Project, source: string): Promise<Section<never> | null> {
+export async function gaPreconditions(user: UserRow, project: Project, source: string): Promise<Section<never> | null> {
   if (!project.gaPropertyId) return { state: "not-connected", source, message: "No GA4 property linked to this project." };
   if (!hasAnalyticsScope(user.google_scopes)) {
     return { state: "unavailable", source, message: "Google Analytics access hasn't been granted. Sign out and sign in again to allow it." };
