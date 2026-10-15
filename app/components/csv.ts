@@ -1,7 +1,12 @@
-/** Quote/escape a CSV field and neutralise leading spreadsheet-formula characters. */
-export function csvCell(v: string | number): string {
+/**
+ * Quote/escape a CSV field and neutralise leading spreadsheet-formula
+ * characters (= + - @ tab CR). Numbers, and text that is only a number such as
+ * "-12.5" or "-3%", are left alone so they stay numeric in the spreadsheet.
+ */
+export function csvCell(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return "";
   let s = String(v);
-  if (/^[=+@\t\r]/.test(s)) s = "'" + s;
+  if (typeof v === "string" && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?%?$/.test(s)) s = "'" + s;
   if (/[",\r\n]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
   return s;
 }

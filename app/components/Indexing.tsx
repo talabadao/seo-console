@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import { fmt } from "./format";
+import { csvCell } from "./csv";
 
 interface IndexUrlRow {
   url: string;
@@ -1210,10 +1211,6 @@ function today(): string {
 }
 function slug(s: string): string {
   return s.replace(/^sc-domain:/, "").replace(/^https?:\/\//, "").replace(/[^a-z0-9.-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "property";
-}
-function csvCell(v: string | number | null): string {
-  const s = v === null || v === undefined ? "" : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 /** Builds a CSV (UTF-8 BOM so Excel reads it correctly) and triggers a download. */
 function downloadCsv(filename: string, header: string[], rows: (string | number | null)[][]) {

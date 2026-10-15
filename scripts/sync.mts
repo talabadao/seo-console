@@ -1,6 +1,6 @@
 /**
  * Standalone daily sync — pulls the last N days of Search Console data for every
- * connected property of every user, into the local SQLite DB.
+ * connected property of every user, into the Postgres database in DATABASE_URL.
  *
  *   npm run sync
  *
