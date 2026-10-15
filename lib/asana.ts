@@ -56,7 +56,7 @@ export interface AsanaTask {
 }
 
 /** Every incomplete task, plus every task completed since `sinceISO` — paginated. */
-async function fetchProjectTasks(token: string, projectGid: string, sinceISO: string): Promise<AsanaTask[]> {
+export async function fetchProjectTasks(token: string, projectGid: string, sinceISO: string): Promise<AsanaTask[]> {
   const out: AsanaTask[] = [];
   let offset: string | null = null;
   const optFields = "name,completed,completed_at,due_on,assignee.name,permalink_url";

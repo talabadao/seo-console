@@ -1,11 +1,11 @@
 "use client";
 
-// v2 console shell (Milestone 01b), behind the V2_SHELL feature flag.
+// v2 console shell, behind the V2_SHELL feature flag.
 // Owns the layout, navigation, project switcher and addresses; the existing
 // working views (Performance, Opportunities, Analytics, Weekly Report,
 // Indexing, Page Speed, Reviews) are mounted inside it unchanged.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_ITEM,
   NAV,
@@ -38,20 +38,11 @@ import {
   KeywordExplorerDemo,
   MonthlyReportDemo,
 } from "./DemoPages";
-import {
-  Card,
-  DataTable,
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  MetricCard,
-  PageHeader,
-  StatusBadge,
-  buttonClass,
-  primaryButtonClass,
-  type Crumb,
-  type Status,
-} from "./ui";
+import { Breadcrumbs, EmptyState, ErrorState, LoadingState, PageHeader, buttonClass, primaryButtonClass, type Crumb, type Status } from "./ui";
+import { ProjectDashboard } from "./ProjectDashboard";
+import { PortfolioDashboard } from "./PortfolioDashboard";
+import { ProjectSettings } from "./ProjectSettings";
+import { useStored, writeStored } from "./summaryClient";
 
 interface SiteMeta {
   id: number;
@@ -92,15 +83,9 @@ export function Shell({
   const [projectView, setProjectView] = useState<ProjectView | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [drawer, setDrawer] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const collapsed = useStored(COLLAPSE_KEY, false, (v) => v === 1);
   const [searchType, setSearchType] = useState("web");
   const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
-    } catch {}
-  }, []);
 
   const navigate = useCallback((next: ShellLocation | string, replace = false) => {
     const href = typeof next === "string" ? next : buildShellPath(next);
@@ -170,12 +155,7 @@ export function Shell({
   }, [project]);
 
   function toggleCollapsed() {
-    setCollapsed((c) => {
-      try {
-        localStorage.setItem(COLLAPSE_KEY, c ? "0" : "1");
-      } catch {}
-      return !c;
-    });
+    writeStored(COLLAPSE_KEY, collapsed ? 0 : 1);
   }
 
   const sidebar = (mobile: boolean) => (
@@ -249,7 +229,7 @@ export function Shell({
       </header>
 
       <div className="flex">
-        <div className={`sticky top-14 hidden h-[calc(100vh-3.5rem)] shrink-0 border-r bg-surface lg:block ${collapsed ? "w-16" : "w-64"}`}>
+        <div className={`sticky top-14 hidden h-[calc(100vh-3.5rem)] shrink-0 border-r bg-surface lg:block ${collapsed ? "w-16" : "w-72"}`}>
           {sidebar(false)}
         </div>
 
@@ -395,7 +375,7 @@ function Sidebar({
                 {link(itemHref(loc, project, g.id, it.id), g.label, groupActive, (
                   <>
                     <Icon name={g.icon} />
-                    <span className="flex-1 truncate">{g.label}</span>
+                    <span className="min-w-0 flex-1 leading-snug">{g.label}</span>
                     <ItemMark item={it} project={project} />
                   </>
                 ))}
@@ -414,7 +394,7 @@ function Sidebar({
                 }`}
               >
                 <Icon name={g.icon} />
-                <span className="flex-1 truncate">{g.label}</span>
+                <span className="min-w-0 flex-1 leading-snug">{g.label}</span>
                 <span aria-hidden="true" className="text-xs text-muted">
                   {expanded ? "▾" : "▸"}
                 </span>
@@ -425,7 +405,7 @@ function Sidebar({
                     <div key={it.id}>
                       {link(itemHref(loc, project, g.id, it.id), it.label, groupActive && it.id === activeItem, (
                         <>
-                          <span className="flex-1 truncate">{it.label}</span>
+                          <span className="min-w-0 flex-1 leading-snug">{it.label}</span>
                           <ItemMark item={it} project={project} />
                         </>
                       ))}
@@ -444,7 +424,7 @@ function Sidebar({
             {!collapsed && (
               <>
                 <span className="flex-1">Docs</span>
-                <span className="text-[11px] text-muted">Planned</span>
+                <span className="shrink-0 rounded border border-dashed px-1 text-[10px] uppercase tracking-wide text-muted">Soon</span>
               </>
             )}
           </>
@@ -456,8 +436,8 @@ function Sidebar({
 
 /** Small text marker after a nav label: Demo, Planned, or a dot when the project lacks a connection. */
 function ItemMark({ item, project }: { item: NavItem; project: Project | null }) {
-  if (item.status === "demo") return <span className="text-[11px] text-muted">Demo</span>;
-  if (item.status === "planned") return <span className="text-[11px] text-muted">Planned</span>;
+  if (item.status === "demo") return <span className="shrink-0 rounded border px-1 text-[10px] uppercase tracking-wide text-muted" title="Sample data">Demo</span>;
+  if (item.status === "planned") return <span className="shrink-0 rounded border border-dashed px-1 text-[10px] uppercase tracking-wide text-muted" title="Not built yet">Soon</span>;
   if (project && !meetsRequirement(item.requires, project)) {
     return <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--bad)" }} title="Not connected" />;
   }
@@ -627,8 +607,8 @@ function Page(props: PageProps) {
       <>
         <PageHeader crumbs={[{ label: "Workspace" }, { label: "Docs" }]} title="Docs" status="planned" onNavigate={nav} />
         <EmptyState
-          title="The docs catalogue arrives in Milestone 13."
-          body="Product guide, SOPs and intern training, linking to existing Drive documents with their current permissions."
+          title="Docs aren't available yet."
+          body="A product guide, SOPs and training material, linking to existing Drive documents with their current permissions."
         />
       </>
     );
@@ -715,9 +695,19 @@ function Page(props: PageProps) {
       </label>
     ) : undefined;
 
+  if (loc.group === "dashboard") {
+    return (
+      <>
+        <div className="mb-3">
+          <Breadcrumbs crumbs={crumbs} onNavigate={nav} />
+        </div>
+        <ProjectPage {...props} project={project} item={item} connected={connected} />
+      </>
+    );
+  }
   return (
     <>
-      <PageHeader crumbs={crumbs} title={item.label} status={status} description={item.status !== "live" ? item.description : undefined} actions={actions} onNavigate={nav} />
+      <PageHeader crumbs={crumbs} title={item.label} status={status === "live" ? undefined : status} description={item.status !== "live" ? item.description : undefined} actions={actions} onNavigate={nav} />
       <ProjectPage {...props} project={project} item={item} connected={connected} />
     </>
   );
@@ -743,7 +733,7 @@ function ProjectPage({
   if (item.status === "planned") {
     return (
       <EmptyState
-        title={`Planned for Milestone ${item.milestone}.`}
+        title="This page isn't built yet."
         body={<p>{item.description} Nothing on this page reads or writes any data yet.</p>}
       />
     );
@@ -778,7 +768,7 @@ function ProjectPage({
 
   switch (`${loc.group}/${loc.item}`) {
     case "dashboard/overview":
-      return <ProjectOverview project={project} onNavigate={onNavigate} onEditProject={onEditProject} />;
+      return <ProjectDashboard project={project} onNavigate={onNavigate} />;
     case "search-console/performance":
       return gscReconnect || <PerformanceView property={property} searchType={searchType} onNeedsReconnect={onNeedsReconnect} onNotice={onNotice} />;
     case "search-console/opportunities":
@@ -794,7 +784,17 @@ function ProjectPage({
     case "technical-seo/indexing":
       return gscReconnect || <Indexing property={property} neverSynced={!site?.lastSync?.finished_at} />;
     case "settings/project":
-      return <SettingsPage project={project} onEditProject={onEditProject} onOpenSettings={onOpenSettings} />;
+      return (
+        <ProjectSettings
+          project={project}
+          sub={loc.sub}
+          sites={sites}
+          onSub={subNav}
+          onNavigate={onNavigate}
+          onEditProject={(id) => onEditProject(id)}
+          onOpenConsoleSettings={onOpenSettings}
+        />
+      );
   }
   return <EmptyState title="This page isn't available." />;
 }
@@ -813,31 +813,36 @@ function NoProjects({ onNew }: { onNew: () => void }) {
   );
 }
 
-function connectionStatus(on: boolean): Status {
-  return on ? "live" : "not-connected";
-}
-
-function PortfolioPage({ projects, onNavigate, onEditProject }: PageProps) {
-  const [only, setOnly] = useState<"all" | "missing">("all");
-  const counts = useMemo(
-    () => ({
-      gsc: projects.filter((p) => p.gscProperty).length,
-      ga4: projects.filter((p) => p.gaPropertyId).length,
-      reviews: projects.filter((p) => p.mapsUrl && p.hasSerpKey).length,
-    }),
-    [projects],
-  );
-  const rows =
-    only === "missing" ? projects.filter((p) => !p.gscProperty || !p.gaPropertyId || !(p.mapsUrl && p.hasSerpKey)) : projects;
-  const open = (p: Project) => onNavigate({ kind: "project", projectId: p.id, ...DEFAULT_ITEM, sub: "" });
-  const total = projects.length;
+function PortfolioPage({ projects, onNavigate, onEditProject, onRetryProjects }: PageProps) {
+  // On a Preview deployment (where /api/preview-status exists), an approved
+  // user can add synthetic demo projects to their own, otherwise empty, account.
+  const [preview, setPreview] = useState(false);
+  const [adding, setAdding] = useState<"idle" | "busy" | "error">("idle");
+  useEffect(() => {
+    if (projects.length) return;
+    fetch("/api/preview-status")
+      .then((r) => setPreview(r.ok))
+      .catch(() => {});
+  }, [projects.length]);
+  async function addDemo() {
+    setAdding("busy");
+    const res = await fetch("/api/preview/demo-projects", { method: "POST" }).catch(() => null);
+    if (!res?.ok) return setAdding("error");
+    setAdding("idle");
+    onRetryProjects();
+  }
+  const demoButton = preview ? (
+    <button className={buttonClass} onClick={addDemo} disabled={adding === "busy"} title="Adds three invented projects to your own account on this Preview">
+      {adding === "busy" ? "Adding…" : adding === "error" ? "Couldn't add demo projects. Try again" : "Add demo projects"}
+    </button>
+  ) : null;
 
   return (
     <>
       <PageHeader
         crumbs={[{ label: "Workspace" }, { label: "All projects" }]}
         title="All projects"
-        description="Only the projects your account owns. Performance, KPI and task columns arrive with portfolio summaries (Milestone 11)."
+        description="Performance and work across the projects your account owns."
         actions={
           <button className={primaryButtonClass} onClick={() => onEditProject()}>
             New project
@@ -845,187 +850,26 @@ function PortfolioPage({ projects, onNavigate, onEditProject }: PageProps) {
         }
         onNavigate={(h) => onNavigate(h)}
       />
-      {!total ? (
-        <NoProjects onNew={() => onEditProject()} />
+      {projects.length ? (
+        <PortfolioDashboard projects={projects} onNavigate={onNavigate} onNewProject={() => onEditProject()} />
       ) : (
-        <>
-          <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="Projects" value={String(total)} />
-            <MetricCard label="Search Console linked" value={`${counts.gsc} of ${total}`} />
-            <MetricCard label="GA4 linked" value={`${counts.ga4} of ${total}`} />
-            <MetricCard label="Reviews set up" value={`${counts.reviews} of ${total}`} />
-          </div>
-          <DataTable
-            rows={rows}
-            rowKey={(p) => String(p.id)}
-            exportName="projects"
-            searchPlaceholder="Search projects…"
-            toolbar={
-              <select
-                value={only}
-                onChange={(e) => setOnly(e.target.value as "all" | "missing")}
-                aria-label="Filter projects"
-                className="rounded-md border bg-background px-2 py-1.5 text-sm"
-              >
-                <option value="all">All projects</option>
-                <option value="missing">Missing a connection</option>
-              </select>
-            }
-            emptyText="No projects match."
-            columns={[
-              {
-                key: "name",
-                label: "Project",
-                width: "28%",
-                render: (p) => (
-                  <a
-                    href={buildShellPath({ kind: "project", projectId: p.id, ...DEFAULT_ITEM, sub: "" })}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      open(p);
-                    }}
-                    className="flex items-center gap-2 font-medium hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                  >
-                    <Favicon src={p.faviconUrl} name={p.name} size={18} />
-                    <span className="truncate">{p.name}</span>
-                  </a>
-                ),
-              },
-              { key: "website", label: "Website", value: (p) => (p.websiteUrl ? hostOf(p.websiteUrl) : null) },
-              { key: "gsc", label: "Search Console", value: (p) => (p.gscProperty ? "Linked" : "Not connected"), render: (p) => <StatusBadge status={connectionStatus(Boolean(p.gscProperty))} /> },
-              { key: "ga4", label: "GA4", value: (p) => (p.gaPropertyId ? "Linked" : "Not connected"), render: (p) => <StatusBadge status={connectionStatus(Boolean(p.gaPropertyId))} /> },
-              {
-                key: "reviews",
-                label: "Maps reviews",
-                value: (p) => (p.mapsUrl && p.hasSerpKey ? "Linked" : "Not connected"),
-                render: (p) => <StatusBadge status={connectionStatus(Boolean(p.mapsUrl && p.hasSerpKey))} />,
-              },
-              { key: "asana", label: "Asana", value: (p) => p.asanaProjectName || (p.asanaProjectGid ? "Linked" : null) },
-            ]}
-          />
-        </>
+        <EmptyState
+          title="No projects yet."
+          body={
+            preview
+              ? "Create a project, or add a few demo projects to explore the dashboards. Demo projects are invented, labelled as demo, and visible only to your account."
+              : "A project groups one brand's website with its Search Console, Analytics and review sources."
+          }
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <button className={primaryButtonClass} onClick={() => onEditProject()}>
+                New project
+              </button>
+              {demoButton}
+            </div>
+          }
+        />
       )}
     </>
-  );
-}
-
-function ProjectOverview({
-  project,
-  onNavigate,
-  onEditProject,
-}: {
-  project: Project;
-  onNavigate: (l: ShellLocation) => void;
-  onEditProject: (id?: number) => void;
-}) {
-  const connections: { label: string; detail: string | null; on: boolean }[] = [
-    { label: "Google Search Console", detail: project.gscProperty, on: Boolean(project.gscProperty) },
-    { label: "Google Analytics 4", detail: project.gaPropertyId ? `Property ${project.gaPropertyId}` : null, on: Boolean(project.gaPropertyId) },
-    { label: "Google Maps reviews", detail: project.gbpLocationTitle ?? (project.mapsUrl ? "Maps link saved" : null), on: Boolean(project.mapsUrl && project.hasSerpKey) },
-    { label: "Asana", detail: project.asanaProjectName || project.asanaProjectGid || null, on: Boolean(project.asanaProjectGid) },
-  ];
-  const live = NAV.flatMap((g) => g.items.filter((i) => i.status === "live" && g.id !== "dashboard" && g.id !== "settings").map((i) => ({ g, i })));
-
-  return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      <Card
-        title="Project"
-        actions={
-          <button className={buttonClass} onClick={() => onEditProject(project.id)}>
-            Edit project
-          </button>
-        }
-      >
-        <div className="flex items-center gap-3">
-          <Favicon src={project.faviconUrl} name={project.name} size={36} />
-          <div className="min-w-0">
-            <p className="truncate font-medium">{project.name}</p>
-            {project.websiteUrl ? (
-              <a href={project.websiteUrl} target="_blank" rel="noreferrer" className="truncate text-sm text-accent hover:underline">
-                {hostOf(project.websiteUrl)}
-              </a>
-            ) : (
-              <p className="text-sm text-muted">No website set</p>
-            )}
-          </div>
-        </div>
-        <p className="mt-4 text-xs text-muted">
-          Monthly KPI attainment, tasks and source health appear here with the project dashboard (Milestone 11).
-        </p>
-      </Card>
-      <Card title="Connections" className="xl:col-span-2">
-        <ul className="divide-y">
-          {connections.map((c) => (
-            <li key={c.label} className="flex flex-wrap items-center gap-3 py-2.5 text-sm">
-              <span className="w-48 font-medium">{c.label}</span>
-              <StatusBadge status={connectionStatus(c.on)} />
-              <span className="min-w-0 flex-1 truncate text-muted">{c.detail ?? "—"}</span>
-            </li>
-          ))}
-        </ul>
-      </Card>
-      <Card title="Live modules" className="xl:col-span-3">
-        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {live.map(({ g, i }) => {
-            const ok = meetsRequirement(i.requires, project);
-            const target: ShellLocation = { kind: "project", projectId: project.id, group: g.id, item: i.id, sub: "" };
-            return (
-              <li key={`${g.id}/${i.id}`}>
-                <a
-                  href={buildShellPath(target)}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onNavigate(target);
-                  }}
-                  className="flex items-center justify-between gap-2 rounded-lg border p-3 text-sm hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                >
-                  <span>
-                    <span className="block font-medium">{i.label}</span>
-                    <span className="block text-xs text-muted">{g.label}</span>
-                  </span>
-                  <StatusBadge status={ok ? "live" : "not-connected"} />
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
-    </div>
-  );
-}
-
-function SettingsPage({
-  project,
-  onEditProject,
-  onOpenSettings,
-}: {
-  project: Project;
-  onEditProject: (id?: number) => void;
-  onOpenSettings: () => void;
-}) {
-  return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card title="Project">
-        <p className="text-sm text-muted">
-          Brand name, website, favicon, linked Search Console and GA4 properties, Google Maps reviews source, Asana project
-          and this month&apos;s KPI targets for {project.name}.
-        </p>
-        <button className={`mt-3 ${primaryButtonClass}`} onClick={() => onEditProject(project.id)}>
-          Edit project
-        </button>
-      </Card>
-      <Card title="Console settings">
-        <p className="text-sm text-muted">Theme, Bing key, Asana token, brand terms, indexing automation and AI-search sources.</p>
-        <button className={`mt-3 ${buttonClass}`} onClick={onOpenSettings}>
-          Open settings
-        </button>
-      </Card>
-      <Card title="Access" className="lg:col-span-2">
-        <p className="text-sm text-muted">
-          Sign-in is limited to approved Google accounts, and each account sees only its own projects. Workspace members and
-          roles arrive in phase 2.
-        </p>
-      </Card>
-    </div>
   );
 }

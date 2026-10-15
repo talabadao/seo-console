@@ -21,35 +21,42 @@ describe("navigation model", () => {
   });
 
   it("covers every destination in the product spec, including Structured Data / Schema", () => {
-    const labels = NAV.flatMap((g) => [g.label, ...g.items.map((i) => i.label)]);
-    for (const l of [
-      "Dashboard",
-      "Keyword Research",
-      "Competitive Research",
-      "Link Building",
-      "SE Ranking",
-      "Google Search Tracking",
-      "Bing Search Tracking",
-      "Yandex Search Tracking",
-      "Naver Search Tracking",
-      "Google Search Console",
-      "Google Analytics 4",
-      "Google Business Profile",
-      "Google Maps Reviews",
-      "Site Audit",
-      "PageSpeed Insights",
-      "Indexing",
-      "Structured Data / Schema",
-      "Content",
-      "AI Area",
-      "Automation",
-      "Weekly Report",
-      "Monthly Report",
-      "Settings",
-    ]) {
-      expect(labels).toContain(l);
-    }
+    // Spec destination -> where it lives. Labels are short in the sidebar; the group gives context.
+    const spec: [string, string, string][] = [
+      ["Dashboard", "dashboard", "overview"],
+      ["Keyword Research", "keyword-research", "explorer"],
+      ["Competitive Research", "competitive-research", "overview"],
+      ["Link Building", "link-building", "backlinks"],
+      ["SE Ranking", "organic-serp", "se-ranking"],
+      ["Google Search Tracking", "organic-serp", "google"],
+      ["Bing Search Tracking", "organic-serp", "bing"],
+      ["Yandex Search Tracking", "organic-serp", "yandex"],
+      ["Naver Search Tracking", "organic-serp", "naver"],
+      ["Google Search Console", "search-console", "performance"],
+      ["Google Analytics 4", "analytics", "overview"],
+      ["Google Business Profile", "local-seo", "business-profile"],
+      ["Google Maps Reviews", "local-seo", "reviews"],
+      ["Site Audit", "technical-seo", "site-audit"],
+      ["PageSpeed Insights", "technical-seo", "pagespeed"],
+      ["Indexing", "technical-seo", "indexing"],
+      ["Structured Data / Schema", "technical-seo", "structured-data"],
+      ["Content", "content", "board"],
+      ["AI Area", "ai-area", "overview"],
+      ["Automation", "automation", "workflows"],
+      ["Weekly Report", "reports", "weekly"],
+      ["Monthly Report", "reports", "monthly"],
+      ["Settings", "settings", "project"],
+    ];
+    for (const [name, group, item] of spec) expect(findItem(group, item), name).not.toBeNull();
+    expect(findItem("technical-seo", "structured-data")?.item.label).toBe("Structured Data / Schema");
     expect(findItem("technical-seo", "structured-data")?.item.status).toBe("planned");
+  });
+
+  it("keeps sidebar labels short enough to read without truncation", () => {
+    for (const g of NAV) {
+      expect(g.label.length, g.label).toBeLessThanOrEqual(18);
+      for (const i of g.items) expect(i.label.length, i.label).toBeLessThanOrEqual(24);
+    }
   });
 
   it("marks demo and planned items with the milestone that makes them real", () => {
@@ -104,6 +111,13 @@ describe("project switching", () => {
       sub: "",
     });
     expect(switchProject({ kind: "portfolio" }, 5)).toMatchObject({ projectId: 5, group: "dashboard", item: "overview" });
+    expect(switchProject({ kind: "project", projectId: 1, group: "settings", item: "project", sub: "kpi" }, 2)).toEqual({
+      kind: "project",
+      projectId: 2,
+      group: "settings",
+      item: "project",
+      sub: "kpi",
+    });
   });
 
   it("checks what a live page needs from the project", () => {

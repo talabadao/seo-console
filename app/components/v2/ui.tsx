@@ -3,7 +3,7 @@
 // Shared building blocks for v2 pages: one look for headers, cards, tables
 // and the loading / empty / error / demo states.
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { downloadCsv } from "../csv";
 import { DEMO_CSV_NOTE } from "@/lib/v2/demo";
 import type { ItemStatus } from "@/lib/v2/nav";
@@ -13,7 +13,7 @@ export type Status = ItemStatus | "not-connected";
 const STATUS: Record<Status, { label: string; dot: string; title: string }> = {
   live: { label: "Live", dot: "var(--good)", title: "Real data from a connected source" },
   demo: { label: "Demo", dot: "var(--position)", title: "Fictional sample data, not real measurements" },
-  planned: { label: "Planned", dot: "var(--muted)", title: "Not built yet; arrives in a later milestone" },
+  planned: { label: "Planned", dot: "var(--muted)", title: "Not built yet" },
   "not-connected": { label: "Not connected", dot: "var(--bad)", title: "This project is missing a connection this page needs" },
 };
 
@@ -35,6 +35,35 @@ export interface Crumb {
   href?: string;
 }
 
+export function Breadcrumbs({ crumbs, onNavigate }: { crumbs: Crumb[]; onNavigate: (href: string) => void }) {
+  return (
+    <nav aria-label="Breadcrumb" className="mb-1 text-sm text-muted">
+      <ol className="flex flex-wrap items-center gap-1.5">
+        {crumbs.map((c, i) => (
+          <li key={`${c.label}-${i}`} className="flex items-center gap-1.5">
+            {i > 0 && <span aria-hidden="true">/</span>}
+            {c.href && i < crumbs.length - 1 ? (
+              <a
+                href={c.href}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  onNavigate(c.href!);
+                }}
+                className="rounded hover:text-foreground hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                {c.label}
+              </a>
+            ) : (
+              <span aria-current={i === crumbs.length - 1 ? "page" : undefined}>{c.label}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
 export function PageHeader({
   crumbs,
   title,
@@ -52,30 +81,7 @@ export function PageHeader({
 }) {
   return (
     <header className="mb-6">
-      <nav aria-label="Breadcrumb" className="mb-1 text-sm text-muted">
-        <ol className="flex flex-wrap items-center gap-1.5">
-          {crumbs.map((c, i) => (
-            <li key={`${c.label}-${i}`} className="flex items-center gap-1.5">
-              {i > 0 && <span aria-hidden="true">/</span>}
-              {c.href && i < crumbs.length - 1 ? (
-                <a
-                  href={c.href}
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                    e.preventDefault();
-                    onNavigate(c.href!);
-                  }}
-                  className="rounded hover:text-foreground hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                >
-                  {c.label}
-                </a>
-              ) : (
-                <span aria-current={i === crumbs.length - 1 ? "page" : undefined}>{c.label}</span>
-              )}
-            </li>
-          ))}
-        </ol>
-      </nav>
+      <Breadcrumbs crumbs={crumbs} onNavigate={onNavigate} />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {status && <StatusBadge status={status} />}
@@ -185,6 +191,8 @@ export function DataTable<T>({
   toolbar,
   emptyText = "No rows match.",
   rowKey,
+  onVisibleRows,
+  note,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -195,6 +203,10 @@ export function DataTable<T>({
   toolbar?: ReactNode;
   emptyText?: string;
   rowKey: (row: T) => string;
+  /** Called with the rows on the current page, e.g. to load their data lazily. */
+  onVisibleRows?: (rows: T[]) => void;
+  /** Small text under the toolbar. */
+  note?: ReactNode;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
@@ -227,6 +239,11 @@ export function DataTable<T>({
   const pages = Math.max(1, Math.ceil(shown.length / pageSize));
   const current = Math.min(page, pages - 1);
   const slice = shown.slice(current * pageSize, current * pageSize + pageSize);
+  const sliceKey = slice.map(rowKey).join(",");
+  useEffect(() => {
+    onVisibleRows?.(slice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sliceKey]);
 
   function exportCsv() {
     const header = columns.map((c) => c.label);
@@ -259,7 +276,8 @@ export function DataTable<T>({
           </button>
         )}
       </div>
-      <div className="overflow-x-auto">
+      {note && <div className="border-b px-3 py-1.5 text-xs text-muted">{note}</div>}
+      <div className="relative overflow-x-auto">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b text-left text-muted">
