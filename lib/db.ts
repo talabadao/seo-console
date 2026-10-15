@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { BASELINE_STATEMENTS } from "./schema";
+import { databaseUrlFor } from "./environment";
 
 /**
  * Postgres-backed replacement for the old node:sqlite connection. Kept the same
@@ -9,18 +10,9 @@ import { BASELINE_STATEMENTS } from "./schema";
  * call sites use `await db.prepare(...).get(...)` etc.
  */
 
+// Preview deployments use only PREVIEW_DATABASE_URL; see lib/environment.ts.
 function connectionString(): string {
-  const url =
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.POSTGRES_PRISMA_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_URL is not set. Add a Postgres connection string (e.g. from Neon/Supabase) " +
-        "to .env.local for local dev, and as a Vercel project environment variable for deploys.",
-    );
-  }
-  return url;
+  return databaseUrlFor();
 }
 
 const globalForDb = globalThis as unknown as { __seoSql?: postgres.Sql };

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { schedulesAllowed } from "@/lib/environment";
 import { runDuePages } from "@/lib/pagespeed";
 
 export const maxDuration = 300;
@@ -10,6 +11,8 @@ export const maxDuration = 300;
  * Requires `Authorization: Bearer $CRON_SECRET`, which Vercel sends itself.
  */
 export async function GET(req: NextRequest) {
+  // Scheduled work runs in production only, never from a Preview deployment.
+  if (!schedulesAllowed()) return NextResponse.json({ skipped: "schedules run in production only" });
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
