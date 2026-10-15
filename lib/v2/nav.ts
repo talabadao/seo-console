@@ -93,13 +93,8 @@ export const NAV: NavGroup[] = [
         milestone: "06",
         description: "Daily rankings, competitors, backlinks, site audit and AI prompts from SE Ranking. Needs an SE Ranking API key.",
       },
-      {
-        id: "google",
-        label: "Google",
-        status: "planned",
-        milestone: "07",
-        description: "SERP snapshots for selected keywords through SerpApi, checked on demand or on a schedule you enable.",
-      },
+      // Shares data and runs with AI Area → Google Search Tracking (opens on its Rank tracker view).
+      { id: "google", label: "Google", status: "live" },
       { id: "bing", label: "Bing", status: "planned", milestone: "07", description: "Bing SERP tracking through SerpApi." },
       { id: "yandex", label: "Yandex", status: "planned", milestone: "07", description: "Yandex SERP tracking through SerpApi." },
       { id: "naver", label: "Naver", status: "planned", milestone: "07", description: "Naver SERP tracking through SerpApi." },
@@ -179,14 +174,17 @@ export const NAV: NavGroup[] = [
     id: "ai-area",
     label: "AI Area",
     icon: "sparkle",
+    // Phase one ports the AI Brand Mention app's two screens; Searchable is not part of it.
     items: [
+      { id: "google-search-tracking", label: "Google Search Tracking", status: "live" },
       {
-        id: "overview",
-        label: "AI visibility",
+        id: "brand-mentions",
+        label: "Brand Mentions",
         status: "planned",
-        milestone: "10",
-        description: "Mentions, citations, competitors and sentiment in AI answers, from Searchable. Needs a Searchable connection.",
+        milestone: "08",
+        description: "What Google AI Mode, AI Overviews, ChatGPT and Claude say about the brand, next to its Google Maps reviews.",
       },
+      { id: "usage", label: "Usage & Costs", status: "live" },
     ],
   },
   {
