@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { databaseUrlFor, deploymentOf, externalWritesAllowed, schedulesAllowed } from "@/lib/environment";
+import {
+  databaseUrlFor,
+  deploymentOf,
+  externalWritesAllowed,
+  missingPreviewSettings,
+  schedulesAllowed,
+} from "@/lib/environment";
 import { describeTarget } from "@/lib/migrations";
 
 /**
@@ -23,6 +29,7 @@ export async function GET() {
       databaseError,
       externalWrites: externalWritesAllowed(),
       schedules: schedulesAllowed(),
+      missingSettings: missingPreviewSettings(),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

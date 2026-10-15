@@ -6,6 +6,8 @@ import { isShellPath } from "@/lib/v2/nav";
 import { v2ShellEnabled } from "@/lib/v2/flag";
 import { MOCK_USER, devMockEnabled } from "@/lib/v2/devMock";
 import { DevMockShell } from "@/app/components/v2/DevMockShell";
+import { PreviewNotConfigured } from "@/app/components/PreviewNotConfigured";
+import { missingPreviewSettings } from "@/lib/environment";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +30,8 @@ export default async function Home({
     return <DevMockShell user={MOCK_USER} bingConnected={false} initialPath={isShellPath(path ?? []) ? path! : ["portfolio"]} />;
   }
 
+  const missing = missingPreviewSettings();
+  if (missing.length) return <PreviewNotConfigured missing={missing} />;
   const user = await currentUser();
   const configured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
