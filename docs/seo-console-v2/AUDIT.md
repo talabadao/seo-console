@@ -13,7 +13,9 @@ Audit date: 2026-10-15. Read-only: no application code, dependencies, infrastruc
 | Tests | **Fact:** none in either repo (no test files, no test runner) | none |
 | Size | 36 API route files; 19 UI components | 45 API route files; 207 files under `src/`, ~30k lines of TS/TSX |
 
-**Fact:** a third deployment exists — Vercel `seo-console-official` from the separate repo talabadao/seo-console-official, production at `edb65bb` (2026-09-30). It has diverged from the host (it lacks Projects, Page Speed, Reviews and the new addresses, and has its own GA4/GTM tags). **Question:** is it still meant to track the host, or is it frozen? This plan treats the host as the only codebase being developed.
+**Out of scope (owner decision, 2026-10-15):** `seo-console-official` is a separate product. It is not investigated, modified, migrated, retired or repointed, and does not block any work here. The host is the only codebase being developed.
+
+**Donor deployment (owner decision):** AI Brand Mention runs on its own Vercel deployment, outside this team. It is used as a code reference only: its deployment is not modified, its production storage is not connected, and its historical data is not imported in this phase.
 
 ## 2. Host — feature inventory
 
@@ -75,12 +77,26 @@ The spec forbids demo data as a fallback for a missing key. When adapted, these 
 | 4.10 | Donor "Brand mentions / ChatGPT mentions" calls OpenAI and Anthropic directly and computes its own visibility. The spec makes Searchable the phase 1 source of record, so this stays disabled behind an experimental boundary. | Fact |
 | 4.11 | Host has two parallel review implementations once the donor is imported: host (SerpApi Google Maps + gpt-4o-mini, Postgres) and donor (Google Maps **and Tripadvisor** via SerpApi, Blob). | Fact |
 | 4.12 | Neither repo has automated tests; the spec's acceptance gates (concurrency, idempotency, budget, auth boundaries) need a test runner. Adding one is a dependency decision for Milestone 01/03. | Fact |
+| 4.13 | **`CRON_SECRET` is not set in Vercel.** Every cron route requires it (`app/api/cron/*` return 401 when it is missing), so the scheduled daily indexing runs and the daily Page Speed checks have most likely never run in production. Hobby log retention (1 hour) could not confirm it from logs, because a 401 writes no log line. Fix is an owner setting (see STATUS → setup steps). | Fact (missing variable, code path); Inference (jobs not running) |
 
-## 5. Questions for the owner
+## 5. Owner decisions (2026-10-15)
 
-1. **Login policy for phase 1.** Today any Google account can sign in and gets a private, empty workspace. Is the team actually sharing one Google account, or does each person sign in with their own company account? This decides whether the first workspace migration is "one user → one workspace" or "everyone → one company workspace".
-2. **Donor deployment.** Where is ai-brand-mention deployed, is Vercel deployment protection on, and does its Blob store hold history worth importing?
-3. **seo-console-official.** Keep in sync with the host, freeze it, or retire it?
-4. **Preview database.** Approve creating a separate Neon branch/database for preview deployments before any schema-changing PR (Milestone 02 onward).
-5. **Indexing API.** Restrict "Submit" to eligible page types now, or keep the current behaviour until Milestone 09A?
-6. **Test runner.** Approve adding a test runner (for example Vitest) as a dev dependency in Milestone 01.
+The six questions raised by this audit were answered by the owner:
+
+1. **Login policy.** Users sign in with their own Google accounts. Phase 1 allows exactly two accounts: `analytics@headsonpillows.com` and `analytics@artemisdigital.com`, enforced on the server against the verified Google identity (not by domain). Existing project ownership and data boundaries stay as they are: each account keeps its own projects; nothing is merged. Staff/manager roles are phase 2, so workspace membership and project permissions are designed in but not enabled. This replaces the earlier "single shared Google account" assumption.
+   - **Consequence (Fact):** production currently holds a third user, `tinledoihoa@gmail.com`. Once the allowlist ships, that account can no longer sign in; its rows are kept untouched.
+2. **Donor deployment.** Separate Vercel deployment; code reference only. No connection to its storage and no history import in this phase (see §1).
+3. **seo-console-official.** Out of scope; left unchanged.
+4. **Preview isolation.** Required before testing migrations or data-writing workflows: a separate Preview database (and separate storage where applicable) seeded with synthetic fixtures; no production write credentials, schedules or publishing actions in Preview. Delivered as its own PR plus owner setup steps.
+5. **Indexing API.** A separate, narrowly scoped fix restricts Google Indexing API submission to supported page types (JobPosting, or BroadcastEvent livestreams), detected from the page's structured data rather than URL patterns. URL Inspection is unchanged, and a submission is never shown as confirmed indexing.
+6. **Test runner.** Vitest approved, if compatible with the stack.
+
+### Preview environment — current state (Fact, from Vercel settings)
+| Variable group | Targets today | Risk |
+|---|---|---|
+| Neon database (`DATABASE_URL`, `POSTGRES_*`, `PG*`, `NEON_*`) | Production **and Preview** | Preview builds hold production database credentials |
+| `GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI`, `SESSION_SECRET` | Production only | Preview cannot sign anyone in today |
+| `OPENAI_API_KEY`, `PAGESPEED_API_KEY` | Production only | None in Preview |
+| `CRON_SECRET` | **Not set at all** | Vercel only runs crons on Production, and the cron routes reject every call without it (finding 4.13) |
+
+**Inference:** because Preview has no Google credentials, nobody can sign in to a preview, so today the main exposure is that preview code connects to production with full credentials, and that the implicit migrations in `lib/db.ts` would run against production as soon as a preview touches the database.

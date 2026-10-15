@@ -3,7 +3,7 @@
 Principles: additive changes only (expand → backfill → validate → contract), every backfill rerunnable without duplicates, nothing deleted in phase 1, donor left untouched.
 
 ## 0. Prerequisites (before any schema-changing PR)
-1. **Separate preview database** (AUDIT 4.2). Create a Neon branch for previews and point the `preview` environment's database variables at it, so branch deployments stop running migrations on production. Owner action in Vercel/Neon.
+1. **Separate preview database** (AUDIT 4.2). A Neon branch for Preview, seeded with synthetic fixtures. The app refuses to use the production database variables in Preview (PR `chore/preview-isolation`), and the owner points `PREVIEW_DATABASE_URL` at the branch. Steps in STATUS.md.
 2. **Migration history.** Replace the implicit `migrate()` in `lib/db.ts` with numbered migration files plus a `schema_migrations` table, applied once per deploy and also safe to rerun. The existing `CREATE TABLE IF NOT EXISTS` set becomes migration `0001_baseline` (a no-op on production).
 3. **Backup and restore rehearsal.** Take a Neon branch/snapshot of production and restore it into a scratch branch once, recording the steps and time.
 
@@ -12,10 +12,7 @@ Current: `users` (one row per Google account) own `projects`, `sites`, `ga_prope
 
 1. Add `workspaces (id, name, created_at)` and `workspace_members (workspace_id, user_id, role default 'member', created_at)`.
 2. Add `projects.workspace_id` (nullable at first).
-3. Backfill, deterministically: the mapping depends on the login decision (AUDIT Q1).
-   - *Option A — shared company account:* one workspace for the company; every existing user becomes a member; every project gets that workspace id.
-   - *Option B — one workspace per current user:* `workspace.id` derived from the user, each user's projects assigned to it; later merges are explicit.
-   Either backfill is `INSERT … ON CONFLICT DO NOTHING` keyed on stable ids, so rerunning creates nothing new.
+3. Backfill, deterministically, **one workspace per existing user** (owner decision: the two allowlisted accounts keep separate projects; nothing is merged). `workspace.id` is derived from the user, the user becomes its only member, and the user's projects are assigned to it. Any later sharing or merging is an explicit, reviewed action. The backfill is `INSERT … ON CONFLICT DO NOTHING` keyed on stable ids, so rerunning creates nothing new.
 4. Validate (every project has a workspace; counts unchanged), then make `workspace_id` NOT NULL in a later release.
 5. Authorization moves from `user_id = ?` to "user is a member of the project's workspace" through one shared helper; direct API requests use the same helper.
 6. KPI targets: add `weekly_kpi_config.project_id`, backfill from the project linked to each GA4 property; keep the old key readable until validated (AUDIT 4.6).
@@ -28,8 +25,8 @@ Add `project_mappings (project_id, provider, external_id, connection_id, verifie
 2. Encrypt with an app key held in an environment variable (owner creates it; never printed), AES-GCM, with `key_version` for rotation.
 3. Copy existing plaintext secrets (`projects.serpapi_key`, `users.asana_api_token`, `users.bing_api_key`) into encrypted connections; readers switch to connections; plaintext columns are nulled in a later release after validation. Google OAuth tokens move last because every Google feature depends on them.
 
-## 4. Donor Blob → Postgres import
-Only after the donor deployment and Blob store are identified (AUDIT Q2), per module, when that module is implemented:
+## 4. Donor Blob → Postgres import — **not in this phase**
+Owner decision: the donor is a code reference only. Its production storage is not connected and its history is not imported in this phase. The mapping below is kept for a possible later phase:
 
 | Donor path | Target |
 |---|---|

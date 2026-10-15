@@ -13,7 +13,7 @@
 | Indexing | Keep, correct | `lib/indexer.ts`, `lib/google/indexingApi.ts` | Durable queue; eligibility-gate Indexing API (AUDIT 4.4); IndexNow separate (Milestone 09A) |
 | Page Speed | Keep | `lib/pagespeed.ts`, `lib/pagespeedParse.ts` | Move cron into durable jobs; add CrUX adapter boundary (09B) |
 | Reviews — Google Maps | Adapt (both) | Host `lib/serpapi.ts` + `lib/reviews.ts`; donor `src/lib/reviews/*` | Host keeps Postgres storage and credit estimates; take donor's Tripadvisor parser, coverage/stats logic and UI patterns. One review store, source-aware |
-| Reviews — Tripadvisor | Adapt (donor) | `src/lib/reviews/serpapi.ts` | Into host review store with `source` column |
+| Reviews — Tripadvisor | Adapt (donor) | `src/lib/reviews/serpapi.ts` | Into host review store with `source` column. Code only; donor review history is not imported in this phase |
 | GBP public profile analysis | Rebuild | — | SerpApi listing data; evidence-based checklist (Milestone 08) |
 | SE Ranking (6 tabs) | Adapt (donor) | `src/lib/seranking/{client,sync,types,competition,backlinks}.ts`, `src/components/seranking/*` | Drop `mock.ts` from live paths, drop `rateSlot` (process-local), drop header-less auth. Postgres snapshots per project; explicit project↔site mapping (Milestone 06) |
 | SERP tracking (Google) | Adapt (donor) | `src/lib/tracking/{serpapi,run,analytics,visibility,types}.ts`, `src/components/tracking/*` | Do **not** import `serpKeyPool.ts` key rotation. Postgres contexts/observations; nullable positions (Milestone 07) |
