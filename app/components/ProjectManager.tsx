@@ -241,7 +241,7 @@ export function ProjectManager({
                       {[
                         p.gscProperty ? `Search Console: ${p.gscProperty}` : "No Search Console",
                         p.gaPropertyId ? `GA4: ${gaName(p.gaPropertyId)}` : "No GA4",
-                        p.mapsUrl && p.hasSerpKey ? "Reviews set up" : "No reviews",
+                        p.hasSerpKey ? "SerpApi key saved" : "No SerpApi key",
                       ].join(" · ")}
                     </div>
                   </div>
@@ -327,7 +327,6 @@ function ProjectForm({
   const [gscProperty, setGscProperty] = useState(project?.gscProperty ?? "");
   const [gaPropertyId, setGaPropertyId] = useState(project?.gaPropertyId ?? "");
   const [mapsUrl, setMapsUrl] = useState(project?.mapsUrl ?? "");
-  const [serpApiKey, setSerpApiKey] = useState("");
   const [asanaProjectGid, setAsanaProjectGid] = useState(project?.asanaProjectGid ?? "");
   const [asanaProjectName, setAsanaProjectName] = useState(project?.asanaProjectName ?? "");
   // Fields the user has set by hand stop following the website URL.
@@ -400,8 +399,6 @@ function ProjectForm({
           gscProperty: gscProperty || null,
           gaPropertyId: gaPropertyId || null,
           mapsUrl,
-          // Only sent when a new key was typed, so the saved one is kept otherwise.
-          ...(serpApiKey.trim() ? { serpApiKey: serpApiKey.trim() } : {}),
           asanaProjectGid,
           asanaProjectName,
         }),
@@ -550,22 +547,12 @@ function ProjectForm({
               className={field}
             />
           </label>
-          <label>
-            <span className={label}>SerpApi key {project?.hasSerpKey ? "· saved" : ""}</span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={serpApiKey}
-              onChange={(e) => setSerpApiKey(e.target.value)}
-              placeholder={project?.hasSerpKey ? "Enter a new key to replace" : "Paste the key from serpapi.com"}
-              className={field}
-            />
-          </label>
         </div>
         <p className="mt-2 text-xs text-muted">
           The Reviews tab reads this business&apos;s Google Maps reviews through SerpApi, only when you
           press fetch. Open the business in Google Maps and copy the link from the address bar or the
-          Share button. The key is stored on the server and never shown again.
+          Share button. The <strong>SerpApi key</strong> is managed on its own, under Project settings →
+          Integrations, so saving it never depends on this link.
         </p>
       </section>
 

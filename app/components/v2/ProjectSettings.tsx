@@ -14,6 +14,7 @@ import { hostOf } from "@/lib/projectMatch";
 import { NAV, meetsRequirement, type ShellLocation } from "@/lib/v2/nav";
 import { Card, buttonClass, primaryButtonClass } from "./ui";
 import { LeadEventsEditor } from "../LeadEventsEditor";
+import { CredentialField } from "./CredentialField";
 
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
@@ -40,6 +41,7 @@ export function ProjectSettings({
   onNavigate,
   onEditProject,
   onOpenConsoleSettings,
+  onProjectChanged,
 }: {
   project: Project;
   sub: string;
@@ -48,6 +50,7 @@ export function ProjectSettings({
   onNavigate: (l: ShellLocation) => void;
   onEditProject: (id: number) => void;
   onOpenConsoleSettings: () => void;
+  onProjectChanged: () => void | Promise<void>;
 }) {
   const section: SectionId = SETTINGS_SECTIONS.some((s) => s.id === sub) ? (sub as SectionId) : "general";
   const edit = (
@@ -87,7 +90,7 @@ export function ProjectSettings({
           </Card>
         )}
 
-        {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onOpenConsoleSettings={onOpenConsoleSettings} />}
+        {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onOpenConsoleSettings={onOpenConsoleSettings} onProjectChanged={onProjectChanged} />}
 
         {section === "kpi" && <KpiTargets project={project} onLink={() => onEditProject(project.id)} onLeadEvents={() => onSub("analytics")} />}
 
@@ -162,19 +165,22 @@ function Integrations({
   edit,
   onNavigate,
   onOpenConsoleSettings,
+  onProjectChanged,
 }: {
   project: Project;
   edit: ReactNode;
   onNavigate: (l: ShellLocation) => void;
   onOpenConsoleSettings: () => void;
+  onProjectChanged: () => void | Promise<void>;
 }) {
   const connections = [
     { label: "Google Search Console", detail: project.gscProperty, on: Boolean(project.gscProperty) },
     { label: "Google Analytics 4", detail: project.gaPropertyId ? `Property ${project.gaPropertyId}` : null, on: Boolean(project.gaPropertyId) },
     {
-      label: "Google Maps reviews",
-      detail: project.gbpLocationTitle ?? (project.mapsUrl ? (project.hasSerpKey ? "Maps link and SerpApi key saved" : "Maps link saved; SerpApi key missing") : null),
-      on: Boolean(project.mapsUrl && project.hasSerpKey),
+      // The Maps link is a project field; the SerpApi key is a separate credential, shown below.
+      label: "Google Maps link",
+      detail: project.gbpLocationTitle ?? (project.mapsUrl || null),
+      on: Boolean(project.mapsUrl),
     },
     { label: "Asana", detail: project.asanaProjectName || project.asanaProjectGid || null, on: Boolean(project.asanaProjectGid) },
   ];
@@ -198,6 +204,7 @@ function Integrations({
           </button>
         </p>
       </Card>
+      <SerpApiKeyCard project={project} onProjectChanged={onProjectChanged} />
       <SeRankingCard project={project} />
       <Card title="Pages that need a connection">
         <ul className="grid gap-2 sm:grid-cols-2">
@@ -222,6 +229,44 @@ function Integrations({
         </ul>
       </Card>
     </>
+  );
+}
+
+/**
+ * The project's SerpApi key as a standalone credential: Saved / Not configured, masked identifier, last-updated,
+ * Replace / Remove, and a non-billable Check against SerpApi's free account endpoint. Saving goes to its own
+ * endpoint, so it never depends on the Maps link or any other project field.
+ */
+function SerpApiKeyCard({ project, onProjectChanged }: { project: Project; onProjectChanged: () => void | Promise<void> }) {
+  const base = `/api/projects/${project.id}/serpapi-key`;
+  async function body(res: Response): Promise<string | null> {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) return j.error ?? `Couldn't save (status ${res.status}).`;
+    await onProjectChanged();
+    return null;
+  }
+  return (
+    <Card title="SerpApi key">
+      <p className="mb-2 text-xs text-muted">
+        Used for this project&apos;s Google Maps reviews and AI Area → Google Search Tracking. Stored on the server and never shown again.
+      </p>
+      <CredentialField
+        label="SerpApi key"
+        hint="From serpapi.com → API key."
+        docsHref="https://serpapi.com/manage-api-key"
+        placeholder="Paste the key from serpapi.com"
+        status={{ last4: project.serpKeyLast4, updatedAt: project.serpKeyUpdatedAt }}
+        onSave={(value) => fetch(base, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: value }) }).then(body)}
+        onRemove={() => fetch(base, { method: "DELETE" }).then(body)}
+        onCheck={async () => {
+          const res = await fetch(base, { method: "POST" });
+          const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; account?: { totalSearchesLeft: number | null } };
+          if (!res.ok || j.ok === false) return { ok: false, message: j.error ?? `Check failed (status ${res.status}).` };
+          const left = j.account?.totalSearchesLeft;
+          return { ok: true, message: left == null ? "the key works." : `${left.toLocaleString("en-US")} SerpApi searches left on the account.` };
+        }}
+      />
+    </Card>
   );
 }
 

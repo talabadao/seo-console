@@ -723,6 +723,7 @@ function ProjectPage({
   onOpenSettings,
   onNeedsReconnect,
   onNotice,
+  onRetryProjects,
 }: PageProps & { project: Project; item: NavItem; connected: boolean }) {
   if (loc.kind !== "project") return null;
   const subNav = (sub: string) => onNavigate({ ...loc, sub });
@@ -825,6 +826,7 @@ function ProjectPage({
           onNavigate={onNavigate}
           onEditProject={(id) => onEditProject(id)}
           onOpenConsoleSettings={onOpenSettings}
+          onProjectChanged={onRetryProjects}
         />
       );
   }
