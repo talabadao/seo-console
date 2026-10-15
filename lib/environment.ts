@@ -17,14 +17,26 @@ export function deploymentOf(env: Env = process.env): Deployment {
 export class EnvironmentError extends Error {}
 
 /**
- * The Postgres connection string for this deployment. In Preview only
- * PREVIEW_DATABASE_URL is used — the production variables (DATABASE_URL and
- * the Neon-provided POSTGRES_*) are ignored even when Vercel exposes them to
- * Preview, so a branch build can't touch production data by accident.
+ * The Preview database's connection string: PREVIEW_DATABASE_URL, or the
+ * pooled DATABASE_URL that Vercel's Neon integration creates when the Preview
+ * database is connected with the custom prefix "PREVIEW_DATABASE_URL"
+ * (it names that variable PREVIEW_DATABASE_URL_DATABASE_URL). Both are
+ * Preview-only names; nothing here reads a production variable.
+ */
+export function previewDatabaseUrl(env: Env = process.env): string | null {
+  return env.PREVIEW_DATABASE_URL?.trim() || env.PREVIEW_DATABASE_URL_DATABASE_URL?.trim() || null;
+}
+
+/**
+ * The Postgres connection string for this deployment. In Preview only the
+ * Preview database (previewDatabaseUrl) is used — the production variables
+ * (DATABASE_URL and the Neon-provided POSTGRES_*) are ignored even when Vercel
+ * exposes them to Preview, so a branch build can't touch production data by
+ * accident.
  */
 export function databaseUrlFor(env: Env = process.env): string {
   if (deploymentOf(env) === "preview") {
-    const url = env.PREVIEW_DATABASE_URL?.trim();
+    const url = previewDatabaseUrl(env);
     if (!url) {
       throw new EnvironmentError(
         "This Preview deployment has no isolated database. Set PREVIEW_DATABASE_URL (Preview environment only) " +
@@ -89,7 +101,7 @@ export const PREVIEW_WRITES_BLOCKED =
 export function missingPreviewSettings(env: Env = process.env): string[] {
   if (deploymentOf(env) !== "preview") return [];
   const missing: string[] = [];
-  if (!env.PREVIEW_DATABASE_URL?.trim()) missing.push("PREVIEW_DATABASE_URL");
+  if (!previewDatabaseUrl(env)) missing.push("PREVIEW_DATABASE_URL");
   if ((env.SESSION_SECRET?.trim().length ?? 0) < 32) missing.push("SESSION_SECRET");
   for (const key of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"]) {
     if (!env[key]?.trim()) missing.push(key);
