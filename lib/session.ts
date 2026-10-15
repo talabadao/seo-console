@@ -1,6 +1,7 @@
 import { getIronSession, type SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
 import { db } from "./db";
+import { sessionSecretFor } from "./environment";
 
 export interface SessionData {
   userId?: number;
@@ -8,8 +9,10 @@ export interface SessionData {
   oauthState?: string;
 }
 
-export const sessionOptions: SessionOptions = {
-  password: process.env.SESSION_SECRET || "dev-only-insecure-secret-change-me-32b",
+// Built on each use so a missing SESSION_SECRET fails the request (never the
+// build) and is never replaced by a known key outside local development.
+const sessionOptions = (): SessionOptions => ({
+  password: sessionSecretFor(),
   cookieName: "seo_dash_session",
   cookieOptions: {
     secure: process.env.NODE_ENV === "production",
@@ -17,10 +20,10 @@ export const sessionOptions: SessionOptions = {
     sameSite: "lax",
     path: "/",
   },
-};
+});
 
 export async function getSession() {
-  return getIronSession<SessionData>(await cookies(), sessionOptions);
+  return getIronSession<SessionData>(await cookies(), sessionOptions());
 }
 
 export interface UserRow {

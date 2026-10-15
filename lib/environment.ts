@@ -53,6 +53,26 @@ export function externalWritesAllowed(env: Env = process.env): boolean {
   return deploymentOf(env) !== "preview" || env.ALLOW_PREVIEW_EXTERNAL_WRITES === "1";
 }
 
+const DEV_SESSION_SECRET = "dev-only-insecure-secret-change-me-32b";
+
+/**
+ * The key that encrypts session cookies. Only local development may fall back
+ * to a built-in value; a deployed Production or Preview without its own
+ * SESSION_SECRET (at least 32 characters) refuses to create sessions, because
+ * a known key would let anyone forge a signed-in cookie.
+ */
+export function sessionSecretFor(env: Env = process.env): string {
+  const secret = env.SESSION_SECRET?.trim();
+  if (deploymentOf(env) === "development") return secret || DEV_SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new EnvironmentError(
+      "SESSION_SECRET is missing or shorter than 32 characters for this deployment. Set it in the hosting " +
+        "provider's environment variables (a different value for Production and Preview).",
+    );
+  }
+  return secret;
+}
+
 /** Scheduled jobs run only in production. */
 export function schedulesAllowed(env: Env = process.env): boolean {
   return deploymentOf(env) === "production";

@@ -5,6 +5,7 @@ import {
   deploymentOf,
   externalWritesAllowed,
   schedulesAllowed,
+  sessionSecretFor,
 } from "@/lib/environment";
 
 const PROD_DB = "postgres://u:p@prod-host/neondb";
@@ -33,6 +34,20 @@ describe("databaseUrlFor", () => {
     expect(databaseUrlFor({ VERCEL_ENV: "production", DATABASE_URL: PROD_DB })).toBe(PROD_DB);
     expect(databaseUrlFor({ POSTGRES_URL: PROD_DB })).toBe(PROD_DB);
     expect(() => databaseUrlFor({})).toThrow(/DATABASE_URL is not set/);
+  });
+});
+
+describe("sessionSecretFor", () => {
+  const strong = "x".repeat(32);
+  it("never falls back to the built-in key on a deployment", () => {
+    expect(() => sessionSecretFor({ VERCEL_ENV: "preview" })).toThrow(EnvironmentError);
+    expect(() => sessionSecretFor({ VERCEL_ENV: "production" })).toThrow(EnvironmentError);
+    expect(() => sessionSecretFor({ VERCEL_ENV: "preview", SESSION_SECRET: "short" })).toThrow(/32 characters/);
+    expect(sessionSecretFor({ VERCEL_ENV: "preview", SESSION_SECRET: strong })).toBe(strong);
+  });
+  it("allows a development fallback only locally", () => {
+    expect(sessionSecretFor({}).length).toBeGreaterThanOrEqual(32);
+    expect(sessionSecretFor({ SESSION_SECRET: strong })).toBe(strong);
   });
 });
 
