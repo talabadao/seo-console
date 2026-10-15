@@ -18,34 +18,41 @@ All UI addresses are served by `app/[[...path]]/page.tsx`; `Dashboard.tsx` keeps
 
 `<project-slug>` = slugified project name, with `-<id>` appended only when two projects share a name. It changes when the project is renamed.
 
-## Proposed v2 addresses
+## v2 addresses (implemented in Milestone 01b, PR #7, behind `V2_SHELL=1`)
 
-Project identity in the address uses the immutable project id (spec §2). A readable name may follow the id for humans but is ignored when resolving.
+Project identity in the address is the immutable project id (spec §2), never the name. Defined in `lib/v2/nav.ts`; every address below is reachable from the sidebar.
 
-| v2 address | Replaces |
-|---|---|
-| `/portfolio` | — (All projects) |
-| `/p/<id>/dashboard` | — |
-| `/p/<id>/search-console/performance` | `/<slug>/performance` |
-| `/p/<id>/search-console/opportunities/<kind>` | `/<slug>/opportunities/<kind>` |
-| `/p/<id>/analytics/<view>` | `/<slug>/analytics/<sub>` |
-| `/p/<id>/reports/weekly/<sub>` | `/<slug>/weekly-report/<sub>` |
-| `/p/<id>/reports/monthly` | — (Demo) |
-| `/p/<id>/technical-seo/indexing` | `/<slug>/indexing` |
-| `/p/<id>/technical-seo/pagespeed` | `/<slug>/pagespeed` |
-| `/p/<id>/technical-seo/site-audit` | — |
-| `/p/<id>/local-seo/reviews` | `/<slug>/reviews` |
-| `/p/<id>/local-seo/business-profile` | — |
-| `/p/<id>/organic-serp/se-ranking/<tab>` | — |
-| `/p/<id>/organic-serp/<engine>` (`google`, `bing`, `yandex`, `naver`) | — |
-| `/p/<id>/keyword-research/...`, `/competitive-research/...`, `/link-building/...`, `/content/...` | — (Demo) |
-| `/p/<id>/ai-area/<view>` | — |
-| `/p/<id>/automation`, `/docs`, `/p/<id>/settings/<section>` | Settings panel / Project manager modals |
+| v2 address | Status in 01b | Replaces |
+|---|---|---|
+| `/portfolio` | Live: the account's own projects | — (All projects) |
+| `/portfolio/<group>/<item>` | Live: choose a project for a project-only page | — |
+| `/p/<id>/dashboard/overview` | Live | — |
+| `/p/<id>/search-console/performance` | Live (existing view) | `/<slug>/performance` |
+| `/p/<id>/search-console/opportunities[/<kind>]` | Live (existing view) | `/<slug>/opportunities/<kind>` |
+| `/p/<id>/analytics/overview[/<sub>]` | Live (existing view) | `/<slug>/analytics/<sub>` |
+| `/p/<id>/reports/weekly[/<sub>]` | Live (existing view) | `/<slug>/weekly-report/<sub>` |
+| `/p/<id>/reports/monthly` | Demo | — |
+| `/p/<id>/technical-seo/pagespeed` | Live (existing view) | `/<slug>/pagespeed` |
+| `/p/<id>/technical-seo/indexing` | Live (existing view) | `/<slug>/indexing` |
+| `/p/<id>/technical-seo/site-audit` | Planned (09c) | — |
+| `/p/<id>/technical-seo/structured-data` | **Planned (09d): Structured Data / Schema placeholder** | — |
+| `/p/<id>/local-seo/reviews` | Live (existing view) | `/<slug>/reviews` |
+| `/p/<id>/local-seo/business-profile` | Planned (08) | — |
+| `/p/<id>/organic-serp/se-ranking` | Planned (06) | — |
+| `/p/<id>/organic-serp/<engine>` (`google`, `bing`, `yandex`, `naver`) | Planned (07) | — |
+| `/p/<id>/keyword-research/explorer` | Demo | — |
+| `/p/<id>/competitive-research/overview` | Demo | — |
+| `/p/<id>/link-building/backlinks` | Demo | — |
+| `/p/<id>/content/board` | Demo | — |
+| `/p/<id>/ai-area/overview` | Planned (10) | — |
+| `/p/<id>/automation/workflows` | Planned (13) | — |
+| `/p/<id>/settings/project` | Live | Settings panel / project manager |
+| `/docs` | Planned (13) | — |
 
 ## Compatibility behaviour
 1. Keep `app/[[...path]]/page.tsx` as the compatibility entry. Paths that start with a known v2 prefix (`p`, `portfolio`, `docs`) are handled by the new shell; anything else is treated as a legacy address. A project whose legacy slug is exactly `p`, `portfolio` or `docs` is reachable only through its v2 address.
-2. A legacy `/<slug>/<tab>[/<sub>]` resolves the slug against the signed-in user's projects (same rule as today) and **replaces** the history entry with the v2 address, so bookmarks keep working and Back does not bounce.
+2. *(Milestone 01d, not yet built.)* A legacy `/<slug>/<tab>[/<sub>]` resolves the slug against the signed-in user's projects (same rule as today) and **replaces** the history entry with the v2 address, so bookmarks keep working and Back does not bounce.
 3. `/` and `/<tab>` keep using the last-used project.
 4. An unknown slug or a project the user can't access lands on `/portfolio` with a notice, never on another project's data.
-5. While the new shell is behind a feature flag, the legacy Dashboard keeps serving legacy addresses unchanged.
+5. While the new shell is behind a feature flag, the legacy Dashboard keeps serving legacy addresses unchanged (implemented in 01b; with the flag on it links to the new console).
 6. API routes stay where they are; new module APIs are added under their own prefixes. No API route is renamed in phase 1.

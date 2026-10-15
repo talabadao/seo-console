@@ -1,42 +1,66 @@
 # STATUS
 
-_Last updated: 2026-10-15 — Milestone 01a and the three separate fixes are in review. Nothing merged or deployed to production._
+_Last updated: 2026-10-15 — Milestone 01b in review; integration Preview built; waiting on owner setup. Nothing merged or deployed to production; no production migrations run._
 
-## Open pull requests (merge order)
-| PR | Branch | Base | Content | State |
+## Pull requests
+| PR | Branch | Base | Content | Checks |
 |---|---|---|---|---|
-| #2 | `docs/v2-repository-audit` | `main` | Milestone 00 audit, plan, owner decisions, this file | Ready for review |
-| #3 | `chore/v2-foundations` | `main` | **01a**: README rewrite, Vitest + 47 tests, CSV formula fix, versioned migration tooling (not run) | Ready for review; merge after #2 or independently |
-| #4 | `feat/login-allowlist` | #3 | Sign-in allowlist (2 accounts, verified ID token, every request) | Stacked on #3 |
-| #5 | `chore/preview-isolation` | #3 | Preview uses only `PREVIEW_DATABASE_URL`; external writes and schedules off in Preview; fixture seed; setup guide | Stacked on #3; **needs owner setup** |
-| #6 | `fix/indexing-eligibility` | #3 | Indexing API only for JobPosting / livestream pages, from the page's structured data | Stacked on #3 |
+| #2 | `docs/v2-repository-audit` | `main` | Audit, plan, owner decisions, route map, roadmap, this file | Vercel ✓ |
+| #3 | `chore/v2-foundations` | `main` | **01a**: README, Vitest + tests, CSV formula fix, migration tooling (not run) | Vercel ✓ |
+| #4 | `feat/login-allowlist` | #3 | Two-account sign-in allowlist; impact query and smoke test (`SMOKE-TEST.md`) | Vercel ✓ |
+| #5 | `chore/preview-isolation` | #3 | Preview-only database; no writes or schedules in Preview; **session key fails closed**; setup checklist (`PREVIEW-SETUP.md`) | Vercel ✓ |
+| #6 | `fix/indexing-eligibility` | #3 | Indexing API only for JobPosting / livestream pages | Vercel ✓ |
+| #7 | `feat/v2-shell` | #3 | **01b**: new shell behind `V2_SHELL=1`, demo screens, screenshots | Vercel ✓ |
 
-Merge #3 first; GitHub then retargets #4–#6 to `main`. They don't depend on each other.
+**Merge order:** #2, then #3. Once #3 is merged, retarget #4–#7 to `main` (`gh pr edit <n> --base main` if GitHub doesn't do it), then re-check each diff and its checks before merging.
 
-## Checks (run locally on each branch, 2026-10-15)
-- `npm run typecheck` ✓ on all branches
-- `npx eslint .` 0 errors; 18 warnings, the same as `main` (pre-existing `react-hooks/set-state-in-effect` and similar)
-- `npm test`: #3 47/47, #4 51/51, #5 52/52, #6 55/55
-- `npm run build` ✓ on all branches
-- PR #2: Vercel and Vercel Preview Comments checks passed.
+**Known overlaps** (already resolved once on the `preview` branch):
+- #4 and #5 both add an import to `lib/session.ts`; keep both.
+- #4 and #7 both edit `app/[[...path]]/page.tsx`; keep the allowlist error handling and the shell routing.
 
-## Owner decisions applied (AUDIT §5)
-Allowlist of two accounts, with no project merging; `seo-console-official` out of scope; AI Brand Mention used as a code reference only (no storage connection, no history import); Preview isolation before migration tests; Indexing API restricted to eligible pages; Vitest approved.
+**Integration Preview:** branch `preview` = #3 + #4 + #5 + #6 + #7.
+- Deployment `seo-console-bshxbvuoi-zoro-hoang.vercel.app` is READY.
+- Its `/api/preview-status` reports *no isolated database*, with external writes and schedules off. That's the expected fail-closed state until the owner setup below.
+- Stable address after setup: https://seo-console-preview.vercel.app
+
+## Checks (run locally, 2026-10-15)
+| Branch | typecheck | lint | tests | build |
+|---|---|---|---|---|
+| #3 | ✓ | 0 errors / 18 warnings | 47/47 | ✓ |
+| #4 | ✓ | 0 / 18 | 51/51 | ✓ |
+| #5 | ✓ | 0 / 18 | 54/54 | ✓ |
+| #6 | ✓ | 0 / 18 | 55/55 | ✓ |
+| #7 | ✓ | 0 / 19 (+1: sidebar collapse state) | 57/57 | ✓ |
+| `preview` (all) | ✓ | 0 / 19 | 76/76 | ✓ |
+
+01b browser checks, in local mock mode:
+- no page-level horizontal scroll at 1440 / 1280 / 1024 / 390, checked on six pages at 390
+- mobile drawer works
+- project switcher keeps the page and remounts it
+- Back/Forward restore the previous project
+
+## Verified facts this round
+- `CRON_SECRET` is not set in any Vercel environment (checked in the project's variables). Both cron routes return 401 without it, so the scheduled jobs have not been running. Fix: `PREVIEW-SETUP.md`, last section.
+- In Preview, `SESSION_SECRET` and the Google OAuth variables are unset; only the Neon database variables reach Preview. The missing session key used to fall back to a built-in value; #5 now makes deployments refuse it.
+- The OAuth callback path, from the code, is `/api/auth/google/callback`, sent to Google from `GOOGLE_REDIRECT_URI`.
+- `PAGESPEED_API_KEY` is stored as a non-sensitive variable (Vercel flags it "readable-secret"). Optional: re-add it marked Sensitive.
+- The repository is **public**: committed screenshots use fixture data only, and the two allowlisted addresses are visible in the code.
 
 ## Owner actions needed
-1. **Preview database**: follow `docs/seo-console-v2/PREVIEW-SETUP.md` steps 1–3 (separate Neon project, `PREVIEW_DATABASE_URL` for Preview only, three terminal commands), then tell me so I can verify a preview through `/api/preview-status`.
-2. **`CRON_SECRET`** for Production (same file, last section): scheduled indexing and Page Speed jobs most likely aren't running without it.
-3. **Allowlist impact**: once #4 ships, `tinledoihoa@gmail.com` (and any account other than the two approved ones) can no longer sign in. Add addresses to `ALLOWED_EMAILS` in `lib/auth/allowlist.ts` first if anyone else needs access.
-4. Review and merge the PRs when satisfied. Nothing is merged automatically.
+1. **Preview setup**: `docs/seo-console-v2/PREVIEW-SETUP.md` steps A–F.
+   - separate Neon project
+   - domain `seo-console-preview.vercel.app` on branch `preview`
+   - new Google OAuth client with redirect URI `https://seo-console-preview.vercel.app/api/auth/google/callback`
+   - Preview-only variables: `PREVIEW_DATABASE_URL`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `V2_SHELL=1`
+   - three terminal commands
+   - check `/api/preview-status`
+2. **Allowlist impact**: run the read-only query in `SMOKE-TEST.md` §1 in Neon's SQL Editor and send me the counts. Don't ship #4 until that's reviewed.
+3. **Sign-in smoke test**: `SMOKE-TEST.md` §3 on the Preview, both approved accounts plus one refused account.
+4. **`CRON_SECRET`** for Production (`PREVIEW-SETUP.md`, last section), then redeploy production.
 
 ## Blockers
-- Migration tests and Milestone 02a (workspace identity): blocked on Preview isolation being verified (owner action 1).
-- Signing in to a preview: Google OAuth can't use wildcard preview addresses. To be decided with the shell milestone (a fixed preview domain, or a Preview-only fixture sign-in).
+- Migration tests, Milestone 02a and live checks of the shell's existing views all wait on owner action 1.
+- Shipping #4 waits on owner action 2.
 
-## Known issues carried forward
-- Secrets stored in plaintext columns (fix in 02b).
-- Indexing runs and Reviews analysis continue only while the browser tab is open (fix in 03).
-- Project addresses depend on the project name (fix in 01d).
-
-## Next task
-**01b — application shell** (`feat/v2-shell`), behind a feature flag: grouped sidebar with every spec destination, searchable project switcher with All projects, portfolio/project navigation, breadcrumbs and page header, clearly labelled Demo screens; existing tabs mounted unchanged. It can be built and checked locally with mocked data now. Preview checks wait on owner action 1.
+## Next smallest task
+After Preview is verified: run the shell's live views against the Preview database (smoke test on the stable Preview address). Then **Milestone 01d**: legacy `/<slug>/<tab>` addresses redirect to `/p/<id>/…` when the flag is on.
