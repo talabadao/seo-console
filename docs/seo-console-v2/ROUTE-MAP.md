@@ -38,13 +38,17 @@ Project identity in the address is the immutable project id (spec §2), never th
 | `/p/<id>/technical-seo/structured-data` | **Planned (09d): Structured Data / Schema placeholder** | — |
 | `/p/<id>/local-seo/reviews` | Live (existing view) | `/<slug>/reviews` |
 | `/p/<id>/local-seo/business-profile` | Planned (08) | — |
-| `/p/<id>/organic-serp/se-ranking` | Planned (06) | — |
-| `/p/<id>/organic-serp/<engine>` (`google`, `bing`, `yandex`, `naver`) | Planned (07) | — |
+| `/p/<id>/organic-serp/se-ranking` | Planned (06); the dashboard's SE Ranking box is live (#9) | — |
+| `/p/<id>/organic-serp/google[/<view>]` | Live (#11): Google Search Tracking data, opens on the Rank tracker | — |
+| `/p/<id>/organic-serp/<engine>` (`bing`, `yandex`, `naver`) | Planned (07) | — |
+| `/p/<id>/analytics/llm-traffic` | Live (#10): LLMs Traffic (GA4 sessions from AI assistants) | — |
 | `/p/<id>/keyword-research/explorer` | Demo | — |
 | `/p/<id>/competitive-research/overview` | Demo | — |
 | `/p/<id>/link-building/backlinks` | Demo | — |
 | `/p/<id>/content/board` | Demo | — |
-| `/p/<id>/ai-area/overview` | Planned (10) | — |
+| `/p/<id>/ai-area/google-search-tracking[/<view>]` | Live (#11). Views: _(overview)_, `rank-tracker`, `mentions`, `ai-responses`, `settings` | — |
+| `/p/<id>/ai-area/brand-mentions[/<section>]` | Live (#12). Sections: _(dashboard)_, `customer-reviews`, `prompts`, `ai-answers`, `costs` | — |
+| `/p/<id>/ai-area/usage` | Live (#11): Usage & Costs | — |
 | `/p/<id>/automation/workflows` | Planned (13) | — |
 | `/p/<id>/settings/project[/<section>]` | Live: sections general, integrations, kpi, tracking, budgets, sync (PR #8) | Settings panel / project manager |
 | `/docs` | Planned (13) | — |
@@ -55,4 +59,4 @@ Project identity in the address is the immutable project id (spec §2), never th
 3. `/` and `/<tab>` keep using the last-used project.
 4. An unknown slug or a project the user can't access lands on `/portfolio` with a notice, never on another project's data.
 5. While the new shell is behind a feature flag, the legacy Dashboard keeps serving legacy addresses unchanged (implemented in 01b; with the flag on it links to the new console).
-6. API routes stay where they are; new module APIs are added under their own prefixes. No API route is renamed in phase 1.
+6. API routes stay where they are; new module APIs are added under their own prefixes. No API route is renamed in phase 1. AI Area APIs: `/api/ai-area/<projectId>/tracking[/run]`, `/api/ai-area/<projectId>/brand[/prompts|run|cycle|facts|suggest|customers]`, `/api/ai-area/<projectId>/usage` — all owner-only.

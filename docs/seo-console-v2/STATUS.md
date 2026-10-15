@@ -1,113 +1,84 @@
 # STATUS
 
-_Last updated: 2026-10-15 (evening). Dashboards redesigned (#8); Preview database connected and verified empty; three Preview variables still missing. Nothing merged or deployed to production; no production migrations run._
+_Last updated: 2026-10-16. Dashboard revisions, LLMs Traffic and the AI Area (Google Search Tracking, Brand Mentions, Usage & Costs) are on the Preview. Authenticated checks and the SerpApi smoke test are waiting for the owner's sign-in. Nothing merged into `main`, nothing deployed to Production, no production migrations or credentials changed._
 
-## Review the console now (local, mock data)
-- Open http://localhost:3000/portfolio while the dev server runs on this machine.
-- It runs from branch `preview` with a git-ignored `.env.development.local` containing `V2_MOCK=1` and `V2_SHELL=1`.
-- To restart it:
-  ```powershell
-  git checkout preview
-  Set-Content .env.development.local "V2_MOCK=1`nV2_SHELL=1"
-  npm run dev
-  ```
-- **Data:** 30 invented projects, every number labelled Demo. Some fixtures show the not connected, stale and error states. No database, no sign-in.
-- **Safety:** mock mode can't run on any Vercel deployment.
-
-## Pull requests
-| PR | Branch | Base | Content | Vercel |
-|---|---|---|---|---|
-| #2 | `docs/v2-repository-audit` | `main` | Audit, plan, decisions, route map, roadmap, this file | ✓ |
-| #3 | `chore/v2-foundations` | `main` | **01a** foundations, Vitest, migration tooling (not run) | ✓ |
-| #4 | `feat/login-allowlist` | #3 | Five-account sign-in allowlist; impact query; smoke test | ✓ |
-| #5 | `chore/preview-isolation` | #3 | Preview-only database (also accepts the Neon integration's `PREVIEW_DATABASE_URL_DATABASE_URL`); session key fails closed; "Preview not configured" page; read-only database readiness in `/api/preview-status`; demo projects for the signed-in user; `migrate:preview` / `seed:preview` read the git-ignored `.env.preview-migrate`; setup checklist | ✓ |
-| #6 | `fix/indexing-eligibility` | #3 | Indexing API only for JobPosting / livestream pages | ✓ |
-| #7 | `feat/v2-shell` | #3 | **01b** shell behind `V2_SHELL=1` | ✓ |
-| #8 | `feat/v2-dashboards` | #7 | **01e** project dashboard, All projects performance table, Project settings sections, summary adapters (`DASHBOARDS.md`) | ✓ |
-
-**Merge order:**
-1. #2, then #3.
-2. Retarget #4–#7 to `main`, re-check each diff and its checks, then merge.
-3. Retarget #8 to `main` after #7.
-
-**Overlaps** (resolved on `preview`):
-- `lib/session.ts` (#4 + #5)
-- `app/[[...path]]/page.tsx` (#4 + #5 + #7). Order inside `Home`:
-  1. mock mode
-  2. Preview-not-configured check
-  3. `currentUser` and the allowlist error on the sign-in page
-  4. shell routing
-
-## Deployed Preview: https://seo-console-git-preview-zoro-hoang.vercel.app
-Vercel login as `tinledoihoa@gmail.com` (team zoro-hoang owner) first; protection stays on.
+## Preview: https://seo-console-git-preview-zoro-hoang.vercel.app
+Vercel Authentication stays on (sign in to Vercel as the team owner, or use a share link), then Google sign-in with one of the five allowed accounts.
 
 | Check | Result |
 |---|---|
-| Build (commit 2982941) | ✅ READY |
-| Database target | ✅ `ep-spring-firefly-b7804i0v-pooler.c-13.us-east-1.aws.neon.tech/neondb`, the Neon store connected to Preview only |
-| Database readiness | ✅ reachable; empty (no schema, no migrations). Production has a schema, so this isn't production |
-| `V2_SHELL=1`, `GOOGLE_REDIRECT_URI` (branch `preview`) | ✅ set |
-| External writes / schedules | ✅ off / off |
-| `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (Preview) | ❌ missing |
-| Usable app | ❌ shows "Missing Preview settings" |
-| Real sign-in | not tested |
+| Deployed commit | `c134ce8` on `preview` (READY). `main` unchanged at `05f0c1d` |
+| Database target | Isolated Preview Neon store (`ep-spring-firefly-…/neondb`), via `/api/preview-status` |
+| Schema | Present; `schema_migrations` not created yet. The app records 0001 and applies 0002 (project settings) and 0003 (AI Area) on its first signed-in database access (Preview and local only; Production never self-migrates) |
+| External writes / schedules | Off / off |
+| Preview variables | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `SERANKING_API_KEY` (branch `preview`, Sensitive), `V2_SHELL`, `GOOGLE_REDIRECT_URI` |
+| Not set (by design for now) | `SERPAPI_API_KEY`, `PREVIEW_SERPAPI_TEST_PROJECT_ID`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DATAFORSEO_*`. Without `PREVIEW_SERPAPI_TEST_PROJECT_ID` every SerpApi call is refused on Preview |
+| Authenticated checks | **Pending owner sign-in**: dashboard, All projects, Project settings, LLMs Traffic, AI Area screens, migrations recorded |
+| GSC / GA4 comparison against the source UIs | **Pending** (after sign-in) |
+| SerpApi smoke test (Wewine.vn, ≤ 5 requests in total) | **Not run.** Recorded consumption so far: 0 (ledger table not created yet) |
 
-## Sign-in allowlist (#4)
-- **List:** exactly five addresses, the same for Preview and Production:
-  - `analytics@headsonpillows.com`
-  - `analytics@artemisdigital.com`
-  - `tinledoihoa@gmail.com`
-  - `tin@headsonpillows.com`
-  - `tin@artemisdigital.com`
-- **Matching:** Google's verified ID token; whitespace trimmed and case ignored; exact addresses, never domains.
-- **Ownership:** each account sees only its own projects.
-- **Google's own check:** the OAuth consent screen's test-user list is a separate gate (`PREVIEW-SETUP.md` step 3).
+## Pull requests (all into `preview`, none into `main`)
+| PR | Branch | Base | Content |
+|---|---|---|---|
+| #2 | `docs/v2-repository-audit` | `main` | Audit, plan, decisions, route map, roadmap, this file |
+| #3–#8 | see ROADMAP | `main` / stacked | Foundations, allowlist, Preview isolation, indexing eligibility, shell, dashboards |
+| #9 | `feat/v2-revisions` | `preview` | Owner revisions: sidebar, GSC insights, GA4 four metrics, SE Ranking box, KPI wording, lead events in Project settings |
+| #10 | `feat/v2-llm-traffic` | #9 | Analytics → LLMs Traffic |
+| #11 | `feat/ai-area-usage` | #10 | Google Search Tracking (+ Organic SERP → Google), Usage & Costs, provider ledger and caps, run locks, migration 0003 |
+| #12 | `feat/ai-area-brand` | #11 | Brand Mentions |
 
-## Dashboards (#8)
-- **Project dashboard:**
-  - Search Console performance with trend
-  - GA4 organic traffic (revenue only in its own currency)
-  - monthly KPIs vs target with the status rule shown
-  - Asana work, counting completions by completion date
-  - content progress (demo)
-  - needs attention, built only from real data
-- **All projects:** a compact performance table with optional columns.
-  - Summaries load for the visible page only, 3 at a time, with caching.
-  - Cards count projects and never add metrics across them.
-- **Project settings:** General, Integrations (the connection list moved here), KPI targets, Tracking, Budgets and limits, Sync and history.
-- **Shell:**
-  - readable sidebar labels
-  - no milestone numbers in the UI
-  - the Settings section is kept when switching projects
-- **"1 Issue" badge** in the review screenshots: a momentary merge-conflict parse error while the dev server ran during a merge. It's gone after a reload; no issues are reported on any page.
+`ce339db` (on #9) removes two local SE Ranking validation scripts that were committed by mistake in `cb4b2db`. They read the key from a local file path; no credential was committed.
 
-## Checks (2026-10-15)
+## What works with real data, what's Demo, what's unavailable
+- **Real (once signed in):** GSC performance and insights, GA4 four metrics and LLMs Traffic (session-scoped source), Asana work, KPI targets, SE Ranking box.
+  - SE Ranking for WeWine maps to site 11734349 ("WeWine", Google Vietnam, 377 keywords).
+  - For 2026-10-15 our counts match SE Ranking's own summary: Top 5 89, Top 10 169, average 27.42 (unranked counted as 100). SE Ranking shows the average as 27.
+  - Top 3 (46) isn't in SE Ranking's summary.
+- **AI Area: real when its provider is available, otherwise labelled unavailable** (never placeholder data).
+  - Google Search Tracking and Brand Mentions' Google AI Mode / AI Overview need SerpApi. On Preview that means only the smoke-test project.
+  - ChatGPT and Claude answers, answer analysis, perception summaries, prompt suggestions and the AI-vs-reviews comparison need OpenAI and Anthropic. These are refused on Preview, so Brand Mentions answers are stored as "Not analysed" there, with literal brand mentions still counted.
+  - Customer reviews read the project's stored Google Maps reviews only. Tripadvisor and Google Hotels aren't connected.
+- **Demo:** content progress, Monthly report, keyword/competitive/link/content modules, demo projects. Every demo value is labelled Demo.
+- **Not built:** scheduled runs (AI Area, reviews refresh), Bing/Yandex/Naver tracking, Site audit, Structured data.
+
+## Metering and caps (AI Area)
+Every paid request goes through the policy check, an atomic allowance and a ledger row written before it's sent, so retries and pagination count.
+- **SerpApi:**
+  - Production and local: a per-project monthly cap (`AI_AREA_SERPAPI_MONTHLY_CAP`, default 500).
+  - Preview: only `PREVIEW_SERPAPI_TEST_PROJECT_ID`, at most 5 requests in total, and the allowance never refills.
+- **OpenAI and Anthropic:**
+  - Production and local: a daily per-account limit in estimated USD (`AI_AREA_DAILY_USD_LIMIT`, default $5). Costs are estimated from recorded tokens with the pricing version `2026-10`.
+  - Preview: always refused.
+- **Runs:**
+  - Only one running run per project and kind, and only one request working on a run at a time.
+  - Runs execute in time-boxed chunks.
+  - When a cap stops a run, partial results are kept.
+
+## Checks (2026-10-16)
 | Branch | typecheck | lint | tests | build |
 |---|---|---|---|---|
-| #4 | ✓ | 0 errors / 18 warnings | 52/52 | Vercel ✓ |
-| #5 | ✓ | 0 / 18 | 59/59 | Vercel ✓ |
-| #8 | ✓ | 0 / 18 | 73/73 | Vercel ✓ |
-| `preview` (all) | ✓ | 0 / 18 | 98/98 | Vercel ✓ |
+| #11 alone | ✓ | 0 errors / 18 warnings (all pre-existing) | 135/135 | Vercel ✓ |
+| #12 / `preview` | ✓ | 0 / 18 | 139/139 | Vercel ✓ (`c134ce8`; the first push `457c112` failed on a type error in a new test, fixed) |
 
-Browser checks in local mock mode:
-- All projects lazy loading and paging
-- project dashboard
-- settings sections and KPI form
-- project switching keeps the page and the settings section
-- stale and error states
-- no page-level horizontal scroll at 375, 1024 and 1440
-- screenshots in `screenshots/01e/`
+The new tests run against an in-process Postgres (PGlite). They cover:
+- caps under 12–20 concurrent requests
+- failed requests counted
+- no refill on resume
+- Preview refusals with nothing sent or recorded
+- model-call cost recording and allowance correction
+- run locks, chunk leases and abandoned-run release
+- partial stops
+- a Brand Mentions run stopping at exactly 5 requests with its partial answers kept
+
+## Local review
+- http://localhost:3000/portfolio (mock mode, no database, no sign-in).
+- AI Area screens show the mock-mode notice there, because they need a database.
 
 ## Owner actions needed
-1. **Preview** (`PREVIEW-SETUP.md`, "Remaining steps"):
-   - rotate the exposed Preview database password and confirm Vercel updated it
-   - add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and a new `SESSION_SECRET` as Preview variables, branch `preview`, Sensitive
-   - confirm the OAuth test users are the five addresses, if the app is in Testing
-2. **Schema:** put the rotated connection string in `.env.preview-migrate` so Claude can run and verify the migrations, or let the app create the schema on first sign-in.
-3. **Allowlist impact:** run the read-only query in `SMOKE-TEST.md` §1. Don't ship #4 before that.
-4. **Sign-in smoke test:** `SMOKE-TEST.md` §3 on the Preview.
-5. **`CRON_SECRET`** for Production, then redeploy production.
-6. **Optional hardening:** untick Preview on the production Neon store's variables, so PR previews without #5 can't reach production.
-
-## Next
-After owner action 1, Claude redeploys `preview` and reports build, database and sign-in separately. Then come the live dashboard numbers on the Preview, and Milestone 01d (legacy-address redirects). No new milestone starts before the Preview is verified.
+1. **Sign in on the Preview** with `tinledoihoa@gmail.com` (browser pane or the share link). This creates the migration history and applies 0002/0003 to the Preview database, and unblocks the authenticated checks and the GSC/GA4 comparison.
+2. **SerpApi for the Wewine smoke test:** no SerpApi key is configured for Preview. Either:
+   - save a SerpApi key on the Wewine project (Project settings → Integrations → edit the project → "Google Maps reviews" → "SerpApi key"), or
+   - add `SERPAPI_API_KEY` as a Preview variable (branch `preview`, Sensitive).
+   Claude then sets `PREVIEW_SERPAPI_TEST_PROJECT_ID` to Wewine's Preview project id (Preview, branch `preview`).
+3. **Rotate the SE Ranking API key**, since it was pasted in chat, then update `SERANKING_API_KEY` (Preview) and Production when that's set up.
+4. Earlier items still open: allowlist impact query (`SMOKE-TEST.md` §1), `CRON_SECRET` for Production, optional untick of Preview on the production Neon store's variables.

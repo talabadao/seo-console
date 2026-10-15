@@ -37,7 +37,7 @@ Suggested route root: `/p/[projectId]/...` for project modules and `/portfolio` 
 | Technical SEO → PageSpeed Insights | Tracked pages, Lab results, Field results, History | Reuse host; separate PSI and CrUX contracts |
 | Technical SEO → Indexing | Inventory, Inspection, Submissions | Reuse host; fix eligibility and quota semantics |
 | Content | Briefs, Editorial board, Editor, Review queue | Demo; external actions disabled with explanations |
-| AI Area | Overview, Prompts, Mentions, Citations, Competitors, Sentiment, Responses | Searchable-backed; donor presentation reused |
+| AI Area | Google Search Tracking (Overview, Rank tracker, Mentions & Citations, AI responses, Settings); Brand Mentions (Dashboard, Customer reviews, Prompts, AI answers, Costs & limits); Usage & Costs | Port of the AI Brand Mention app onto SEO Console data, auth and metering (owner decision 2026-10-15); Searchable dropped |
 | Automation | Workflows, Schedule, Run history | GBP workflow status/bridge only after audit |
 | Report | Weekly Report, Monthly Report | Weekly live; Monthly demo |
 | Docs | Product guide, SOPs, Intern training | Real document catalogue; labelled sample content |
@@ -146,7 +146,16 @@ PSI keeps mobile/desktop and lab/field separate; prioritize representative URLs 
 
 ### AI Area
 
-Searchable is the phase 1 source of record for AI visibility, with explicit project mapping and verified scopes. Reuse donor layouts and reusable analysis components, not its automatic direct-model runs as a substitute. Import documented available metrics, prompt details, citations, competitors, sentiment and responses, with pagination/history bounds recorded.
+_Revised 2026-10-16 (owner decision 2026-10-15): Searchable is out of scope. Phase 1 ports the AI Brand Mention app's two screens._
+
+- **Google Search Tracking**: SerpApi Google results (organic ranks to the chosen depth, AI Overview, AI Mode) for a project's keywords; Overview, Rank tracker, Mentions & Citations, AI responses, Settings. Organic SERP → Google opens the same data on the Rank tracker view, so there is one set of runs and charges.
+- **Brand Mentions**: answers from Google AI Mode and AI Overview (SerpApi) and, when enabled, ChatGPT and Claude (web search), analysed for brand mentions, sentiment, claims and sources; Dashboard, Customer reviews (the project's own Google Maps reviews), Prompts, AI answers, Costs & limits.
+- **Usage & Costs**: provider-reported figures (SerpApi account, OpenAI and Anthropic cost reports, DataForSEO balance when configured) next to the app's own ledger; estimated costs carry the pricing version.
+- **Rules**: every route checks sign-in and project ownership; data lives in Postgres per project (no donor history imported); no placeholder answers — unavailable sources say why; runs start only on request (no schedules in phase 1), show the estimate first, and are metered and capped (see Budget below). Tripadvisor and Google Hotels aren't connected.
+
+The earlier Searchable plan is kept below for reference.
+
+Searchable would have been the source of record for AI visibility, with explicit project mapping and verified scopes. Reuse donor layouts and reusable analysis components, not its automatic direct-model runs as a substitute. Import documented available metrics, prompt details, citations, competitors, sentiment and responses, with pagination/history bounds recorded.
 
 Use absent/unsupported states for fields unavailable in the account. Preserve metric meaning and time scope; do not infer mention counts from a percentage. Keep source-provided metrics separate from local recomputations. Phase 2 DataForSEO adapters remain a documented interface until specifically selected for implementation.
 
