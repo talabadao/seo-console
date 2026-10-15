@@ -177,13 +177,7 @@ export const NAV: NavGroup[] = [
     // Phase one ports the AI Brand Mention app's two screens; Searchable is not part of it.
     items: [
       { id: "google-search-tracking", label: "Google Search Tracking", status: "live" },
-      {
-        id: "brand-mentions",
-        label: "Brand Mentions",
-        status: "planned",
-        milestone: "08",
-        description: "What Google AI Mode, AI Overviews, ChatGPT and Claude say about the brand, next to its Google Maps reviews.",
-      },
+      { id: "brand-mentions", label: "Brand Mentions", status: "live" },
       { id: "usage", label: "Usage & Costs", status: "live" },
     ],
   },

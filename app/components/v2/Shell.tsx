@@ -44,6 +44,7 @@ import { PortfolioDashboard } from "./PortfolioDashboard";
 import { ProjectSettings } from "./ProjectSettings";
 import { LlmTrafficReport } from "./LlmTrafficReport";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
+import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
 import { AiUsageSummary, UsageCostsPage } from "../ai-area/UsageCosts";
 import { useStored, writeStored } from "./summaryClient";
 
@@ -778,6 +779,19 @@ function ProjectPage({
             <p className="mb-3 text-xs text-muted">Same keywords, data and runs as AI Area → Google Search Tracking; nothing is tracked or charged twice.</p>
           )}
           <TrackingTab projectId={project.id} sub={loc.sub} onSub={subNav} defaultView={loc.group === "organic-serp" ? "rank" : "overview"} />
+        </div>
+      );
+    case "ai-area/brand-mentions":
+      return (
+        <div className="ai-area">
+          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "ai-area", item: "usage", sub: "" })} />
+          <BrandMentionsView
+            projectId={project.id}
+            sub={loc.sub}
+            onSub={subNav}
+            onOpenTrackingSettings={() => onNavigate({ ...loc, group: "ai-area", item: "google-search-tracking", sub: "settings" })}
+            onOpenReviews={() => onNavigate({ ...loc, group: "local-seo", item: "reviews", sub: "" })}
+          />
         </div>
       );
     case "ai-area/usage":
