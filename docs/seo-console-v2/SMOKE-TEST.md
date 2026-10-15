@@ -57,7 +57,7 @@ Run it on the Preview first (https://seo-console-git-preview-zoro-hoang.vercel.a
 | # | Step | Expected |
 |---|---|---|
 | 1 | Open the site signed out | Sign-in page with "Continue with Google" |
-| 2 | Sign in as `analytics@headsonpillows.com` | Lands in the console. The project picker lists **only this account's projects** (on Preview: none at first) |
+| 2 | Sign in as `analytics@headsonpillows.com` | Lands in the console. The project picker lists **only this account's projects** (on Preview: none at first; "Add demo projects" on All projects adds three invented projects to this account only) |
 | 3 | Open a project, switch tabs, reload the page | Same project and tab after reload; no other account's projects appear anywhere |
 | 4 | Sign out | Back to the sign-in page |
 | 5 | Repeat 2–4 as each of the other four approved accounts: `analytics@artemisdigital.com`, `tinledoihoa@gmail.com`, `tin@headsonpillows.com`, `tin@artemisdigital.com` | Each signs in and sees only its own projects (a new account: none); never another account's |
