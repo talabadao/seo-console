@@ -42,6 +42,7 @@ import { Breadcrumbs, EmptyState, ErrorState, LoadingState, PageHeader, buttonCl
 import { ProjectDashboard } from "./ProjectDashboard";
 import { PortfolioDashboard } from "./PortfolioDashboard";
 import { ProjectSettings } from "./ProjectSettings";
+import { LlmTrafficReport } from "./LlmTrafficReport";
 import { useStored, writeStored } from "./summaryClient";
 
 interface SiteMeta {
@@ -766,6 +767,8 @@ function ProjectPage({
       return gscReconnect || <PerformanceView property={property} searchType={searchType} onNeedsReconnect={onNeedsReconnect} onNotice={onNotice} />;
     case "search-console/opportunities":
       return gscReconnect || <Opportunities property={property} searchType={searchType} sub={loc.sub} onSub={subNav} />;
+    case "analytics/llm-traffic":
+      return <LlmTrafficReport projectId={project.id} />;
     case "analytics/overview":
       return <Analytics fixedPropertyId={project.gaPropertyId ?? ""} sub={loc.sub} onSub={subNav} />;
     case "reports/weekly":
