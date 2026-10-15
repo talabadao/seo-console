@@ -88,3 +88,41 @@ body {
 * {
   border-color: var(--border);
 }
+
+/*
+ * AI Area: the screens ported from the AI Brand Mention app use that app's variable names. Inside .ai-area they
+ * resolve to SEO Console's own tokens, so the ported screens follow SEO Console's light and dark themes.
+ */
+.ai-area {
+  --surface-1: var(--surface);
+  --page-plane: var(--background);
+  --text-primary: var(--foreground);
+  --text-secondary: color-mix(in srgb, var(--foreground) 72%, var(--muted));
+  --text-muted: var(--muted);
+  --gridline: var(--border);
+  --baseline: var(--neutral-soft);
+  --border-hairline: var(--border);
+  --de-emphasis: var(--muted);
+  --success-text: var(--good);
+  --series-1: var(--accent);
+  --series-2: var(--series-b);
+  --series-3: var(--ctr);
+  --series-4: var(--position);
+  --series-5: #e87ba4;
+  --series-6: var(--good);
+  --series-7: var(--impressions);
+  --series-8: var(--bad);
+  --meter-track: var(--accent-soft);
+  --status-good: var(--good);
+  --status-warning: var(--position);
+  --status-serious: #ec835a;
+  --status-critical: var(--bad);
+  --sentiment-positive: var(--good);
+  --sentiment-negative: var(--bad);
+  --sentiment-mixed: var(--muted);
+  --sentiment-neutral: var(--neutral-soft);
+  --rating-star: #f4b400;
+}
+.ai-area .tabular {
+  font-variant-numeric: tabular-nums;
+}

@@ -5,15 +5,15 @@
 // - SerpApi: only for the one project named in PREVIEW_SERPAPI_TEST_PROJECT_ID, and at most
 //   PREVIEW_SERPAPI_TEST_MAX_REQUESTS requests in total (never more than 5), counting pagination and
 //   retries. The allowance is created once and never refills. Every other project: refused.
-// - OpenAI, Anthropic, DataForSEO: refused (paid calls stay off), unless the existing, broader
-//   ALLOW_PREVIEW_EXTERNAL_WRITES switch is on — which this setup doesn't use.
+// - OpenAI, Anthropic, DataForSEO: always refused. The broader ALLOW_PREVIEW_EXTERNAL_WRITES switch (Asana,
+//   Indexing) deliberately doesn't open them.
 // - Asana writes, Indexing submissions and publishing are unaffected: they keep their own Preview block.
 // Production and local development:
 // - SerpApi: a per-project monthly cap (AI_AREA_SERPAPI_MONTHLY_CAP, default 500 requests).
 // - Model calls: a per-account daily cap in USD (AI_AREA_DAILY_USD_LIMIT, default $5), checked against
 //   the estimated cost before each call.
 
-import { deploymentOf, externalWritesAllowed } from "@/lib/environment";
+import { deploymentOf } from "@/lib/environment";
 
 type Env = Record<string, string | undefined>;
 
@@ -64,7 +64,7 @@ export function serpDecision(projectId: number, env: Env = process.env, now = ne
 }
 
 export function llmDecision(userId: number, env: Env = process.env, now = new Date()): Decision {
-  if (deploymentOf(env) === "preview" && !externalWritesAllowed(env)) {
+  if (deploymentOf(env) === "preview") {
     return { allowed: false, reason: "Paid model calls (OpenAI, Anthropic) are switched off on Preview." };
   }
   const cap = Number(env.AI_AREA_DAILY_USD_LIMIT ?? 5);

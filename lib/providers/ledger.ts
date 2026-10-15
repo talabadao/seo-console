@@ -156,3 +156,49 @@ export async function usageTotals(userId: number, projectId: number | null, sinc
     pricingVersions: String(r.versions ?? "").split(",").filter(Boolean),
   }));
 }
+
+/**
+ * Corrects an allowance after the fact, e.g. a model call reserved at its expected cost and then priced from
+ * its real token usage. Never goes below zero; may go above max (the call already happened).
+ */
+export async function adjustAllowance(key: string, delta: number): Promise<void> {
+  if (!delta) return;
+  await db
+    .prepare("UPDATE provider_allowances SET used_units = GREATEST(0, used_units + ?), updated_at = ? WHERE key = ?")
+    .run(delta, Date.now(), key);
+}
+
+export interface DaySpend {
+  day: string;
+  totalUsd: number;
+  byProvider: { openai: number; anthropic: number };
+  calls: number;
+}
+
+/** Estimated model spend per UTC day for one account, oldest first (recorded usage, not billed amounts). */
+export async function dailyModelSpend(userId: number, days: number): Promise<DaySpend[]> {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  const out: DaySpend[] = Array.from({ length: days }, (_, i) => {
+    const d = new Date(start.getTime() + i * 86_400_000);
+    return { day: d.toISOString().slice(0, 10), totalUsd: 0, byProvider: { openai: 0, anthropic: 0 }, calls: 0 };
+  });
+  if (!(await ledgerAvailable())) return out;
+  const rows = (await db
+    .prepare(
+      `SELECT provider, created_at, est_cost_usd FROM provider_usage
+        WHERE user_id = ? AND provider IN ('openai', 'anthropic') AND created_at >= ?`,
+    )
+    .all(userId, start.getTime())) as { provider: "openai" | "anthropic"; created_at: number; est_cost_usd: number | null }[];
+  for (const r of rows) {
+    const i = Math.floor((Number(r.created_at) - start.getTime()) / 86_400_000);
+    const d = out[i];
+    if (!d) continue;
+    const usd = Number(r.est_cost_usd ?? 0);
+    d.totalUsd += usd;
+    d.byProvider[r.provider] += usd;
+    d.calls++;
+  }
+  return out;
+}

@@ -43,6 +43,8 @@ import { ProjectDashboard } from "./ProjectDashboard";
 import { PortfolioDashboard } from "./PortfolioDashboard";
 import { ProjectSettings } from "./ProjectSettings";
 import { LlmTrafficReport } from "./LlmTrafficReport";
+import { TrackingTab } from "../ai-area/tracking/TrackingTab";
+import { AiUsageSummary, UsageCostsPage } from "../ai-area/UsageCosts";
 import { useStored, writeStored } from "./summaryClient";
 
 interface SiteMeta {
@@ -767,6 +769,19 @@ function ProjectPage({
       return gscReconnect || <PerformanceView property={property} searchType={searchType} onNeedsReconnect={onNeedsReconnect} onNotice={onNotice} />;
     case "search-console/opportunities":
       return gscReconnect || <Opportunities property={property} searchType={searchType} sub={loc.sub} onSub={subNav} />;
+    case "ai-area/google-search-tracking":
+    case "organic-serp/google":
+      return (
+        <div className="ai-area">
+          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "ai-area", item: "usage", sub: "" })} />
+          {loc.group === "organic-serp" && (
+            <p className="mb-3 text-xs text-muted">Same keywords, data and runs as AI Area → Google Search Tracking; nothing is tracked or charged twice.</p>
+          )}
+          <TrackingTab projectId={project.id} sub={loc.sub} onSub={subNav} defaultView={loc.group === "organic-serp" ? "rank" : "overview"} />
+        </div>
+      );
+    case "ai-area/usage":
+      return <UsageCostsPage projectId={project.id} />;
     case "analytics/llm-traffic":
       return <LlmTrafficReport projectId={project.id} />;
     case "analytics/overview":

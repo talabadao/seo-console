@@ -9,7 +9,8 @@ import type { Migration } from "../../lib/migrations";
  * - provider_allowances: caps enforced atomically (UPDATE ... WHERE used + n <= max), e.g. the Preview
  *   SerpApi smoke-test allowance or a project's monthly SerpApi cap. Concurrent requests can't overshoot.
  * - ai_runs: one row per tracking / brand-mention run, with the estimate shown before it and what it
- *   actually used. At most one running run per project and kind (partial unique index).
+ *   actually used. At most one running run per project and kind (partial unique index), and one request
+ *   working on a run at a time (lease_until).
  * - ai_documents: the AI Area's JSON documents (tracking config and per-keyword history, brand-mention
  *   prompts, cycles and settings), keyed by project. Replaces the donor app's Vercel Blob files.
  * The key fingerprint is a SHA-256 prefix of a provider key, used to group usage by account; keys are
@@ -60,6 +61,7 @@ export const migration: Migration = {
        estimate     TEXT,
        actual       TEXT,
        error        TEXT,
+       lease_until  BIGINT,
        started_at   BIGINT NOT NULL,
        finished_at  BIGINT
      )`,
