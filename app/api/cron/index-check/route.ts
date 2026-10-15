@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { schedulesAllowed } from "@/lib/environment";
 import { db } from "@/lib/db";
 import { discoverSitemapUrls, runIndexCheck, type SiteRow } from "@/lib/indexer";
 import type { UserRow } from "@/lib/session";
@@ -35,6 +36,8 @@ interface AutoIndexSiteRow {
  * nothing runs for it today.
  */
 export async function GET(req: NextRequest) {
+  // Scheduled work runs in production only, never from a Preview deployment.
+  if (!schedulesAllowed()) return NextResponse.json({ skipped: "schedules run in production only" });
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });

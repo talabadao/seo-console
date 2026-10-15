@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
 import { GoogleReauthRequiredError, accessTokenFor, hasIndexingScope } from "@/lib/google/oauth";
@@ -18,6 +19,7 @@ const OWNER_MSG =
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!externalWritesAllowed()) return NextResponse.json({ error: PREVIEW_WRITES_BLOCKED }, { status: 403 });
 
   const body = (await req.json().catch(() => ({}))) as {
     property?: string;

@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "sync": "tsx scripts/sync.mts",
     "test": "vitest run",
-    "migrate": "tsx scripts/migrate.mts"
+    "migrate": "tsx scripts/migrate.mts",
+    "seed:preview": "tsx --env-file-if-exists=.env.preview-migrate scripts/seed-preview.mts",
+    "migrate:preview": "tsx --env-file-if-exists=.env.preview-migrate scripts/migrate.mts"
   },
   "dependencies": {
     "date-fns": "^4.4.0",

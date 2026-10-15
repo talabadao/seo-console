@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment";
 import { currentUser } from "@/lib/session";
 import { reviewContext } from "@/lib/reviewContext";
 import { syncReviews } from "@/lib/reviews";
@@ -13,6 +14,7 @@ export const maxDuration = 300;
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!externalWritesAllowed()) return NextResponse.json({ error: PREVIEW_WRITES_BLOCKED }, { status: 403 });
   const body = (await req.json().catch(() => ({}))) as { projectId?: number; mode?: string; max?: number };
   const ctx = await reviewContext(user.id, Number(body.projectId));
   if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
