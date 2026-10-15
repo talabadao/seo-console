@@ -116,7 +116,7 @@ function newCycleId(): string {
 }
 
 /** Starts a run: continues the unfinished cycle, or starts a new one with every active prompt on every usable platform. */
-export async function beginBrandRun(user: UserRow, project: Project): Promise<{ runId: string; cycleId: string; estimate: BrandEstimate }> {
+export async function beginBrandRun(user: UserRow, project: Project): Promise<{ runId: string; cycleId: string; estimate: BrandEstimate & { continues: string | null } }> {
   const estimate = await previewBrandRun(user, project);
   if (!estimate.answers) {
     const reasons = Object.entries(estimate.unavailable).map(([p, why]) => `${PLATFORM_LABEL[p as Platform]}: ${why}`);
