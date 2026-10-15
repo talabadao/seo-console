@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LeadEventsEditor } from "./LeadEventsEditor";
 import { format } from "date-fns";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { fmtFull, pctLabel } from "./format";
@@ -31,10 +32,11 @@ const PACE_COLOR: Record<KpiCardData["pace"], string> = {
   "at-risk": "var(--position)",
   "off-track": "var(--bad)",
 };
+// KPI wording is about the target, not project delivery status ("off track" is an Asana project status).
 const PACE_LABEL: Record<KpiCardData["pace"], string> = {
-  "on-track": "On track",
-  "at-risk": "At risk",
-  "off-track": "Off track",
+  "on-track": "Projected to achieve target",
+  "at-risk": "Projected just below target",
+  "off-track": "Projected below target",
 };
 
 /** `fixedPropertyId` pins the GA4 property (the selected project's) and hides the picker. */
@@ -42,8 +44,11 @@ export function WeeklyReport({
   fixedPropertyId,
   sub: subSlug,
   onSub,
+  leadEventsHref,
 }: {
   fixedPropertyId?: string;
+  /** Where to edit a project's lead events (v2 Project settings); without it they're edited in place. */
+  leadEventsHref?: (projectId: number) => string;
   /** Sub-tab segment from the page address, and a callback to update it. */
   sub?: string;
   onSub?: (slug: string) => void;
@@ -181,7 +186,7 @@ export function WeeklyReport({
         </div>
       )}
 
-      {data && sub === "overview" && <Overview data={data} />}
+      {data && sub === "overview" && <Overview data={data} onEditLeads={() => setShowConfig(true)} />}
       {data && sub === "insights" && (
         <Insights
           data={data}
@@ -192,9 +197,9 @@ export function WeeklyReport({
 
       {showConfig && data && (
         <ConfigModal
+          leadEventsHref={leadEventsHref}
           propertyId={propertyId}
           config={data.config}
-          availableEvents={data.availableEvents}
           onClose={() => setShowConfig(false)}
           onSaved={() => {
             setShowConfig(false);
@@ -237,10 +242,17 @@ function ErrorBanner({
 
 // ---------- Overview ----------
 
-function Overview({ data }: { data: ReportData }) {
+function Overview({ data, onEditLeads }: { data: ReportData; onEditLeads: () => void }) {
   const w = data.windows;
   return (
     <div>
+      <p className="mb-3 text-xs text-muted">
+        Leads = selected lead events (a project setting):{" "}
+        <span className="text-foreground">{data.config.leadEvents.length ? data.config.leadEvents.join(", ") : "none chosen"}</span>.{" "}
+        <button className="text-accent hover:underline" onClick={onEditLeads}>
+          Change
+        </button>
+      </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiTile
           title="Organic Traffic (Sessions)"
@@ -322,13 +334,18 @@ function KpiTile({
         <div className="mt-1.5 flex items-center justify-between text-xs font-medium">
           <span style={{ color }}>
             {PACE_LABEL[kpi.pace]} · {kpi.paceDeltaPct >= 0 ? "+" : ""}
-            {kpi.paceDeltaPct.toFixed(0)}% {kpi.paceDeltaPct >= 0 ? "better" : "worse"} than
-            expected
+            {kpi.paceDeltaPct.toFixed(0)}% vs expected pace
           </span>
           <span className="text-muted">proj. {fmtFull(kpi.projected, "count")}</span>
         </div>
+      ) : null}
+      {hasTarget ? (
+        <div className="mt-1 text-xs text-muted">
+          {Math.round(fillPct)}% of the full-month target so far
+          {kpi.actualMtd >= kpi.target ? " · Target achieved" : ""}
+        </div>
       ) : (
-        <div className="mt-1.5 text-xs text-muted">Set a monthly target in Configure KPIs.</div>
+        <div className="mt-1.5 text-xs text-muted">No target set. Set one in Configure KPIs.</div>
       )}
     </div>
   );
@@ -367,7 +384,7 @@ function SectionBlock({ title, section }: { title: string; section: Section }) {
           field="ai"
         />
         <MiniCard
-          label="Organic Search Lead"
+          label="Organic Search Leads (selected lead events)"
           color={SECTION_METRIC_COLOR.organicLead}
           cur={section.leads.curTotals.organic}
           prev={section.leads.prevTotals?.organic ?? null}
@@ -376,7 +393,7 @@ function SectionBlock({ title, section }: { title: string; section: Section }) {
           field="organic"
         />
         <MiniCard
-          label="AI Lead"
+          label="AI Leads (selected lead events)"
           color={SECTION_METRIC_COLOR.aiLead}
           cur={section.leads.curTotals.ai}
           prev={section.leads.prevTotals?.ai ?? null}
@@ -744,15 +761,15 @@ function PostToAsanaModal({
 // ---------- Config modal ----------
 
 function ConfigModal({
+  leadEventsHref,
   propertyId,
   config,
-  availableEvents,
   onClose,
   onSaved,
 }: {
+  leadEventsHref?: (projectId: number) => string;
   propertyId: string;
   config: KpiConfig;
-  availableEvents: { name: string; count: number; isKeyEvent: boolean }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -764,7 +781,9 @@ function ConfigModal({
   const [trafficAiTarget, setTrafficAiTarget] = useState(numStr(config.trafficAiTarget));
   const [leadOrganicTarget, setLeadOrganicTarget] = useState(numStr(config.leadOrganicTarget));
   const [leadAiTarget, setLeadAiTarget] = useState(numStr(config.leadAiTarget));
+  // Lead events are a project setting (Project settings → Analytics); they're posted back unchanged.
   const [leadEvents, setLeadEvents] = useState<string[]>(config.leadEvents);
+  const [editLeads, setEditLeads] = useState(false);
   const [asanaProjectGid, setAsanaProjectGid] = useState(config.asanaProjectGid);
   const [asanaStatusTitle, setAsanaStatusTitle] = useState(config.asanaStatusTitle);
   const [saving, setSaving] = useState(false);
@@ -796,8 +815,6 @@ function ConfigModal({
     };
   }, [yearMonth, propertyId]);
 
-  const toggleEvent = (name: string) =>
-    setLeadEvents((cur) => (cur.includes(name) ? cur.filter((e) => e !== name) : [...cur, name]));
 
   async function save() {
     setSaving(true);
@@ -858,36 +875,32 @@ function ConfigModal({
           Pick a month above (including upcoming ones) to set its targets — leave a field blank for no target.
         </p>
 
-        <div className="mt-5">
-          <p className="text-xs font-medium text-muted">
-            Events counted as &quot;Leads&quot; (last 30 days of GA4 events)
+        <div className="mt-5 rounded-md border p-3">
+          <p className="text-xs font-medium text-muted">Lead events (project setting)</p>
+          <p className="mt-1 text-sm">{leadEvents.length ? leadEvents.join(", ") : "None chosen"}</p>
+          <p className="mt-1 text-xs text-muted">
+            One list per project, shared by the project dashboard, GA4 reports and this report.
           </p>
-          <div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
-            {!availableEvents.length && (
-              <p className="px-1 py-2 text-xs text-muted">No events found in the last 30 days.</p>
-            )}
-            {availableEvents.map((ev) => (
-              <label key={ev.name} className="flex items-center justify-between gap-2 rounded px-1 py-1 text-sm hover:bg-accent-soft/40">
-                <span className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={leadEvents.includes(ev.name)}
-                    onChange={() => toggleEvent(ev.name)}
-                  />
-                  {ev.name}
-                  {ev.isKeyEvent && (
-                    <span
-                      className="rounded bg-accent-soft px-1 text-[10px] font-semibold text-accent"
-                      title="Marked as a Key Event in GA4"
-                    >
-                      Key Event
-                    </span>
-                  )}
-                </span>
-                <span className="text-xs tabular-nums text-muted">{fmtFull(ev.count, "count")}</span>
-              </label>
-            ))}
-          </div>
+          {config.projectId ? (
+            <div className="mt-2 flex flex-wrap gap-3 text-sm">
+              {leadEventsHref ? (
+                <a className="text-accent hover:underline" href={leadEventsHref(config.projectId)}>
+                  Edit in Project settings
+                </a>
+              ) : (
+                <button className="text-accent hover:underline" onClick={() => setEditLeads((v) => !v)}>
+                  {editLeads ? "Close" : "Edit lead events"}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted">Link this GA4 property to a project to choose lead events.</p>
+          )}
+          {editLeads && config.projectId ? (
+            <div className="mt-3">
+              <LeadEventsEditor projectId={config.projectId} onSaved={(list) => setLeadEvents(list)} />
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-5">

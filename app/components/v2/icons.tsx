@@ -21,16 +21,17 @@ const PATHS: Record<string, string> = {
   menu: "M3 6h14M3 10h14M3 14h14",
   chevronLeft: "M12 4 6 10l6 6",
   chevronRight: "M8 4l6 6-6 6",
+  chevronDown: "M5 8l5 5 5-5",
   x: "M5 5l10 10M15 5 5 15",
 };
 
-export function Icon({ name, className = "h-5 w-5" }: { name: string; className?: string }) {
+export function Icon({ name, className = "h-5 w-5", strokeWidth = 1.8 }: { name: string; className?: string; strokeWidth?: number }) {
   return (
     <svg
       viewBox="0 0 20 20"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.6}
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}

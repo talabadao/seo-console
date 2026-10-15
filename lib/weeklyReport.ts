@@ -9,6 +9,7 @@ import {
 } from "date-fns";
 import { db } from "@/lib/db";
 import { projectForGa } from "@/lib/projects";
+import { leadEventsFor, type LeadEventsSource } from "@/lib/projectSettings";
 import { resolveComparison, enumerateBuckets, type Range } from "@/lib/dateRanges";
 import {
   classifyTraffic,
@@ -320,6 +321,10 @@ export interface KpiConfig {
   asanaProjectGid: string;
   /** Optional fixed title for the Asana status update; falls back to the GA property name. */
   asanaStatusTitle: string;
+  /** Where leadEvents came from (see lib/projectSettings.ts). Lead events are a project setting. */
+  leadEventsSource?: LeadEventsSource;
+  /** The project this GA4 property belongs to, for links to its settings. */
+  projectId?: number | null;
 }
 
 function defaultConfig(yearMonth: string): KpiConfig {
@@ -360,7 +365,14 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
     asanaProjectGid: project?.asanaProjectGid || gid,
     asanaStatusTitle: project?.asanaProjectName || title,
   });
-  if (!row) return { ...defaultConfig(yearMonth), ...asana("", "") };
+  // Lead events are one project-level list (Project settings → Analytics);
+  // older per-month Weekly Report selections are the fallback.
+  const lead = project ? await leadEventsFor(userId, project) : null;
+  const leadFields = (rowEvents: string[]) =>
+    lead && lead.source !== "none"
+      ? { leadEvents: lead.events, leadEventsSource: lead.source, projectId: project?.id ?? null }
+      : { leadEvents: rowEvents, leadEventsSource: (rowEvents.length ? "weekly-report" : "none") as LeadEventsSource, projectId: project?.id ?? null };
+  if (!row) return { ...defaultConfig(yearMonth), ...asana("", ""), ...leadFields([]) };
   let leadEvents: string[] = [];
   try {
     const parsed = JSON.parse(row.lead_events);
@@ -374,8 +386,8 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
     trafficAiTarget: Number(row.traffic_ai_target) || 0,
     leadOrganicTarget: Number(row.lead_organic_target) || 0,
     leadAiTarget: Number(row.lead_ai_target) || 0,
-    leadEvents,
     ...asana(row.asana_project_gid ?? "", row.asana_status_title ?? ""),
+    ...leadFields(leadEvents),
   };
 }
 

@@ -69,6 +69,10 @@ export interface KpiConfig {
   leadEvents: string[];
   asanaProjectGid: string;
   asanaStatusTitle: string;
+  /** Where leadEvents came from: the project setting, an older Weekly Report selection, or nothing yet. */
+  leadEventsSource?: "project" | "weekly-report" | "none";
+  /** The project this GA4 property belongs to (lead events are a project setting). */
+  projectId?: number | null;
 }
 
 export interface Section {

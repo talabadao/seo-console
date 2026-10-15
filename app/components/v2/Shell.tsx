@@ -316,7 +316,8 @@ function Sidebar({
   onNavigate: (l: ShellLocation) => void;
   onToggleCollapsed: () => void;
 }) {
-  const activeGroup = loc.kind === "project" || loc.kind === "pick" ? loc.group : null;
+  // On All projects, "Dashboard" is the portfolio dashboard; inside a project it's that project's dashboard.
+  const activeGroup = loc.kind === "project" || loc.kind === "pick" ? loc.group : loc.kind === "portfolio" ? DEFAULT_ITEM.group : null;
   const activeItem = loc.kind === "project" || loc.kind === "pick" ? loc.item : null;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const isOpen = (g: NavGroup) => open[g.id] ?? (g.id === activeGroup || g.items.length <= 2);
@@ -331,8 +332,8 @@ function Sidebar({
       }}
       aria-current={active ? "page" : undefined}
       title={title ?? label}
-      className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-        active ? "bg-accent-soft font-medium text-accent" : "text-foreground hover:bg-accent-soft/50"
+      className={`flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+        active ? "bg-accent-soft font-semibold text-accent" : "text-foreground hover:bg-accent-soft/50"
       } ${collapsed ? "justify-center px-0" : ""}`}
     >
       {children}
@@ -352,12 +353,6 @@ function Sidebar({
         </button>
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto p-2">
-        {link({ kind: "portfolio" }, "All projects", loc.kind === "portfolio", (
-          <>
-            <Icon name="grid" />
-            {!collapsed && <span>All projects</span>}
-          </>
-        ))}
         {NAV.map((g) => {
           const groupActive = g.id === activeGroup;
           if (collapsed) {
@@ -389,15 +384,13 @@ function Sidebar({
                 onClick={() => setOpen((o) => ({ ...o, [g.id]: !expanded }))}
                 aria-expanded={expanded}
                 title={g.label}
-                className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent-soft/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                  groupActive ? "font-medium" : ""
+                className={`flex min-h-9 w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium hover:bg-accent-soft/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+                  groupActive ? "text-accent" : ""
                 }`}
               >
                 <Icon name={g.icon} />
                 <span className="min-w-0 flex-1 leading-snug">{g.label}</span>
-                <span aria-hidden="true" className="text-xs text-muted">
-                  {expanded ? "▾" : "▸"}
-                </span>
+                <Icon name={expanded ? "chevronDown" : "chevronRight"} className="h-4 w-4 shrink-0 text-muted" strokeWidth={2} />
               </button>
               {expanded && (
                 <div className="ml-5 mt-0.5 space-y-0.5 border-l pl-2">
@@ -405,7 +398,7 @@ function Sidebar({
                     <div key={it.id}>
                       {link(itemHref(loc, project, g.id, it.id), it.label, groupActive && it.id === activeItem, (
                         <>
-                          <span className="min-w-0 flex-1 leading-snug">{it.label}</span>
+                          <span className="min-w-0 flex-1 font-normal leading-snug">{it.label}</span>
                           <ItemMark item={it} project={project} />
                         </>
                       ))}
@@ -776,7 +769,14 @@ function ProjectPage({
     case "analytics/overview":
       return <Analytics fixedPropertyId={project.gaPropertyId ?? ""} sub={loc.sub} onSub={subNav} />;
     case "reports/weekly":
-      return <WeeklyReport fixedPropertyId={project.gaPropertyId ?? ""} sub={loc.sub} onSub={subNav} />;
+      return (
+        <WeeklyReport
+          fixedPropertyId={project.gaPropertyId ?? ""}
+          sub={loc.sub}
+          onSub={subNav}
+          leadEventsHref={(id) => buildShellPath({ kind: "project", projectId: id, group: "settings", item: "project", sub: "analytics" })}
+        />
+      );
     case "local-seo/reviews":
       return <Reviews projectId={project.id} projectName={project.name} onEditProject={() => onEditProject(project.id)} />;
     case "technical-seo/pagespeed":

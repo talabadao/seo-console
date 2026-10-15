@@ -5,7 +5,7 @@ import { DEFAULT_COMPARE, DEFAULT_PRESET, isCompare, isPreset, resolvePeriod } f
 import { ALL_PARTS, type ProjectSummary, type SummaryPart } from "@/lib/v2/summary/types";
 import { demoContent, demoSummary, isDemoWebsite } from "@/lib/v2/summary/demo";
 import { cacheGet, cacheSet } from "@/lib/v2/summary/cache";
-import { ga4Section, googleToken, gscSection, healthSection, kpiSection, tasksSection } from "@/lib/v2/summary/live";
+import { ga4Section, googleToken, gscSection, healthSection, kpiSection, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
 
 export const maxDuration = 60;
 
@@ -14,7 +14,7 @@ type Ctx = { params: Promise<{ id: string }> };
 /**
  * One project's dashboard summary. Read-only: provider calls only read data.
  *   ?preset=last28&compare=previous   performance period
- *   ?parts=gsc,ga4,kpi,tasks,content,health
+ *   ?parts=gsc,ga4,kpi,tasks,content,health,rankings
  *   ?detail=1                         include daily series and task lists
  *   ?refresh=1                        skip the 15-minute cache
  * The project must belong to the signed-in account.
@@ -60,6 +60,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       // No content workflow exists yet: always labelled demo data.
       if (p === "content") out.content = demoContent(id);
       if (p === "health") out.health = await healthSection(user, project);
+      if (p === "rankings") out.rankings = await rankingsSection(project, period);
     }),
   );
 

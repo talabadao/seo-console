@@ -34,6 +34,19 @@ export interface MetricPair {
   previous: number | null;
 }
 
+/** One page or query in an Insights-style list. previousClicks null = not known (outside the rows fetched). */
+export interface InsightRow {
+  key: string;
+  clicks: number;
+  previousClicks: number | null;
+}
+
+export interface InsightLists {
+  top: InsightRow[];
+  up: InsightRow[];
+  down: InsightRow[];
+}
+
 export interface GscData {
   clicks: MetricPair;
   impressions: MetricPair;
@@ -42,33 +55,52 @@ export interface GscData {
   /** Google's own impression-weighted average for the period. */
   position: MetricPair;
   series?: { date: string; clicks: number; impressions: number }[];
+  /** Detail only: pages and queries with Top / Trending up / Trending down, by clicks. */
+  pages?: InsightLists;
+  queries?: InsightLists;
 }
 
 export interface Ga4Data {
-  /** Organic Search channel only; sources on the AI list are excluded. */
+  /** Organic Search channel; sources on the AI list are excluded (counted in aiSessions). */
   sessions: MetricPair;
-  engagedSessions: MetricPair;
+  /** Sessions whose session source matches the account's AI search sources list. */
+  aiSessions: MetricPair;
+  /** GA4 keyEvents (all key events, not just lead events), from Organic Search sessions. */
   keyEvents: MetricPair;
-  /** Null when the property records no revenue; never summed across currencies. */
+  /** From Organic Search sessions. Null when the property records no revenue; never summed across currencies. */
   revenue: MetricPair | null;
   currency: string | null;
-  series?: { date: string; sessions: number }[];
+  /** Kept for detail views; not a headline metric. */
+  engagedSessions?: MetricPair;
+  series?: { date: string; sessions: number; aiSessions: number }[];
 }
 
-export type KpiStatus = "on-track" | "at-risk" | "off-track";
+/**
+ * KPI wording (separate from project delivery status and from period-over-period change):
+ * - attainment: actual so far against the full-month target.
+ * - projection: month-end projection (last 30 days' daily rate × days in month) against the target.
+ */
+export type KpiAttainment = "achieved" | "above" | "below" | "in-progress" | "no-target" | "unavailable";
+export type KpiProjection = "achieved" | "above" | "below";
+export type KpiDirection = "higher" | "lower";
 
 export interface KpiItem {
   id: string;
   label: string;
+  /** Whether a higher or lower value is desirable. */
+  direction: KpiDirection;
+  /** Month to date. */
   actual: number;
+  /** Full-month target. */
   target: number;
+  /** actual ÷ target, in percent. */
+  attainmentPct: number;
+  attainment: KpiAttainment;
   /** Month-end projection from the last 30 days' daily rate. */
   projected: number;
   /** projected ÷ target, in percent. */
   projectedPct: number;
-  /** actual ÷ target, in percent. */
-  progressPct: number;
-  status: KpiStatus;
+  projection: KpiProjection;
 }
 
 export interface KpiData {
@@ -76,6 +108,12 @@ export interface KpiData {
   monthLabel: string;
   daysElapsed: number;
   daysInMonth: number;
+  /** True when the month has ended, so attainment is final. */
+  monthComplete: boolean;
+  /** Which GA4 events count as leads for the lead KPIs (project setting). */
+  leadEvents: string[];
+  /** Explanations, e.g. a lead target without lead events. */
+  notes: string[];
   items: KpiItem[];
 }
 
@@ -123,6 +161,34 @@ export interface ContentData {
   awaitingApproval: { title: string; stage: ContentStage; since: string }[];
 }
 
+export interface RankCountsData {
+  top3: number;
+  top5: number;
+  top10: number;
+  ranked: number;
+  avgPosition: number | null;
+}
+
+/** SE Ranking keyword positions for the project's tracked keywords (one engine / location context). */
+export interface RankingsData {
+  context: {
+    siteId: number;
+    siteTitle: string;
+    siteUrl: string;
+    engine: string;
+    region: string | null;
+    language: string | null;
+    device: string | null;
+    keywordGroup: string;
+    trackedKeywords: number;
+    otherEngines: number;
+    latestDate: string;
+    comparisonDate: string | null;
+  };
+  current: RankCountsData;
+  previous: RankCountsData | null;
+}
+
 export interface HealthData {
   /** Most recent stored Search Console sync for this project's property. */
   lastSync: { status: string; finishedAt: number | null; message: string | null } | null;
@@ -130,8 +196,8 @@ export interface HealthData {
   reviewsSyncError: string | null;
 }
 
-export type SummaryPart = "gsc" | "ga4" | "kpi" | "tasks" | "content" | "health";
-export const ALL_PARTS: SummaryPart[] = ["gsc", "ga4", "kpi", "tasks", "content", "health"];
+export type SummaryPart = "gsc" | "ga4" | "kpi" | "tasks" | "content" | "health" | "rankings";
+export const ALL_PARTS: SummaryPart[] = ["gsc", "ga4", "kpi", "tasks", "content", "health", "rankings"];
 
 export interface PeriodInfo {
   preset: string;
@@ -156,4 +222,5 @@ export interface ProjectSummary {
   tasks?: Section<TaskData>;
   content?: Section<ContentData>;
   health?: Section<HealthData>;
+  rankings?: Section<RankingsData>;
 }

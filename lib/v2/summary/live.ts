@@ -13,9 +13,13 @@ import { aiDomainsFor, ownsGaProperty } from "@/lib/gaConfig";
 import { buildKpiCard, configFor, leadsPair, reportWindows, trafficPair } from "@/lib/weeklyReport";
 import { fetchProjectTasks, getProject as getAsanaProject } from "@/lib/asana";
 import { siteIdFor, lastSync } from "@/lib/metrics";
-import { addDaysYmd, taskMonth, ymdUTC } from "./period";
+import { addDaysYmd, daysBetween, taskMonth, ymdUTC } from "./period";
+import { listSites, matchSite, rankingsFor, seRankingConfigured } from "@/lib/seranking/rankings";
+import { seRankingSiteFor } from "@/lib/projectSettings";
 import { summarizeTasks } from "./tasks";
-import type { Ga4Data, GscData, HealthData, KpiData, KpiItem, PeriodInfo, Section, TaskData } from "./types";
+import { insightLists } from "./insights";
+import { evaluateKpi } from "./kpi";
+import type { Ga4Data, GscData, HealthData, KpiData, KpiItem, PeriodInfo, Section, TaskData, RankingsData } from "./types";
 
 /** Caps provider calls from this server instance, across concurrent summary requests. */
 export const providerGate = new Semaphore(4);
@@ -26,6 +30,9 @@ const KPI = "Monthly targets (KPI settings) and GA4";
 const ASANA = "Asana";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300);
+
+/** Rows per Search Analytics request for the Insights-style page and query lists. */
+const INSIGHT_ROWS = 1000;
 
 /** Search Console normally has data through 2–3 days ago; older than this counts as stale. */
 const GSC_STALE_DAYS = 4;
@@ -73,6 +80,26 @@ export async function gscSection(token: string, project: Project, period: Period
     });
     const series = days.map((r) => ({ date: r.keys?.[0] ?? "", clicks: r.clicks, impressions: r.impressions })).sort((a, b) => (a.date < b.date ? -1 : 1));
     const dataThrough = series.length ? series[series.length - 1].date : null;
+    let insights: Pick<GscData, "pages" | "queries"> = {};
+    if (detail) {
+      // Pages and queries for both periods, by clicks. INSIGHT_ROWS rows per request; when a comparison
+      // request comes back full, rows missing from it have unknown (not zero) previous clicks.
+      const list = (r: { start: string; end: string }, dim: "page" | "query") =>
+        providerGate.run(() =>
+          searchAnalytics(token, site, { startDate: r.start, endDate: r.end, dimensions: [dim], dataState: "all", type: "web", rowLimit: INSIGHT_ROWS }),
+        );
+      const [pc, pp, qc, qp] = await Promise.all([
+        list(period.current, "page"),
+        period.previous ? list(period.previous, "page") : Promise.resolve(null),
+        list(period.current, "query"),
+        period.previous ? list(period.previous, "query") : Promise.resolve(null),
+      ]);
+      const rowsOf = (rows: { keys?: string[]; clicks: number }[] | null) => rows?.map((r) => ({ key: r.keys?.[0] ?? "", clicks: r.clicks })) ?? null;
+      insights = {
+        pages: insightLists(rowsOf(pc)!, rowsOf(pp), (pp?.length ?? 0) < INSIGHT_ROWS),
+        queries: insightLists(rowsOf(qc)!, rowsOf(qp), (qp?.length ?? 0) < INSIGHT_ROWS),
+      };
+    }
     const staleCutoff = addDaysYmd(ymdUTC(new Date()), -GSC_STALE_DAYS);
     return {
       state: "live",
@@ -86,7 +113,7 @@ export async function gscSection(token: string, project: Project, period: Period
         impressions: pair("impressions", 0),
         ctr: pair("ctr", null),
         position: pair("position", null),
-        ...(detail ? { series } : {}),
+        ...(detail ? { series, ...insights } : {}),
       },
     };
   } catch (e) {
@@ -138,11 +165,15 @@ export async function ga4Section(user: UserRow, token: string, project: Project,
         limit: 10000,
       }),
     );
+    // Scope: sessions, engaged sessions, key events and revenue are Organic Search (AI sources excluded);
+    // aiSessions are the sessions whose source is on the AI list, whatever their channel.
     const sums = [0, 1].map((range) => {
-      const t = { sessions: 0, engaged: 0, key: 0, revenue: 0 };
+      const t = { sessions: 0, ai: 0, engaged: 0, key: 0, revenue: 0 };
       for (const r of rows) {
         if (r.range !== range) continue;
-        if (classifyTraffic(r.dims[0] ?? "", r.dims[1] ?? "", aiDomains) !== "organic") continue;
+        const kind = classifyTraffic(r.dims[0] ?? "", r.dims[1] ?? "", aiDomains);
+        if (kind === "ai") t.ai += r.metrics[0] ?? 0;
+        if (kind !== "organic") continue;
         t.sessions += r.metrics[0] ?? 0;
         t.engaged += r.metrics[1] ?? 0;
         t.key += r.metrics[2] ?? 0;
@@ -163,14 +194,18 @@ export async function ga4Section(user: UserRow, token: string, project: Project,
           limit: 100000,
         }),
       );
-      const byDay = new Map<string, number>();
+      const byDay = new Map<string, { sessions: number; aiSessions: number }>();
       for (const r of daily.rows) {
-        if (classifyTraffic(r.dims[1] ?? "", r.dims[2] ?? "", aiDomains) !== "organic") continue;
+        const kind = classifyTraffic(r.dims[1] ?? "", r.dims[2] ?? "", aiDomains);
+        if (kind === "other") continue;
         const d = r.dims[0];
         const key = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
-        byDay.set(key, (byDay.get(key) ?? 0) + (r.metrics[0] ?? 0));
+        const day = byDay.get(key) ?? { sessions: 0, aiSessions: 0 };
+        if (kind === "organic") day.sessions += r.metrics[0] ?? 0;
+        else day.aiSessions += r.metrics[0] ?? 0;
+        byDay.set(key, day);
       }
-      series = [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, sessions]) => ({ date, sessions }));
+      series = [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, v]) => ({ date, ...v }));
     }
     const revenueTracked = cur.revenue > 0 || (hasPrev && prev.revenue > 0);
     return {
@@ -180,6 +215,7 @@ export async function ga4Section(user: UserRow, token: string, project: Project,
       dataThrough: period.current.end,
       data: {
         sessions: pair("sessions"),
+        aiSessions: pair("ai"),
         engagedSessions: pair("engaged"),
         keyEvents: pair("key"),
         revenue: revenueTracked && currency ? pair("revenue") : null,
@@ -200,19 +236,23 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
     const { timeZone } = await gaContext(user, token, propertyId);
     const w = reportWindows(propertyNow(timeZone));
     const config = await configFor(user.id, propertyId, w.yearMonth);
-    const wanted = [
+    const all = [
       { id: "traffic-organic", label: "Organic sessions", target: config.trafficOrganicTarget, kind: "traffic" as const, channel: "organic" as const },
       { id: "traffic-ai", label: "AI search sessions", target: config.trafficAiTarget, kind: "traffic" as const, channel: "ai" as const },
       { id: "lead-organic", label: "Organic leads", target: config.leadOrganicTarget, kind: "leads" as const, channel: "organic" as const },
       { id: "lead-ai", label: "AI search leads", target: config.leadAiTarget, kind: "leads" as const, channel: "ai" as const },
-    ].filter((k) => k.target > 0 && (k.kind === "traffic" || config.leadEvents.length));
+    ];
+    const withTarget = all.filter((k) => k.target > 0);
+    // Lead KPIs need the project's lead events; without them the KPI is "data unavailable", not zero.
+    const wanted = withTarget.filter((k) => k.kind === "traffic" || config.leadEvents.length);
+    const notes = withTarget.length > wanted.length ? ["Lead targets are set, but no lead events are chosen. Choose them in Project settings → Analytics."] : [];
     const monthLabel = `${w.monthLabel} ${w.yearMonth.slice(0, 4)}`;
-    const base = { yearMonth: w.yearMonth, monthLabel, daysElapsed: w.daysElapsed, daysInMonth: w.daysInMonth };
+    const base = { yearMonth: w.yearMonth, monthLabel, daysElapsed: w.daysElapsed, daysInMonth: w.daysInMonth, monthComplete: false, leadEvents: config.leadEvents, notes };
     if (!wanted.length) {
       return {
         state: "unavailable",
         source: KPI,
-        message: `No KPI targets are set for ${monthLabel}. Add them in Project settings → KPI targets.`,
+        message: notes[0] ?? `No KPI targets are set for ${monthLabel}. Add them in Project settings → KPI targets.`,
       };
     }
     // One query per kind covering both month-to-date and the last 30 days.
@@ -228,16 +268,8 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
     const items: KpiItem[] = wanted.map((k) => {
       const series = k.kind === "traffic" ? traffic.series : (leads?.series ?? []);
       const card = buildKpiCard(sum(series, k.channel, w.mtd), sum(series, k.channel, w.last30), k.target, w);
-      return {
-        id: k.id,
-        label: k.label,
-        actual: card.actualMtd,
-        target: card.target,
-        projected: card.projected,
-        projectedPct: card.projectedPct,
-        progressPct: (card.actualMtd / card.target) * 100,
-        status: card.pace,
-      };
+      // The current month is still running, so attainment is "in progress" until the target is reached.
+      return evaluateKpi({ id: k.id, label: k.label, direction: "higher", actual: card.actualMtd, target: card.target, projected: card.projected, monthComplete: false });
     });
     return { state: "live", source: KPI, fetchedAt: Date.now(), dataThrough: w.mtd.end, data: { ...base, items } };
   } catch (e) {
@@ -296,5 +328,36 @@ export async function healthSection(user: UserRow, project: Project): Promise<Se
     };
   } catch (e) {
     return { state: "error", source: "Stored sync history", message: errorText(e) };
+  }
+}
+
+const SE_RANKING = "SE Ranking";
+
+/**
+ * Keyword rankings from the SE Ranking project mapped to this project (chosen in Project settings, or matched
+ * by website). Reads only; about 3 API requests, cached with the rest of the summary.
+ */
+export async function rankingsSection(project: Project, period: PeriodInfo): Promise<Section<RankingsData>> {
+  if (!seRankingConfigured()) {
+    return { state: "unavailable", source: SE_RANKING, message: "SE Ranking isn't connected to SEO Console yet (no SE Ranking API key on the server)." };
+  }
+  try {
+    const sites = await listSites();
+    const chosen = await seRankingSiteFor(project.id);
+    const site = chosen ? sites.find((s) => s.id === chosen) : matchSite(sites, project.websiteUrl);
+    if (!site) {
+      return {
+        state: "not-connected",
+        source: SE_RANKING,
+        message: chosen
+          ? "The SE Ranking project chosen for this project is no longer in the account."
+          : "No SE Ranking project tracks this website. Choose one in Project settings → Integrations.",
+      };
+    }
+    const compareDays = period.previous ? daysBetween(period.current.start, period.current.end) : 7;
+    const data = await rankingsFor(site, compareDays);
+    return { state: "live", source: SE_RANKING, fetchedAt: Date.now(), dataThrough: data.context.latestDate, data };
+  } catch (e) {
+    return { state: "error", source: SE_RANKING, message: errorText(e) };
   }
 }

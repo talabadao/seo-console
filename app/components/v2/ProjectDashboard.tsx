@@ -4,19 +4,23 @@
 // lives in Project settings; this page only reads summaries.
 
 import { useMemo, useState } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Project } from "../ProjectManager";
 import { Favicon } from "../ProjectManager";
 import { hostOf } from "@/lib/projectMatch";
 import { alertsFor, type Alert } from "@/lib/v2/summary/alerts";
-import { ALL_PARTS, CONTENT_STAGES, CONTENT_STAGE_LABEL, type TaskData, type TaskRef } from "@/lib/v2/summary/types";
+import { ALL_PARTS, CONTENT_STAGES, CONTENT_STAGE_LABEL, type GscData, type InsightLists, type TaskData, type TaskRef } from "@/lib/v2/summary/types";
+import { readableUrl } from "@/lib/v2/summary/insights";
+import { PROJECTION_LABEL } from "@/lib/v2/summary/kpi";
 import { taskMonth } from "@/lib/v2/summary/period";
 import type { ShellLocation } from "@/lib/v2/nav";
 import { useSummary, usePeriodChoice } from "./summaryClient";
 import {
-  KPI_STATUS_DEFINITION,
-  KpiStatusPill,
+  AttainmentPill,
+  Delta,
+  KPI_DEFINITION,
   PeriodPicker,
+  Sparkline,
+  fmtCompact,
   ProgressBar,
   SectionCard,
   StateBadge,
@@ -106,7 +110,7 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <SectionCard
-          title="Search performance"
+          title="Search Console insights"
           section={summary?.gsc}
           loading={loading}
           className="xl:col-span-2"
@@ -117,94 +121,140 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
             </button>
           }
         >
-          {(d) => (
-            <>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <Stat label="Clicks" value={fmtInt(d.clicks.current)} pair={d.clicks} />
-                <Stat label="Impressions" value={fmtInt(d.impressions.current)} pair={d.impressions} />
-                <Stat label="CTR" value={fmtPct(d.ctr.current)} pair={d.ctr} hint="Clicks ÷ impressions for the whole period, as Google reports it" />
-                <Stat label="Avg. position" value={fmtPos(d.position.current)} pair={d.position} lowerIsBetter absolute hint="Google's impression-weighted average; lower is better" />
-              </div>
-              {d.series && d.series.length > 1 ? (
-                <div className="mt-4 h-48" aria-label="Daily clicks and impressions">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={d.series} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
-                      <CartesianGrid stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: string) => v.slice(5)} minTickGap={24} />
-                      <YAxis yAxisId="c" tick={{ fontSize: 11, fill: "var(--muted)" }} width={44} />
-                      <YAxis yAxisId="i" orientation="right" tick={{ fontSize: 11, fill: "var(--muted)" }} width={52} />
-                      <Tooltip contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", fontSize: 12 }} />
-                      <Line yAxisId="c" type="monotone" dataKey="clicks" name="Clicks" stroke="var(--clicks)" dot={false} strokeWidth={2} isAnimationActive={false} />
-                      <Line yAxisId="i" type="monotone" dataKey="impressions" name="Impressions" stroke="var(--impressions)" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-muted">No daily data in this period.</p>
-              )}
-            </>
-          )}
+          {(d) => <GscInsights d={d} onMore={(sub) => go("search-console", "performance", sub)} />}
         </SectionCard>
 
         <AttentionCard alerts={alerts} loading={loading} tasks={summary?.tasks?.data} tasksDemo={summary?.tasks?.state === "demo"} onGo={go} />
 
         <SectionCard
-          title="Organic traffic (GA4)"
+          title="Traffic (GA4)"
           section={summary?.ga4}
           loading={loading}
           action={settingsLink("integrations", "Link GA4")}
           headerExtra={
-            <button className="text-xs text-accent hover:underline" onClick={() => go("analytics", "overview")}>
-              Full report
-            </button>
+            <span className="flex gap-3">
+              <button className="text-xs text-accent hover:underline" onClick={() => go("analytics", "llm-traffic")}>
+                LLMs Traffic
+              </button>
+              <button className="text-xs text-accent hover:underline" onClick={() => go("analytics", "overview")}>
+                Full report
+              </button>
+            </span>
           }
         >
           {(d) => (
             <>
               <div className="grid grid-cols-2 gap-4">
-                <Stat label="Sessions" value={fmtInt(d.sessions.current)} pair={d.sessions} hint="Organic Search channel; AI-search sources are excluded" />
-                <Stat label="Engaged sessions" value={fmtInt(d.engagedSessions.current)} pair={d.engagedSessions} />
-                <Stat label="Key events" value={fmtInt(d.keyEvents.current)} pair={d.keyEvents} />
+                <Stat label="Organic sessions" scope="Organic Search channel" value={fmtInt(d.sessions.current)} pair={d.sessions} />
+                <Stat label="AI sessions" scope="Sources on your AI list" value={fmtInt(d.aiSessions.current)} pair={d.aiSessions} />
                 {d.revenue ? (
-                  <Stat label={`Revenue (${d.currency})`} value={fmtMoney(d.revenue.current, d.currency)} pair={d.revenue} />
+                  <Stat label={`Revenue (${d.currency})`} scope="Organic Search sessions" value={fmtMoney(d.revenue.current, d.currency)} pair={d.revenue} />
                 ) : (
                   <div>
                     <div className="text-xs text-muted">Revenue</div>
+                    <div className="text-[11px] text-muted">Organic Search sessions</div>
                     <div className="mt-1 text-sm text-muted">Not tracked in this property</div>
                   </div>
                 )}
+                <Stat label="Key events" scope="All key events, Organic Search" value={fmtInt(d.keyEvents.current)} pair={d.keyEvents} />
               </div>
-              <p className="mt-3 text-xs text-muted">Organic Search channel only. Sources on the AI list are counted separately.</p>
+              <p className="mt-3 text-xs text-muted">
+                AI sessions use the AI search sources list in Settings, the same list as LLMs Traffic. Key events are every GA4 key event; lead KPIs use only the
+                project&apos;s selected lead events.
+              </p>
             </>
           )}
+        </SectionCard>
+
+        <SectionCard
+          title="Keyword rankings (SE Ranking)"
+          section={summary?.rankings}
+          loading={loading}
+          action={settingsLink("integrations", "Choose SE Ranking project")}
+          headerExtra={
+            <button className="text-xs text-accent hover:underline" onClick={() => go("organic-serp", "se-ranking")}>
+              Rank tracking
+            </button>
+          }
+        >
+          {(d) => {
+            const p = d.previous;
+            const pair = (k: "top3" | "top5" | "top10" | "avgPosition") => ({ current: d.current[k], previous: p ? p[k] : null });
+            const c = d.context;
+            return (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <Stat label="Top 3" value={fmtInt(d.current.top3)} pair={pair("top3")} absolute integer hint="Keywords at positions 1–3" />
+                  <Stat label="Top 5" value={fmtInt(d.current.top5)} pair={pair("top5")} absolute integer hint="Keywords at positions 1–5 (includes the top 3)" />
+                  <Stat label="Top 10" value={fmtInt(d.current.top10)} pair={pair("top10")} absolute integer hint="Keywords at positions 1–10 (includes the top 5)" />
+                  <Stat
+                    label="Avg. position"
+                    value={fmtPos(d.current.avgPosition)}
+                    pair={pair("avgPosition")}
+                    lowerIsBetter
+                    absolute
+                    hint="Mean position of keywords ranking in the top 100; unranked keywords are excluded. Not the Search Console average."
+                  />
+                </div>
+                <p className="mt-3 text-xs text-muted">
+                  Cumulative counts of {fmtInt(c.trackedKeywords)} tracked keywords ({fmtInt(d.current.ranked)} in the top 100). {c.engine}
+                  {c.region ? ` · ${c.region}` : ""}
+                  {c.language ? ` · ${c.language}` : ""}
+                  {c.device ? ` · ${c.device}` : ""} · {c.keywordGroup}. Checked {c.latestDate}
+                  {c.comparisonDate ? ` vs ${c.comparisonDate}` : " (no earlier check to compare)"}
+                  {c.otherEngines > 0 ? `; ${c.otherEngines} other search engine${c.otherEngines === 1 ? "" : "s"} not included` : ""}.
+                </p>
+              </>
+            );
+          }}
         </SectionCard>
 
         <SectionCard title="Monthly KPIs" section={summary?.kpi} loading={loading} action={settingsLink("kpi", "Set KPI targets")}>
           {(d) => (
             <>
               <p className="mb-3 text-xs text-muted">
-                {d.monthLabel}: day {d.daysElapsed} of {d.daysInMonth}
+                {d.monthLabel}: day {d.daysElapsed} of {d.daysInMonth}, month to date against the full-month target.
               </p>
               <ul className="space-y-3">
                 {d.items.map((k) => (
                   <li key={k.id}>
                     <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                       <span className="font-medium">{k.label}</span>
-                      <KpiStatusPill status={k.status} />
+                      <AttainmentPill attainment={k.attainment} />
                     </div>
-                    <ProgressBar pct={k.progressPct} status={k.status} />
-                    <div className="mt-1 flex justify-between text-xs text-muted tabular-nums">
+                    <ProgressBar
+                      pct={k.attainmentPct}
+                      tone={k.attainment === "achieved" ? "good" : k.attainment === "below" || k.attainment === "above" ? "bad" : "neutral"}
+                    />
+                    <div className="mt-1 flex flex-wrap justify-between gap-x-2 text-xs text-muted tabular-nums">
                       <span>
-                        {fmtInt(k.actual)} of {fmtInt(k.target)} ({Math.round(k.progressPct)}%)
+                        {fmtInt(k.actual)} of {fmtInt(k.target)} ({Math.round(k.attainmentPct)}% of target)
                       </span>
-                      <span>Projected {Math.round(k.projectedPct)}%</span>
+                      <span style={{ color: k.projection === "achieved" ? "var(--good)" : undefined }}>
+                        {PROJECTION_LABEL[k.projection]} ({Math.round(k.projectedPct)}%)
+                      </span>
                     </div>
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-xs text-muted">{KPI_STATUS_DEFINITION}</p>
+              {d.notes.map((n) => (
+                <p key={n} className="mt-3 text-xs" style={{ color: "var(--bad)" }}>
+                  {n}
+                </p>
+              ))}
+              <p className="mt-3 text-xs text-muted">
+                Leads = {d.leadEvents.length ? d.leadEvents.join(", ") : "no lead events chosen"}.{" "}
+                <button className="text-accent hover:underline" onClick={() => go("settings", "project", "analytics")}>
+                  Change
+                </button>
+              </p>
+              <p className="mt-2 text-xs text-muted">{KPI_DEFINITION}</p>
             </>
           )}
+        </SectionCard>
+
+        <SectionCard title="Asana work" section={summary?.tasks} loading={loading} className="xl:col-span-2" action={settingsLink("integrations", "Link Asana")}>
+          {(d) => <TasksBody d={d} />}
         </SectionCard>
 
         <SectionCard
@@ -225,7 +275,7 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
                   {CONTENT_STAGES.map((s) => (
                     <li key={s} className="grid grid-cols-[8rem_1fr_2rem] items-center gap-2 text-sm">
                       <span className="text-muted">{CONTENT_STAGE_LABEL[s]}</span>
-                      <ProgressBar pct={total ? (d.counts[s] / total) * 100 : 0} />
+                      <ProgressBar pct={total ? (d.counts[s] / total) * 100 : 0} tone="demo" />
                       <span className="text-right tabular-nums">{d.counts[s]}</span>
                     </li>
                   ))}
@@ -246,11 +296,98 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
             );
           }}
         </SectionCard>
-
-        <SectionCard title="Asana work" section={summary?.tasks} loading={loading} className="xl:col-span-3" action={settingsLink("integrations", "Link Asana")}>
-          {(d) => <TasksBody d={d} />}
-        </SectionCard>
       </div>
+    </div>
+  );
+}
+
+const INSIGHT_TABS = [
+  ["top", "Top"],
+  ["up", "Trending up"],
+  ["down", "Trending down"],
+] as const;
+
+function GscInsights({ d, onMore }: { d: GscData; onMore: (sub: string) => void }) {
+  const clicks = d.series?.map((p) => p.clicks) ?? [];
+  const impressions = d.series?.map((p) => p.impressions) ?? [];
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex items-end justify-between gap-3 rounded-lg border p-3">
+          <Stat label="Clicks" value={fmtCompact(d.clicks.current)} pair={d.clicks} />
+          <Sparkline values={clicks} color="var(--clicks)" />
+        </div>
+        <div className="flex items-end justify-between gap-3 rounded-lg border p-3">
+          <Stat label="Impressions" value={fmtCompact(d.impressions.current)} pair={d.impressions} />
+          <Sparkline values={impressions} color="var(--impressions)" />
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        CTR {fmtPct(d.ctr.current)} · Avg. position {fmtPos(d.position.current)} (Search Console)
+      </p>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <InsightList title="Your content" lists={d.pages} kind="page" onMore={() => onMore("pages")} />
+        <InsightList title="Queries leading to your site" lists={d.queries} kind="query" onMore={() => onMore("queries")} />
+      </div>
+    </>
+  );
+}
+
+function InsightList({ title, lists, kind, onMore }: { title: string; lists: InsightLists | undefined; kind: "page" | "query"; onMore: () => void }) {
+  const [tab, setTab] = useState<"top" | "up" | "down">("top");
+  const rows = lists?.[tab] ?? [];
+  return (
+    <div className="min-w-0 rounded-lg border">
+      <div className="flex items-center justify-between gap-2 px-3 pt-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <button className="text-xs text-accent hover:underline" onClick={onMore}>
+          View more ›
+        </button>
+      </div>
+      <div role="tablist" aria-label={title} className="mt-2 flex gap-1 border-b px-2 text-xs">
+        {INSIGHT_TABS.map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={`-mb-px border-b-2 px-2 py-1.5 ${tab === id ? "border-accent font-medium text-accent" : "border-transparent text-muted hover:text-foreground"}`}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="ml-auto self-center pr-1 text-muted">Clicks</span>
+      </div>
+      {rows.length ? (
+        <ul className="divide-y">
+          {rows.map((r) => {
+            const url = kind === "page" ? readableUrl(r.key) : null;
+            return (
+              <li key={r.key} className="flex items-center gap-2.5 px-3 py-2 text-sm">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent" aria-hidden="true">
+                  <Icon name={kind === "page" ? "doc" : "search"} className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  {url ? (
+                    <a href={r.key} target="_blank" rel="noreferrer" className="block truncate hover:underline" title={r.key}>
+                      {url.path}
+                    </a>
+                  ) : (
+                    <span className="block truncate" title={r.key}>
+                      {r.key}
+                    </span>
+                  )}
+                  {url?.host && <span className="block truncate text-[11px] text-muted">{url.host}</span>}
+                </span>
+                <Delta pair={{ current: r.clicks, previous: r.previousClicks }} />
+                <span className="w-12 shrink-0 text-right tabular-nums">{fmtCompact(r.clicks)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-3 py-4 text-xs text-muted">{tab === "top" ? "No clicks in this period." : "No rows with a known comparison value moved this way."}</p>
+      )}
     </div>
   );
 }

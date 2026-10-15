@@ -70,12 +70,13 @@ export function alertsFor(s: ProjectSummary): Alert[] {
   const kpi = s.kpi;
   if (kpi?.data && (kpi.state === "live" || kpi.state === "demo")) {
     for (const k of kpi.data.items) {
-      if (k.status === "off-track") {
+      // A pacing signal, not a delivery status: the month isn't over, so the target can still be reached.
+      if (k.projection === "below" && k.attainment !== "achieved") {
         out.push({
           id: `kpi-${k.id}`,
-          level: "warning",
-          title: `${k.label} KPI off track`,
-          detail: `Projected ${Math.round(k.projectedPct)}% of the ${kpi.data.monthLabel} target.`,
+          level: k.projectedPct < 85 ? "warning" : "info",
+          title: `${k.label}: projected below the ${kpi.data.monthLabel} target`,
+          detail: `${Math.round(k.attainmentPct)}% of the full-month target so far; at the last 30 days' rate the month ends at about ${Math.round(k.projectedPct)}%.`,
           demo: isDemo(kpi),
           target: { group: "reports", item: "weekly" },
         });
@@ -164,9 +165,9 @@ export function needsAttention(s: ProjectSummary): boolean {
   return alertsFor(s).some((a) => a.level !== "info");
 }
 
-/** Meeting KPI: has at least one target and every KPI is on track. Null when there are no targets. */
+/** Projected to meet its KPIs: has at least one target and every KPI is projected to achieve it. Null without targets. */
 export function meetsKpi(s: ProjectSummary): boolean | null {
   const items = s.kpi?.data?.items;
   if (!items?.length || (s.kpi?.state !== "live" && s.kpi?.state !== "demo")) return null;
-  return items.every((k) => k.status === "on-track");
+  return items.every((k) => k.projection === "achieved" || k.attainment === "achieved");
 }

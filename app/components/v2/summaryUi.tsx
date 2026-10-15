@@ -7,6 +7,8 @@
 import type { ReactNode } from "react";
 import type { MetricPair, Section, SectionMeta, SectionState } from "@/lib/v2/summary/types";
 import { COMPARE_MODES, RANGE_PRESETS, pctChange, type CompareMode, type RangePreset } from "@/lib/v2/summary/period";
+import { ATTAINMENT_LABEL } from "@/lib/v2/summary/kpi";
+import type { KpiAttainment } from "@/lib/v2/summary/types";
 
 const STATE: Record<SectionState, { label: string; color: string; title: string }> = {
   live: { label: "Live", color: "var(--good)", title: "Real data from a connected source" },
@@ -55,34 +57,76 @@ export function fmtTime(ms: number | undefined) {
   return new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-/** Change vs the comparison period. `lowerIsBetter` for average position. */
-export function Delta({ pair, lowerIsBetter = false, absolute = false }: { pair: MetricPair | null | undefined; lowerIsBetter?: boolean; absolute?: boolean }) {
+/**
+ * Change vs the comparison period. `lowerIsBetter` for positions; `absolute` shows the difference instead of a
+ * percentage (`integer` for counts). A zero comparison value reads "New", never an infinite percentage.
+ */
+export function Delta({
+  pair,
+  lowerIsBetter = false,
+  absolute = false,
+  integer = false,
+}: {
+  pair: MetricPair | null | undefined;
+  lowerIsBetter?: boolean;
+  absolute?: boolean;
+  integer?: boolean;
+}) {
   if (!pair || pair.current == null || pair.previous == null) {
     return <span className="text-xs text-muted" title="No comparison value">—</span>;
   }
   const diff = pair.current - pair.previous;
   const pct = pctChange(pair.current, pair.previous);
-  if (!absolute && pct == null) return <span className="text-xs text-muted" title="Comparison value is zero">new</span>;
+  if (!absolute && pct == null) {
+    return pair.current > 0 ? (
+      <span className="text-xs font-medium" style={{ color: "var(--good)" }} title="Nothing in the comparison period">
+        New
+      </span>
+    ) : (
+      <span className="text-xs text-muted">±0%</span>
+    );
+  }
   const value = absolute ? diff : pct!;
-  if (Math.abs(value) < (absolute ? 0.05 : 0.5)) return <span className="text-xs text-muted">±0{absolute ? "" : "%"}</span>;
+  if (Math.abs(value) < (absolute ? (integer ? 0.5 : 0.05) : 0.5)) return <span className="text-xs text-muted">±0{absolute ? "" : "%"}</span>;
   const good = lowerIsBetter ? value < 0 : value > 0;
   return (
     <span className="whitespace-nowrap text-xs font-medium tabular-nums" style={{ color: good ? "var(--good)" : "var(--bad)" }}>
       <span aria-hidden="true">{value > 0 ? "▲" : "▼"}</span>
-      <span className="sr-only">{value > 0 ? "up" : "down"}</span> {absolute ? Math.abs(value).toFixed(1) : `${Math.abs(value).toFixed(0)}%`}
+      <span className="sr-only">{value > 0 ? "up" : "down"}</span>{" "}
+      {absolute ? (integer ? Math.round(Math.abs(value)) : Math.abs(value).toFixed(1)) : `${Math.abs(value).toFixed(0)}%`}
     </span>
   );
 }
 
-export function Stat({ label, value, pair, lowerIsBetter, absolute, hint }: { label: string; value: string; pair?: MetricPair | null; lowerIsBetter?: boolean; absolute?: boolean; hint?: string }) {
+export function Stat({
+  label,
+  value,
+  pair,
+  lowerIsBetter,
+  absolute,
+  integer,
+  hint,
+  scope,
+}: {
+  label: string;
+  value: string;
+  pair?: MetricPair | null;
+  lowerIsBetter?: boolean;
+  absolute?: boolean;
+  integer?: boolean;
+  hint?: string;
+  /** Short traffic scope shown under the label, e.g. "Organic Search". */
+  scope?: string;
+}) {
   return (
     <div className="min-w-0">
       <div className="truncate text-xs text-muted" title={hint ?? label}>
         {label}
       </div>
+      {scope && <div className="text-[11px] leading-tight text-muted">{scope}</div>}
       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
         <span className="text-2xl font-semibold tabular-nums">{value}</span>
-        {pair !== undefined && <Delta pair={pair} lowerIsBetter={lowerIsBetter} absolute={absolute} />}
+        {pair !== undefined && <Delta pair={pair} lowerIsBetter={lowerIsBetter} absolute={absolute} integer={integer} />}
       </div>
     </div>
   );
@@ -192,8 +236,8 @@ export function PeriodPicker({
   );
 }
 
-export function ProgressBar({ pct, status }: { pct: number; status?: "on-track" | "at-risk" | "off-track" }) {
-  const color = status === "off-track" ? "var(--bad)" : status === "at-risk" ? "var(--position)" : "var(--good)";
+export function ProgressBar({ pct, tone = "neutral" }: { pct: number; tone?: "good" | "bad" | "neutral" | "demo" }) {
+  const color = tone === "good" ? "var(--good)" : tone === "bad" ? "var(--bad)" : tone === "demo" ? "var(--position)" : "var(--accent)";
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-border/70" role="presentation">
       <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }} />
@@ -201,17 +245,32 @@ export function ProgressBar({ pct, status }: { pct: number; status?: "on-track" 
   );
 }
 
-export const KPI_STATUS_LABEL = { "on-track": "On track", "at-risk": "At risk", "off-track": "Off track" } as const;
-
-export function KpiStatusPill({ status }: { status: "on-track" | "at-risk" | "off-track" }) {
-  const color = status === "off-track" ? "var(--bad)" : status === "at-risk" ? "var(--position)" : "var(--good)";
+/** KPI attainment pill: target attainment only, never a project delivery status. */
+export function AttainmentPill({ attainment }: { attainment: KpiAttainment }) {
+  const color =
+    attainment === "achieved" ? "var(--good)" : attainment === "below" || attainment === "above" ? "var(--bad)" : attainment === "in-progress" ? "var(--accent)" : "var(--muted)";
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium">
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} aria-hidden="true" />
-      {KPI_STATUS_LABEL[status]}
+      {ATTAINMENT_LABEL[attainment]}
     </span>
   );
 }
 
-export const KPI_STATUS_DEFINITION =
-  "Status compares a month-end projection (the last 30 days' daily rate × days in the month) with the target: on track at 100% or more, at risk at 85–99%, off track below 85%.";
+export const KPI_DEFINITION =
+  "Attainment compares the month-to-date value with the full-month target; while the month is running a KPI below its target is “In progress”. The projection estimates the month end from the last 30 days' daily rate.";
+
+/** Tiny trend line for a headline number. Decorative; the number and its change carry the meaning. */
+export function Sparkline({ values, color = "var(--clicks)", width = 96, height = 28 }: { values: number[]; color?: string; width?: number; height?: number }) {
+  if (values.length < 2) return null;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = max - min || 1;
+  const pts = values.map((v, i) => `${((i / (values.length - 1)) * width).toFixed(1)},${(height - 2 - ((v - min) / span) * (height - 4)).toFixed(1)}`);
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true" className="shrink-0">
+      <polygon points={`0,${height} ${pts.join(" ")} ${width},${height}`} fill={color} opacity={0.12} />
+      <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+    </svg>
+  );
+}

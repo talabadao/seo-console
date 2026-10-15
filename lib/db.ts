@@ -1,6 +1,8 @@
 import postgres from "postgres";
 import { BASELINE_STATEMENTS } from "./schema";
-import { databaseUrlFor } from "./environment";
+import { databaseUrlFor, deploymentOf } from "./environment";
+import { MIGRATIONS } from "@/db/migrations";
+import { MIGRATIONS_TABLE, checksumOf, planMigrations } from "./migrations";
 
 /**
  * Postgres-backed replacement for the old node:sqlite connection. Kept the same
@@ -120,7 +122,52 @@ export async function rawSql(): Promise<postgres.Sql> {
 // Schema statements live in lib/schema.ts, shared with the versioned migration
 // runner (scripts/migrate.mts). Until production is switched over to that
 // runner, every new server instance still applies the idempotent baseline here.
+//
+// Versioned migrations after the baseline (0002+) are applied automatically
+// only on Preview and in local development — databases that are isolated and
+// disposable. Production never migrates itself: an owner runs
+// `npm run migrate -- --apply` against it, and until then features that need
+// the newer tables report themselves unavailable (see tableExists).
 async function migrate(): Promise<void> {
   const sql = getSql();
   for (const statement of BASELINE_STATEMENTS) await sql.unsafe(statement);
+  if (deploymentOf() !== "production") await applyVersioned(sql);
+}
+
+async function applyVersioned(sql: postgres.Sql): Promise<void> {
+  await sql.unsafe(MIGRATIONS_TABLE);
+  let applied = (await sql`SELECT id, checksum FROM schema_migrations ORDER BY id`) as unknown as { id: string; checksum: string }[];
+  if (!applied.length) {
+    // The baseline statements above have just run, so record 0001 as baselined.
+    const baseline = MIGRATIONS[0];
+    await sql`INSERT INTO schema_migrations (id, checksum, applied_at, mode)
+              VALUES (${baseline.id}, ${checksumOf(baseline)}, ${Date.now()}, 'baseline') ON CONFLICT (id) DO NOTHING`;
+    applied = [{ id: baseline.id, checksum: checksumOf(baseline) }];
+  }
+  const plan = planMigrations(MIGRATIONS, applied);
+  if (plan.changed.length || plan.unknown.length) {
+    console.error("Migration history disagrees with the code; not applying versioned migrations.", plan.changed, plan.unknown);
+    return;
+  }
+  for (const m of plan.pending) {
+    await sql.begin(async (tx) => {
+      for (const statement of m.statements) await tx.unsafe(statement);
+      await tx`INSERT INTO schema_migrations (id, checksum, applied_at, mode) VALUES (${m.id}, ${checksumOf(m)}, ${Date.now()}, 'auto')`;
+    });
+  }
+}
+
+const tableCache = new Map<string, Promise<boolean>>();
+/** Whether a table exists (cached per process). Production may not have run newer migrations yet. */
+export function tableExists(name: string): Promise<boolean> {
+  let hit = tableCache.get(name);
+  if (!hit) {
+    hit = (async () => {
+      await ready();
+      const [row] = await getSql()`SELECT to_regclass(${"public." + name}) IS NOT NULL AS ok`;
+      return Boolean(row?.ok);
+    })();
+    tableCache.set(name, hit);
+  }
+  return hit;
 }

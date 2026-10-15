@@ -125,5 +125,38 @@ export function mockApi(url: string): { status: number; body: unknown } {
     };
   }
   if (path === "/api/settings/indexing") return { status: 200, body: { autoIndexEnabled: true, autoIndexHour: 3, autoIndexCap: 100 } };
+  if (/^\/api\/projects\/\d+\/lead-events$/.test(path)) {
+    return {
+      status: 200,
+      body: {
+        events: ["generate_lead", "book_now_click"],
+        source: "weekly-report",
+        legacyMonth: "2026-09",
+        projectLevelAvailable: true,
+        availableEvents: [
+          { name: "page_view", count: 48210, isKeyEvent: false },
+          { name: "generate_lead", count: 214, isKeyEvent: true },
+          { name: "book_now_click", count: 512, isKeyEvent: true },
+          { name: "purchase", count: 37, isKeyEvent: true },
+          { name: "file_download", count: 96, isKeyEvent: false },
+        ],
+        eventsError: null,
+      },
+    };
+  }
+  if (/^\/api\/projects\/\d+\/seranking$/.test(path)) {
+    return {
+      status: 200,
+      body: {
+        configured: true,
+        sites: [
+          { id: 11400001, title: "Example Hotel (demo)", url: "https://example.com/", keywordCount: 86 },
+          { id: 11400002, title: "Sample Spa (demo)", url: "https://spa.example.org/", keywordCount: 41 },
+        ],
+        chosen: null,
+        matched: 11400001,
+      },
+    };
+  }
   return { status: 503, body: { error: "Mock mode: this data needs a real database and Google sign-in." } };
 }

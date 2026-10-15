@@ -13,11 +13,13 @@ import { Favicon } from "../ProjectManager";
 import { hostOf } from "@/lib/projectMatch";
 import { NAV, meetsRequirement, type ShellLocation } from "@/lib/v2/nav";
 import { Card, buttonClass, primaryButtonClass } from "./ui";
+import { LeadEventsEditor } from "../LeadEventsEditor";
 
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
   { id: "integrations", label: "Integrations" },
   { id: "kpi", label: "KPI targets" },
+  { id: "analytics", label: "Analytics / Key events" },
   { id: "tracking", label: "Tracking" },
   { id: "budgets", label: "Budgets and limits" },
   { id: "sync", label: "Sync and history" },
@@ -87,7 +89,22 @@ export function ProjectSettings({
 
         {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onOpenConsoleSettings={onOpenConsoleSettings} />}
 
-        {section === "kpi" && <KpiTargets project={project} onLink={() => onEditProject(project.id)} />}
+        {section === "kpi" && <KpiTargets project={project} onLink={() => onEditProject(project.id)} onLeadEvents={() => onSub("analytics")} />}
+
+        {section === "analytics" && (
+          <Card title="Analytics / Key events">
+            {project.gaPropertyId ? (
+              <LeadEventsEditor projectId={project.id} />
+            ) : (
+              <>
+                <p className="text-sm text-muted">Lead events are chosen from the project&apos;s GA4 events. Link a GA4 property first.</p>
+                <button className={`mt-3 ${primaryButtonClass}`} onClick={() => onEditProject(project.id)}>
+                  Link GA4
+                </button>
+              </>
+            )}
+          </Card>
+        )}
 
         {section === "tracking" && (
           <Card
@@ -181,6 +198,7 @@ function Integrations({
           </button>
         </p>
       </Card>
+      <SeRankingCard project={project} />
       <Card title="Pages that need a connection">
         <ul className="grid gap-2 sm:grid-cols-2">
           {pages.map(({ g, i }) => {
@@ -207,6 +225,73 @@ function Integrations({
   );
 }
 
+function SeRankingCard({ project }: { project: Project }) {
+  type Loaded = { configured: boolean; sites?: { id: number; title: string; url: string; keywordCount: number }[]; chosen?: number | null; matched?: number | null; error?: string };
+  const [data, setData] = useState<{ id: number; value: Loaded } | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/projects/${project.id}/seranking`)
+      .then((r) => r.json())
+      .then((value: Loaded) => live && setData({ id: project.id, value }))
+      .catch((e) => live && setData({ id: project.id, value: { configured: true, error: e instanceof Error ? e.message : String(e) } }));
+    return () => {
+      live = false;
+    };
+  }, [project.id, nonce]);
+  const v = data?.id === project.id ? data.value : null;
+  async function choose(siteId: number | null) {
+    setSaving("Saving…");
+    const res = await fetch(`/api/projects/${project.id}/seranking`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ siteId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    setSaving(res.ok ? "Saved." : (body.error ?? "Couldn't save."));
+    setNonce((n) => n + 1);
+  }
+  const effective = v?.chosen ?? v?.matched ?? null;
+  return (
+    <Card title="SE Ranking project">
+      {!v ? (
+        <p className="text-sm text-muted">Loading…</p>
+      ) : !v.configured ? (
+        <p className="text-sm text-muted">
+          SE Ranking isn&apos;t connected to SEO Console: the server has no SE Ranking API key. Keyword rankings show as unavailable until one is
+          added to the server environment.
+        </p>
+      ) : v.error ? (
+        <p role="alert" className="text-sm" style={{ color: "var(--bad)" }}>
+          {v.error}
+        </p>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <p className="text-muted">
+            Keyword rankings on the dashboards come from this SE Ranking project&apos;s tracked keywords.{" "}
+            {v.chosen ? "Chosen by hand." : v.matched ? "Matched by website." : "No project matches the website."}
+          </p>
+          <select
+            value={effective ?? ""}
+            onChange={(e) => choose(e.target.value ? Number(e.target.value) : null)}
+            className="w-full rounded-md border bg-background px-2 py-1.5"
+            aria-label="SE Ranking project"
+          >
+            <option value="">Match by website{v.matched ? "" : " (no match)"}</option>
+            {v.sites?.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title} ({s.url}, {s.keywordCount} keywords)
+              </option>
+            ))}
+          </select>
+          {saving && <p className="text-xs text-muted">{saving}</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 interface KpiConfig {
   yearMonth: string;
   trafficOrganicTarget: number;
@@ -226,7 +311,7 @@ function monthOptions() {
   });
 }
 
-function KpiTargets({ project, onLink }: { project: Project; onLink: () => void }) {
+function KpiTargets({ project, onLink, onLeadEvents }: { project: Project; onLink: () => void; onLeadEvents: () => void }) {
   const months = monthOptions();
   const [month, setMonth] = useState(months[0].id);
   const pid = project.gaPropertyId;
@@ -330,8 +415,11 @@ function KpiTargets({ project, onLink }: { project: Project; onLink: () => void 
             {field("leadAiTarget", "AI search leads", "Lead events from AI search sessions")}
           </div>
           <p className="mt-3 text-xs text-muted">
-            Lead events: {cfg?.leadEvents.length ? cfg.leadEvents.join(", ") : "none chosen"} (choose them in the Weekly Report). Leave a field empty for no
-            target; KPIs without a target aren&apos;t shown.
+            Lead KPIs count these lead events: {cfg?.leadEvents.length ? cfg.leadEvents.join(", ") : "none chosen"}.{" "}
+            <button className="text-accent hover:underline" onClick={onLeadEvents}>
+              Change lead events
+            </button>
+            . Leave a field empty for no target; KPIs without a target aren&apos;t shown.
           </p>
           <div className="mt-4 flex items-center gap-3">
             <button className={primaryButtonClass} onClick={saveTargets} disabled={state === "saving"}>

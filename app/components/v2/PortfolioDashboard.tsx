@@ -13,11 +13,12 @@ import { DEFAULT_ITEM, buildShellPath, type ShellLocation } from "@/lib/v2/nav";
 import { meetsKpi, needsAttention } from "@/lib/v2/summary/alerts";
 import { CONTENT_STAGES, type ProjectSummary, type Section, type SummaryPart } from "@/lib/v2/summary/types";
 import { fetchSummary, usePeriodChoice, useStored, writeStored, type Loaded } from "./summaryClient";
-import { Delta, KpiStatusPill, PeriodPicker, StateBadge, fmtInt, fmtMoney, fmtPct, fmtPos } from "./summaryUi";
+import { Delta, PeriodPicker, StateBadge, fmtInt, fmtMoney, fmtPct, fmtPos } from "./summaryUi";
 import { DataTable, MetricCard, buttonClass, type Column } from "./ui";
 
-const PARTS: SummaryPart[] = ["gsc", "ga4", "kpi", "tasks", "content"];
-const COLS_KEY = "seo-v2-portfolio-columns";
+const PARTS: SummaryPart[] = ["gsc", "ga4", "kpi", "tasks", "content", "rankings"];
+// "-v2": new default columns (revenue, rankings); earlier saved choices are not reused.
+const COLS_KEY = "seo-v2-portfolio-columns-v2";
 
 type ColId =
   | "clicks"
@@ -31,21 +32,31 @@ type ColId =
   | "ctr"
   | "position"
   | "engaged"
-  | "revenue";
+  | "revenue"
+  | "aiSessions"
+  | "top3"
+  | "top5"
+  | "top10"
+  | "rankAvg";
 
-const COLS: { id: ColId; label: string; default: boolean }[] = [
-  { id: "clicks", label: "GSC clicks", default: true },
-  { id: "sessions", label: "Organic sessions", default: true },
-  { id: "keyEvents", label: "Organic key events", default: true },
-  { id: "kpi", label: "KPI progress", default: true },
-  { id: "overdue", label: "Overdue tasks", default: true },
-  { id: "completed", label: "Done this month", default: true },
-  { id: "content", label: "Content (demo)", default: true },
-  { id: "impressions", label: "Impressions", default: false },
-  { id: "ctr", label: "CTR", default: false },
-  { id: "position", label: "Avg. position", default: false },
-  { id: "engaged", label: "Engaged sessions", default: false },
-  { id: "revenue", label: "Revenue", default: false },
+const COLS: { id: ColId; label: string; default: boolean; group: string }[] = [
+  { id: "clicks", label: "GSC clicks", default: true, group: "Search Console" },
+  { id: "impressions", label: "Impressions", default: false, group: "Search Console" },
+  { id: "ctr", label: "CTR", default: false, group: "Search Console" },
+  { id: "position", label: "GSC avg. position", default: false, group: "Search Console" },
+  { id: "sessions", label: "Organic sessions", default: true, group: "GA4" },
+  { id: "aiSessions", label: "AI sessions", default: false, group: "GA4" },
+  { id: "revenue", label: "Revenue", default: true, group: "GA4" },
+  { id: "keyEvents", label: "Organic key events", default: false, group: "GA4" },
+  { id: "engaged", label: "Engaged sessions", default: false, group: "GA4" },
+  { id: "top3", label: "Top 3", default: false, group: "SE Ranking" },
+  { id: "top5", label: "Top 5", default: false, group: "SE Ranking" },
+  { id: "top10", label: "Top 10", default: true, group: "SE Ranking" },
+  { id: "rankAvg", label: "Rank avg. position", default: true, group: "SE Ranking" },
+  { id: "kpi", label: "KPI attainment", default: true, group: "Work" },
+  { id: "overdue", label: "Overdue tasks", default: true, group: "Work" },
+  { id: "completed", label: "Done this month", default: true, group: "Work" },
+  { id: "content", label: "Content (demo)", default: false, group: "Work" },
 ];
 
 const DEFAULT_COLS = COLS.filter((c) => c.default).map((c) => c.id);
@@ -136,7 +147,7 @@ export function PortfolioDashboard({
 
   const open = (p: Project) => onNavigate({ kind: "project", projectId: p.id, ...DEFAULT_ITEM, sub: "" });
 
-  const cell = (p: Project, part: "gsc" | "ga4" | "kpi" | "tasks" | "content", render: (s: ProjectSummary) => React.ReactNode) => {
+  const cell = (p: Project, part: "gsc" | "ga4" | "kpi" | "tasks" | "content" | "rankings", render: (s: ProjectSummary) => React.ReactNode) => {
     const l = loaded.get(p.id);
     if (!l || l.status === "loading") return <span className="inline-block h-3 w-12 animate-pulse rounded bg-border/70" aria-label="Loading" />;
     if (l.status === "error") return <span className="text-xs" style={{ color: "var(--bad)" }} title={l.message}>Error</span>;
@@ -152,12 +163,28 @@ export function PortfolioDashboard({
     return s ? (get(s) ?? null) : null;
   };
 
+  const rankPair = (s: ProjectSummary, k: "top3" | "top5" | "top10" | "avgPosition") => {
+    const r = s.rankings?.data;
+    return r ? { current: r.current[k], previous: r.previous ? r.previous[k] : null } : null;
+  };
+  const rankTitle = (s: ProjectSummary) => {
+    const c = s.rankings?.data?.context;
+    if (!c) return undefined;
+    return [
+      `${c.engine}${c.region ? `, ${c.region}` : ""}${c.language ? `, ${c.language}` : ""}${c.device ? `, ${c.device}` : ""}`,
+      `${c.keywordGroup}: ${c.trackedKeywords} tracked`,
+      `Checked ${c.latestDate}${c.comparisonDate ? ` vs ${c.comparisonDate}` : ""}`,
+      "Top 3 / 5 / 10 are cumulative; the average excludes unranked keywords.",
+    ].join("\n");
+  };
+  const currencies = new Set(ready.map((s) => s.ga4?.data?.currency).filter((c): c is string => Boolean(c)));
+
   const metricCol = (
     id: ColId,
-    part: "gsc" | "ga4",
+    part: "gsc" | "ga4" | "rankings",
     get: (s: ProjectSummary) => { current: number | null; previous: number | null } | null | undefined,
     format: (n: number | null) => string,
-    opts: { lowerIsBetter?: boolean; absolute?: boolean } = {},
+    opts: { lowerIsBetter?: boolean; absolute?: boolean; integer?: boolean; title?: (s: ProjectSummary) => string | undefined } = {},
   ): Column<Project> => ({
     key: id,
     label: COLS.find((c) => c.id === id)!.label,
@@ -167,9 +194,9 @@ export function PortfolioDashboard({
       cell(p, part, (s) => {
         const pair = get(s);
         return (
-          <span className="flex flex-col items-end leading-tight">
+          <span className="flex flex-col items-end leading-tight" title={opts.title?.(s)}>
             <span>{format(pair?.current ?? null)}</span>
-            <Delta pair={pair} lowerIsBetter={opts.lowerIsBetter} absolute={opts.absolute} />
+            <Delta pair={pair} lowerIsBetter={opts.lowerIsBetter} absolute={opts.absolute} integer={opts.integer} />
           </span>
         );
       }),
@@ -199,12 +226,22 @@ export function PortfolioDashboard({
     sessions: metricCol("sessions", "ga4", (s) => s.ga4?.data?.sessions, fmtInt),
     engaged: metricCol("engaged", "ga4", (s) => s.ga4?.data?.engagedSessions, fmtInt),
     keyEvents: metricCol("keyEvents", "ga4", (s) => s.ga4?.data?.keyEvents, fmtInt),
+    aiSessions: metricCol("aiSessions", "ga4", (s) => s.ga4?.data?.aiSessions, fmtInt),
+    top3: metricCol("top3", "rankings", (s) => rankPair(s, "top3"), fmtInt, { absolute: true, integer: true, title: rankTitle }),
+    top5: metricCol("top5", "rankings", (s) => rankPair(s, "top5"), fmtInt, { absolute: true, integer: true, title: rankTitle }),
+    top10: metricCol("top10", "rankings", (s) => rankPair(s, "top10"), fmtInt, { absolute: true, integer: true, title: rankTitle }),
+    rankAvg: metricCol("rankAvg", "rankings", (s) => rankPair(s, "avgPosition"), fmtPos, { lowerIsBetter: true, absolute: true, title: rankTitle }),
     revenue: {
       key: "revenue",
       label: "Revenue",
       numeric: true,
-      // Not sortable across currencies: sorting uses the number within each currency only.
-      value: (p) => num(p, (s) => s.ga4?.data?.revenue?.current),
+      // Amounts in different currencies are never compared: with more than one currency loaded,
+      // sorting groups rows by currency first.
+      value: (p) => {
+        const g = summaryOf(p)?.ga4?.data;
+        if (!g?.revenue || g.revenue.current == null) return null;
+        return currencies.size > 1 ? `${g.currency}:${Math.round(g.revenue.current).toString().padStart(15, "0")}` : g.revenue.current;
+      },
       render: (p) =>
         cell(p, "ga4", (s) =>
           s.ga4?.data?.revenue ? (
@@ -213,30 +250,30 @@ export function PortfolioDashboard({
               <Delta pair={s.ga4.data.revenue} />
             </span>
           ) : (
-            <span className="text-xs text-muted">Not tracked</span>
+            <span className="whitespace-nowrap text-xs text-muted">Not tracked</span>
           ),
         ),
     },
     kpi: {
       key: "kpi",
-      label: "KPI progress",
+      label: "KPI attainment",
       value: (p) => {
         const items = summaryOf(p)?.kpi?.data?.items;
-        return items?.length ? Math.min(...items.map((k) => k.projectedPct)) : null;
+        return items?.length ? Math.min(...items.map((k) => k.attainmentPct)) : null;
       },
       render: (p) =>
         cell(p, "kpi", (s) => {
           const items = s.kpi?.data?.items ?? [];
-          const worst = items.reduce<"on-track" | "at-risk" | "off-track">(
-            (w, k) => (k.status === "off-track" || (k.status === "at-risk" && w === "on-track") ? k.status : w),
-            "on-track",
-          );
-          const onTrack = items.filter((k) => k.status === "on-track").length;
+          const projected = items.filter((k) => k.projection === "achieved" || k.attainment === "achieved").length;
+          const lowest = items.reduce((m, k) => Math.min(m, k.attainmentPct), Infinity);
           return (
-            <span className="flex items-center gap-2" title={items.map((k) => `${k.label}: projected ${Math.round(k.projectedPct)}%`).join("\n")}>
-              <KpiStatusPill status={worst} />
-              <span className="text-xs text-muted tabular-nums">
-                {onTrack}/{items.length}
+            <span
+              className="flex flex-col leading-tight"
+              title={items.map((k) => `${k.label}: ${Math.round(k.attainmentPct)}% of target so far, projected ${Math.round(k.projectedPct)}%`).join("\n")}
+            >
+              <span className="tabular-nums">{Number.isFinite(lowest) ? `${Math.round(lowest)}% of target` : "—"}</span>
+              <span className="whitespace-nowrap text-xs text-muted tabular-nums">
+                {projected}/{items.length} projected to achieve
               </span>
             </span>
           );
@@ -317,8 +354,8 @@ export function PortfolioDashboard({
     <>
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard label="Active projects" value={`${active} of ${projects.length}`} hint="Search Console or GA4 linked" />
-        <MetricCard label="Meeting KPIs" value={kpiKnown.length ? `${meeting} of ${kpiKnown.length}` : "—"} hint={kpiKnown.length ? `Projects with targets, ${of}` : `No KPI targets ${of}`} />
-        <MetricCard label="Needing attention" value={ready.length ? String(attention) : "—"} hint={`Drops, off-track KPIs, overdue work or errors, ${of}`} />
+        <MetricCard label="Projected to meet KPIs" value={kpiKnown.length ? `${meeting} of ${kpiKnown.length}` : "—"} hint={kpiKnown.length ? `Projects with targets, ${of}` : `No KPI targets ${of}`} />
+        <MetricCard label="Needing attention" value={ready.length ? String(attention) : "—"} hint={`Drops, KPIs projected below target, overdue work or errors, ${of}`} />
         <MetricCard label="Overdue tasks" value={overdueByAsana.size ? String(overdue) : "—"} hint={`Asana, ${of}`} />
       </div>
       {anyDemo && (
@@ -346,11 +383,16 @@ export function PortfolioDashboard({
               </button>
               {picker && (
                 <div className="absolute left-0 z-20 mt-1 w-56 rounded-lg border bg-surface p-2 shadow-xl">
-                  {COLS.map((c) => (
-                    <label key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent-soft">
-                      <input type="checkbox" checked={cols.has(c.id)} onChange={() => toggleCol(c.id)} />
-                      {c.label}
-                    </label>
+                  {[...new Set(COLS.map((c) => c.group))].map((g) => (
+                    <div key={g} className="mb-1">
+                      <div className="px-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{g}</div>
+                      {COLS.filter((c) => c.group === g).map((c) => (
+                        <label key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent-soft">
+                          <input type="checkbox" checked={cols.has(c.id)} onChange={() => toggleCol(c.id)} />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}
