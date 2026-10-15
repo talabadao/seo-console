@@ -166,7 +166,10 @@ export interface RankCountsData {
   top5: number;
   top10: number;
   ranked: number;
+  checked: number;
+  /** SE Ranking's definition: keywords outside the top 100 count as 100. */
   avgPosition: number | null;
+  rankedAvgPosition: number | null;
 }
 
 /** SE Ranking keyword positions for the project's tracked keywords (one engine / location context). */

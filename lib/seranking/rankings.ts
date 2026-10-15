@@ -5,10 +5,11 @@
 //   all keyword groups. Other engines are counted but not mixed in.
 // - Top 3 / Top 5 / Top 10 are cumulative: a keyword at position 2 counts in all three.
 // - SE Ranking reports position 0 for a keyword outside the tracked depth (top 100). That is "not ranking",
-//   never position 0, and it is excluded from the average.
-// - Average position = mean of the positions of keywords ranking in the top 100 at that check
-//   ("ranked" is the denominator, shown next to it). SE Ranking's own average in its UI may count unranked
-//   keywords as 100, so the two can differ.
+//   never position 0.
+// - Average position follows SE Ranking's definition: the mean over every tracked keyword checked at that
+//   date, with a keyword outside the top 100 counted as 100. Checked against SE Ranking's own summary for
+//   WeWine (377 keywords, 2026-10-15): 27.4 here, "27" in SE Ranking. A keyword with no check at that date is
+//   left out (not counted as 100). The mean over ranked keywords only is kept as rankedAvgPosition.
 // - Comparison = the latest check on or before (latest check − comparison days), same engine, same keywords.
 
 import { SeRankingError, asList, num, seGet, seRankingKey, str } from "./client";
@@ -19,8 +20,12 @@ export interface RankCounts {
   top10: number;
   /** Keywords in the top 100 at that check. */
   ranked: number;
-  /** Mean position of ranked keywords; null when none rank. */
+  /** Keywords with a check at that date (the average's denominator). */
+  checked: number;
+  /** SE Ranking's average: keywords outside the top 100 count as 100. Null when nothing was checked. */
   avgPosition: number | null;
+  /** Mean of ranked keywords only; null when none rank. */
+  rankedAvgPosition: number | null;
 }
 
 export interface RankingContext {
@@ -60,15 +65,26 @@ export function rankOf(pos: number | null | undefined): number | null {
   return pos != null && pos >= 1 && pos <= 100 ? pos : null;
 }
 
-/** Cumulative counts and the average over ranked keywords. `positions` has one entry per tracked keyword. */
+/** SE Ranking counts a keyword outside the top 100 as position 100 in its average. */
+export const UNRANKED_AS = 100;
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/**
+ * Cumulative counts and averages. `positions` has one entry per tracked keyword: a number when the keyword
+ * was checked at that date (0 or more than 100 = not ranking), undefined/null when it had no check.
+ */
 export function rankCounts(positions: Array<number | null | undefined>): RankCounts {
-  const ranks = positions.map(rankOf).filter((p): p is number => p !== null);
+  const checked = positions.filter((p): p is number => p != null);
+  const ranks = checked.map(rankOf).filter((p): p is number => p !== null);
   return {
     top3: ranks.filter((p) => p <= 3).length,
     top5: ranks.filter((p) => p <= 5).length,
     top10: ranks.filter((p) => p <= 10).length,
     ranked: ranks.length,
-    avgPosition: ranks.length ? Math.round((ranks.reduce((a, b) => a + b, 0) / ranks.length) * 10) / 10 : null,
+    checked: checked.length,
+    avgPosition: checked.length ? round1(checked.reduce((a, p) => a + (rankOf(p) ?? UNRANKED_AS), 0) / checked.length) : null,
+    rankedAvgPosition: ranks.length ? round1(ranks.reduce((a, b) => a + b, 0) / ranks.length) : null,
   };
 }
 
@@ -144,7 +160,8 @@ export async function rankingsFor(site: SeSite, compareDays: number, now = new D
   if (!main) throw new SeRankingError(404, "This SE Ranking project has no search engines configured.");
   const names = asList(historyRaw);
   const engineName =
-    str(names.find((s) => num(s.site_engine_id) === main.id || num(s.search_engine_id) === main.searchEngineId)?.name) ??
+    // The history series carries the site-engine id in its "search_engine_id" field.
+    str(names.find((s) => str(s.type) === "search_engine" && (num(s.search_engine_id) === main.id || num(s.site_engine_id) === main.id))?.name) ??
     `Search engine ${main.searchEngineId}`;
 
   const block = asList(positionsRaw).find((e) => num(e.site_engine_id) === main.id);
