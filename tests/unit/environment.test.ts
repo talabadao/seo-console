@@ -68,6 +68,18 @@ describe("external writes and schedules", () => {
   });
 });
 
+describe("previewDatabaseUrl", () => {
+  it("accepts PREVIEW_DATABASE_URL or the Neon integration's prefixed name, never production's", () => {
+    expect(databaseUrlFor({ VERCEL_ENV: "preview", PREVIEW_DATABASE_URL_DATABASE_URL: PREVIEW_DB })).toBe(PREVIEW_DB);
+    expect(
+      databaseUrlFor({ VERCEL_ENV: "preview", PREVIEW_DATABASE_URL: PREVIEW_DB, PREVIEW_DATABASE_URL_DATABASE_URL: "x" }),
+    ).toBe(PREVIEW_DB);
+    expect(() =>
+      databaseUrlFor({ VERCEL_ENV: "preview", DATABASE_URL: PROD_DB, POSTGRES_URL: PROD_DB, PREVIEW_DATABASE_URL_POSTGRES_URL: "x" }),
+    ).toThrow(EnvironmentError);
+  });
+});
+
 describe("missingPreviewSettings", () => {
   const ready = {
     VERCEL_ENV: "preview",
