@@ -75,11 +75,13 @@ afterEach(() => {
 });
 
 describe("Preview SerpApi policy", () => {
-  it("allows only the smoke-test project, never more than 5 requests", () => {
-    expect(serpDecision(1)).toMatchObject({ allowed: true, max: 5, allowanceKey: "preview-serpapi-test:project:1" });
-    expect(serpDecision(2).allowed).toBe(false);
-    expect(serpDecision(1, { VERCEL_ENV: "preview", PREVIEW_SERPAPI_TEST_PROJECT_ID: "1", PREVIEW_SERPAPI_TEST_MAX_REQUESTS: "50" })).toMatchObject({ max: 5 });
-    expect(serpDecision(1, { VERCEL_ENV: "preview" }).allowed).toBe(false);
+  it("allows only the smoke-test project, never more than 5 requests", async () => {
+    const d = await serpDecision(1, 1);
+    expect(d.allowed && d.allowances[0]).toMatchObject({ key: "preview-serpapi-test:project:1", max: 5, syncMax: false });
+    expect((await serpDecision(1, 2)).allowed).toBe(false);
+    const capped = await serpDecision(1, 1, { VERCEL_ENV: "preview", PREVIEW_SERPAPI_TEST_PROJECT_ID: "1", PREVIEW_SERPAPI_TEST_MAX_REQUESTS: "50" });
+    expect(capped.allowed && capped.allowances[0].max).toBe(5);
+    expect((await serpDecision(1, 1, { VERCEL_ENV: "preview" })).allowed).toBe(false);
   });
 
   it("refuses other projects without sending or recording anything", async () => {
@@ -132,7 +134,7 @@ describe("Preview model calls", () => {
   it("are refused, even with the broader Preview external-writes switch on", async () => {
     vi.stubEnv("ALLOW_PREVIEW_EXTERNAL_WRITES", "1");
     vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
-    expect(llmDecision(1).allowed).toBe(false);
+    expect((await llmDecision(1)).allowed).toBe(false);
     const call = vi.fn();
     await expect(meteredCall({ userId: 1, projectId: 1 }, "openai", "t", "gpt-4o-mini", { input: 10, output: 10 }, call)).rejects.toBeInstanceOf(LlmRefused);
     expect(call).not.toHaveBeenCalled();

@@ -1,14 +1,16 @@
 // Usage & Costs report. Three kinds of numbers, never mixed:
 // - provider-reported: what the provider's own account/billing API says. Account-wide (the whole SerpApi
 //   account, OpenAI organisation, Anthropic organisation, DataForSEO account), never a project's allocation.
-// - app-recorded: requests this app made and wrote to the ledger, per project.
+// - app-recorded: requests this app made and wrote to the ledger — account-wide, or for one project when the
+//   report is filtered, with a per-project attribution table.
 // - estimated: USD computed from app-recorded tokens with a stated pricing version.
+// Limits are read from the same policy that enforces them (lib/providers/policy.ts + lib/budgets.ts).
 // Each provider section has a state: live, unavailable (not configured / not reported), error.
 
 import { db } from "@/lib/db";
-import { allowanceState, ledgerAvailable, usageTotals, type UsageTotals } from "./ledger";
+import { allowanceState, allowanceStatuses, dailyModelSpend, ledgerAvailable, usageTotals, type DaySpend, type LimitLine, type UsageTotals } from "./ledger";
 import { PRICING_VERSION } from "./pricing";
-import { llmDecision, previewSerpTest, serpDecision } from "./policy";
+import { accountSerpDecision, allowanceKeys, llmDecision, previewSerpTest, serpDecision } from "./policy";
 import { NO_SERP_KEY, serpAccount, serpKey, type SerpAccount } from "./serpapi";
 import { resolveCredential, type CredentialSource } from "@/lib/credentials/resolve";
 import { deploymentOf } from "@/lib/environment";
@@ -25,6 +27,8 @@ export interface ProviderReported<T> {
 
 export interface RunRow {
   id: string;
+  projectId: number;
+  projectName: string;
   kind: string;
   trigger: string;
   status: string;
@@ -35,20 +39,37 @@ export interface RunRow {
   error: string | null;
 }
 
+export interface ProjectUsage {
+  projectId: number | null;
+  projectName: string;
+  serpRequests: number;
+  serpFailed: number;
+  modelCalls: number;
+  estCostUsd: number | null;
+  unpriced: number;
+}
+
 export interface UsageReport {
   since: number;
   ledger: boolean;
+  /** null = the whole account (every project); otherwise the filtered project. */
+  projectId: number | null;
   serpapi: {
     keySource: CredentialSource | null;
     account: ProviderReported<SerpAccount>;
     recorded: UsageTotals | null;
-    policy: { allowed: boolean; scope: string; used: number | null; max: number | null };
-    previewTest: { enabled: boolean; thisProject: boolean; max: number } | null;
+    /** Limits that apply: for a project, its own and the account's; for the account, its own. */
+    policy: { allowed: boolean; scope: string; limits: LimitLine[] };
+    previewTest: { enabled: boolean; projectId: number | null; thisProject: boolean; max: number; used: number | null } | null;
   };
   openai: { recorded: UsageTotals | null; reported: ProviderReported<{ usd: number; currency: string }> };
   anthropic: { recorded: UsageTotals | null; reported: ProviderReported<{ amount: number; currency: string }> };
   dataforseo: { recorded: UsageTotals | null; reported: ProviderReported<{ balance: number | null; totalSpent: number | null }> };
-  llmPolicy: { allowed: boolean; scope: string; used: number | null; max: number | null };
+  llmPolicy: { allowed: boolean; scope: string; limits: LimitLine[] };
+  /** Estimated model spend per UTC day for the account (last 14 days). */
+  modelDays: DaySpend[];
+  /** App-recorded usage attributed to each project (account report only). */
+  byProject: ProjectUsage[];
   pricingVersion: string;
   runs: RunRow[];
 }
@@ -120,7 +141,38 @@ async function dataforseoReported(userId: number): Promise<ProviderReported<{ ba
   }
 }
 
-export async function usageReport(userId: number, projectId: number, since: number): Promise<UsageReport> {
+async function byProjectUsage(userId: number, since: number): Promise<ProjectUsage[]> {
+  if (!(await ledgerAvailable())) return [];
+  const rows = (await db
+    .prepare(
+      `SELECT u.project_id, p.name,
+              SUM(CASE WHEN u.provider = 'serpapi' THEN 1 ELSE 0 END) AS serp,
+              SUM(CASE WHEN u.provider = 'serpapi' AND u.status = 'error' THEN 1 ELSE 0 END) AS serp_failed,
+              SUM(CASE WHEN u.provider IN ('openai', 'anthropic') THEN 1 ELSE 0 END) AS model_calls,
+              SUM(CASE WHEN u.provider IN ('openai', 'anthropic') THEN u.est_cost_usd END) AS est,
+              SUM(CASE WHEN u.unit_type = 'tokens' AND u.est_cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced
+         FROM provider_usage u LEFT JOIN projects p ON p.id = u.project_id AND p.user_id = u.user_id
+        WHERE u.user_id = ? AND u.created_at >= ?
+        GROUP BY u.project_id, p.name
+        ORDER BY serp DESC`,
+    )
+    .all(userId, since)) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    projectId: r.project_id == null ? null : Number(r.project_id),
+    projectName: r.project_id == null ? "No project" : String(r.name ?? `Deleted project #${r.project_id}`),
+    serpRequests: Number(r.serp ?? 0),
+    serpFailed: Number(r.serp_failed ?? 0),
+    modelCalls: Number(r.model_calls ?? 0),
+    estCostUsd: r.est == null ? null : Number(r.est),
+    unpriced: Number(r.unpriced ?? 0),
+  }));
+}
+
+/**
+ * Usage & Costs for the signed-in account (projectId null) or one of its projects. The caller checks that the
+ * project is the user's. Free reads only.
+ */
+export async function usageReport(userId: number, projectId: number | null, since: number): Promise<UsageReport> {
   const ledger = await ledgerAvailable();
   const totals = await usageTotals(userId, projectId, since);
   const pick = (p: string) => totals.find((t) => t.provider === p) ?? null;
@@ -138,15 +190,29 @@ export async function usageReport(userId: number, projectId: number, since: numb
       account = { state: "error", scope: accountScope, message: e instanceof Error ? e.message : String(e) };
     }
   }
-  const sd = serpDecision(projectId);
-  const sState = sd.allowed ? await allowanceState(sd.allowanceKey) : null;
-  const ld = llmDecision(userId);
-  const lState = ld.allowed ? await allowanceState(ld.allowanceKey) : null;
+
+  // Limits: a project report shows the project's and the account's; the account report shows the account's.
+  const sd = projectId != null ? await serpDecision(userId, projectId) : await accountSerpDecision(userId);
+  const serpPolicy: UsageReport["serpapi"]["policy"] = sd.allowed
+    ? { allowed: true, scope: sd.scope, limits: await allowanceStatuses(sd.allowances) }
+    : { allowed: false, scope: sd.reason, limits: [] };
+  const ld = await llmDecision(userId, projectId);
+  const llmPolicy: UsageReport["llmPolicy"] = ld.allowed
+    ? { allowed: true, scope: ld.scope, limits: await allowanceStatuses(ld.allowances) }
+    : { allowed: false, scope: ld.reason, limits: [] };
   const test = previewSerpTest();
+  const preview = deploymentOf() === "preview";
+  const previewUsed = preview && test.projectId != null ? ((await allowanceState(allowanceKeys.previewSerp(test.projectId)))?.used ?? 0) : null;
+
   const runs = ledger
     ? ((await db
-        .prepare("SELECT id, kind, trigger, status, started_at, finished_at, estimate, actual, error FROM ai_runs WHERE user_id = ? AND project_id = ? AND started_at >= ? ORDER BY started_at DESC LIMIT 50")
-        .all(userId, projectId, since)) as Record<string, unknown>[])
+        .prepare(
+          `SELECT r.id, r.project_id, r.kind, r.trigger, r.status, r.started_at, r.finished_at, r.estimate, r.actual, r.error, p.name AS project_name
+             FROM ai_runs r LEFT JOIN projects p ON p.id = r.project_id
+            WHERE r.user_id = ? AND (?::bigint IS NULL OR r.project_id = ?) AND r.started_at >= ?
+            ORDER BY r.started_at DESC LIMIT 50`,
+        )
+        .all(userId, projectId, projectId, since)) as Record<string, unknown>[])
     : [];
   const parse = (v: unknown) => {
     try {
@@ -155,24 +221,35 @@ export async function usageReport(userId: number, projectId: number, since: numb
       return null;
     }
   };
-  const [openai, anthropic, dataforseo] = await Promise.all([openaiReported(since), anthropicReported(since), dataforseoReported(userId)]);
+  const [openai, anthropic, dataforseo, modelDays, byProject] = await Promise.all([
+    openaiReported(since),
+    anthropicReported(since),
+    dataforseoReported(userId),
+    dailyModelSpend(userId, 14),
+    projectId == null ? byProjectUsage(userId, since) : Promise.resolve([] as ProjectUsage[]),
+  ]);
   return {
     since,
     ledger,
+    projectId,
     serpapi: {
       keySource: key?.source ?? null,
       account,
       recorded: pick("serpapi"),
-      policy: { allowed: sd.allowed, scope: sd.allowed ? sd.scope : sd.reason, used: sState?.used ?? (sd.allowed ? 0 : null), max: sd.allowed ? sd.max : null },
-      previewTest: deploymentOf() === "preview" ? { enabled: test.projectId != null, thisProject: test.projectId === projectId, max: test.max } : null,
+      policy: serpPolicy,
+      previewTest: preview ? { enabled: test.projectId != null, projectId: test.projectId, thisProject: test.projectId === projectId, max: test.max, used: previewUsed } : null,
     },
     openai: { recorded: pick("openai"), reported: openai },
     anthropic: { recorded: pick("anthropic"), reported: anthropic },
     dataforseo: { recorded: pick("dataforseo"), reported: dataforseo },
-    llmPolicy: { allowed: ld.allowed, scope: ld.allowed ? ld.scope : ld.reason, used: lState?.used ?? (ld.allowed ? 0 : null), max: ld.allowed ? ld.max : null },
+    llmPolicy,
+    modelDays,
+    byProject,
     pricingVersion: PRICING_VERSION,
     runs: runs.map((r) => ({
       id: String(r.id),
+      projectId: Number(r.project_id),
+      projectName: String(r.project_name ?? ""),
       kind: String(r.kind),
       trigger: String(r.trigger),
       status: String(r.status),

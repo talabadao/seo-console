@@ -42,12 +42,17 @@ export async function ledgerAvailable(): Promise<boolean> {
   return tableExists("provider_usage");
 }
 
-/** Takes `units` from an allowance, creating it with `max` the first time. Throws CapReached when it doesn't fit. */
-export async function takeAllowance(key: string, units: number, max: number, note: string): Promise<{ used: number; max: number }> {
+/**
+ * Takes `units` from an allowance, creating it with `max` the first time. Throws CapReached when it doesn't fit.
+ * With `syncMax`, an existing allowance's maximum is updated to `max` first (a limit changed in Settings applies
+ * to the current period); its used amount is never reset.
+ */
+export async function takeAllowance(key: string, units: number, max: number, note: string, syncMax = false): Promise<{ used: number; max: number }> {
   const now = Date.now();
   await db
     .prepare("INSERT INTO provider_allowances (key, max_units, used_units, note, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?) ON CONFLICT (key) DO NOTHING")
     .run(key, max, note, now, now);
+  if (syncMax) await db.prepare("UPDATE provider_allowances SET max_units = ?, updated_at = ? WHERE key = ? AND max_units <> ?").run(max, now, key, max);
   const row = (await db
     .prepare("UPDATE provider_allowances SET used_units = used_units + ?, updated_at = ? WHERE key = ? AND used_units + ? <= max_units RETURNING used_units, max_units")
     .get(units, now, key, units)) as { used_units: number; max_units: number } | undefined;
@@ -59,6 +64,50 @@ export async function takeAllowance(key: string, units: number, max: number, not
   const cap = Number(current?.max_units ?? max);
   throw new CapReached(key, used, cap, `${note}: ${used} of ${cap} used.`);
 }
+
+/**
+ * Takes `units` from every allowance in order. If one is full, what was already taken from the earlier ones is
+ * given back and its CapReached is thrown — so all limits hold together, even under concurrent requests.
+ */
+export async function takeAllowances(allowances: Array<{ key: string; max: number; note: string; syncMax: boolean }>, units: number): Promise<void> {
+  const taken: string[] = [];
+  try {
+    for (const a of allowances) {
+      await takeAllowance(a.key, units, a.max, a.note, a.syncMax);
+      taken.push(a.key);
+    }
+  } catch (e) {
+    for (const key of taken) await adjustAllowance(key, -units);
+    throw e;
+  }
+}
+
+/** Applies the same correction to several allowances (e.g. expected → estimated model cost). */
+export async function adjustAllowances(keys: string[], delta: number): Promise<void> {
+  for (const key of keys) await adjustAllowance(key, delta);
+}
+
+export interface LimitLine {
+  label: string;
+  used: number;
+  max: number;
+  left: number;
+}
+
+/** Used / left for each allowance (a period not started yet counts as 0 used). */
+export async function allowanceStatuses(allowances: Array<{ key: string; max: number; label: string }>): Promise<LimitLine[]> {
+  const out: LimitLine[] = [];
+  for (const a of allowances) {
+    const st = await allowanceState(a.key);
+    const used = st?.used ?? 0;
+    const max = a.max;
+    out.push({ label: a.label, used, max, left: Math.max(0, max - used) });
+  }
+  return out;
+}
+
+/** The limit with the least room left, or null when there are none. */
+export const tightest = (lines: LimitLine[]): LimitLine | null => (lines.length ? lines.reduce((a, b) => (b.left < a.left ? b : a)) : null);
 
 export async function allowanceState(key: string): Promise<{ used: number; max: number } | null> {
   if (!(await tableExists("provider_allowances"))) return null;

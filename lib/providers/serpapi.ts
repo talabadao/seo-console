@@ -4,13 +4,13 @@
 //   it's resolved, else the signed-in account's encrypted SerpApi credential, else a server key only for
 //   accounts explicitly allowed to use it. Keys stay on the server; there's no key rotation to get around an
 //   exhausted quota — an exhausted key stops the run with SerpApi's message.
-// - Every search passes serpDecision (policy.ts), takes one unit from its allowance and is written to the
+// - Every search passes serpDecision (policy.ts), takes one unit from each applicable allowance and is written to the
 //   ledger before it's sent. Account balance checks (account.json) are free and aren't metered.
 // - SerpApi doesn't charge for responses it serves from its own cache, but the app can't always tell which
 //   those were, so it counts every request it makes. SerpApi's own figures are shown next to it.
 
 import { resolveCredential, type CredentialSource } from "@/lib/credentials/resolve";
-import { CapReached, completeUsage, keyFingerprint, reserveUsage, takeAllowance } from "./ledger";
+import { CapReached, completeUsage, keyFingerprint, reserveUsage, takeAllowances } from "./ledger";
 import { serpDecision } from "./policy";
 
 const SEARCH_URL = "https://serpapi.com/search.json";
@@ -51,10 +51,10 @@ export interface SerpContext {
  * Error for SerpApi failures. "No results" comes back as an empty object, not an error.
  */
 export async function serpSearch(params: Record<string, string>, ctx: SerpContext): Promise<Json> {
-  const decision = serpDecision(ctx.projectId);
+  const decision = await serpDecision(ctx.userId, ctx.projectId);
   if (!decision.allowed) throw new SerpRefused(decision.reason);
   try {
-    await takeAllowance(decision.allowanceKey, 1, decision.max, decision.note);
+    await takeAllowances(decision.allowances, 1);
   } catch (e) {
     if (e instanceof CapReached) throw new SerpRefused(`${e.message} The run stopped before sending more requests.`);
     throw e;

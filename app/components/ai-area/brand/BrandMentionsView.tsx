@@ -43,7 +43,7 @@ const SECTIONS: Array<{ id: Section; label: string }> = [
   { id: "customers", label: "Customer reviews" },
   { id: "prompts", label: "Prompts" },
   { id: "responses", label: "AI answers" },
-  { id: "costs", label: "Costs & limits" },
+  { id: "costs", label: "Platforms & cost estimate" },
 ];
 
 /**
@@ -57,12 +57,14 @@ export function BrandMentionsView({
   onSub,
   onOpenTrackingSettings,
   onOpenReviews,
+  onOpenBudgets,
 }: {
   projectId: number;
   sub?: string;
   onSub?: (sub: string) => void;
   onOpenTrackingSettings: () => void;
   onOpenReviews: () => void;
+  onOpenBudgets: () => void;
 }) {
   const section: Section = SECTION_BY_SLUG[sub ?? ""] ?? "dashboard";
   const setSection = (next: Section) => onSub?.(SECTION_SLUG[next]);
@@ -228,7 +230,9 @@ export function BrandMentionsView({
   const unavailable = PLATFORMS.filter((p) => data.settings.platforms[p] && data.costs.unavailable[p]);
   const est = data.estimate;
   const serp = data.costs.serp;
-  const serpLeft = serp.allowed && serp.max != null && serp.used != null ? Math.max(0, serp.max - serp.used) : null;
+  // The tightest SerpApi limit that applies (Preview smoke test, project per month, account per month).
+  const serpLeft = serp.allowed ? serp.left : null;
+  const modelLeft = data.costs.modelLeft;
 
   return (
     <div className="flex flex-col gap-4">
@@ -251,10 +255,15 @@ export function BrandMentionsView({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-            {data.costs.limit != null
-              ? `Model spend today $${data.costs.today.totalUsd.toFixed(2)} of $${data.costs.limit.toFixed(2)} (estimated)`
-              : "Paid model calls are off here"}
-            {serpLeft != null ? ` · ${serpLeft} SerpApi requests left in this project's allowance` : ""}
+            {!data.costs.llmPolicy.allowed
+              ? "Paid model calls are off here"
+              : modelLeft != null
+                ? `$${modelLeft.toFixed(2)} of model spend left under your limits (estimated)`
+                : "No model spending limit set"}
+            {serpLeft != null ? ` · ${serpLeft} SerpApi requests left under your limits` : ""} ·{" "}
+            <button type="button" className="underline" onClick={onOpenBudgets}>
+              Manage usage and budget
+            </button>
           </span>
           {running ? (
             <button type="button" onClick={() => (stopRef.current = true)} className="rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--border-hairline)", color: "var(--text-primary)" }}>
@@ -344,7 +353,7 @@ export function BrandMentionsView({
       ) : section === "responses" ? (
         <ResponsesPanel key={data.allCycles.length} projectId={projectId} cycles={data.allCycles} brandTerms={brandTerms} otherBrands={otherBrands} />
       ) : section === "costs" ? (
-        <CostsPanel costs={data.costs} settings={data.settings} onSave={saveSettings} />
+        <CostsPanel costs={data.costs} settings={data.settings} onSave={saveSettings} onOpenBudgets={onOpenBudgets} />
       ) : data.allCycles.length === 0 ? (
         <EmptyState
           title={prompts.length ? "No brand check yet" : "Add the prompts to track"}

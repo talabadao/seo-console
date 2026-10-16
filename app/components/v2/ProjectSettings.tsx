@@ -14,6 +14,8 @@ import { hostOf } from "@/lib/projectMatch";
 import { NAV, meetsRequirement, type ShellLocation } from "@/lib/v2/nav";
 import { Card, buttonClass, primaryButtonClass } from "./ui";
 import { LeadEventsEditor } from "../LeadEventsEditor";
+import { BudgetLimits } from "./BudgetLimits";
+import { useUsage } from "./UsageCosts";
 
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
@@ -21,7 +23,7 @@ export const SETTINGS_SECTIONS = [
   { id: "kpi", label: "KPI targets" },
   { id: "analytics", label: "Analytics / Key events" },
   { id: "tracking", label: "Tracking" },
-  { id: "budgets", label: "Budgets and limits" },
+  { id: "budgets", label: "Usage & budgets" },
   { id: "sync", label: "Sync and history" },
 ] as const;
 type SectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
@@ -126,7 +128,7 @@ export function ProjectSettings({
           </Card>
         )}
 
-        {section === "budgets" && <Budgets project={project} />}
+        {section === "budgets" && <Budgets project={project} onNavigate={onNavigate} />}
 
         {section === "sync" && <SyncHistory project={project} sites={sites} />}
 
@@ -525,22 +527,52 @@ function KpiTargets({ project, onLink, onLeadEvents }: { project: Project; onLin
   );
 }
 
-function Budgets({ project }: { project: Project }) {
+/**
+ * Project-scoped usage and limits, from the same services as Settings → Account (one budget form, one report):
+ * this project's limits are editable here; account-wide limits are shown and edited in Account settings.
+ */
+function Budgets({ project, onNavigate }: { project: Project; onNavigate: (l: ShellLocation) => void }) {
+  const account = (sub: string): ShellLocation => ({ kind: "project", projectId: project.id, group: "settings", item: "account", sub });
+  const usage = useUsage(project.id, 30);
+  const r = usage?.report;
   return (
-    <Card title="Budgets and usage limits">
-      <ul className="space-y-2 text-sm">
-        <Row
-          label="Maps reviews (SerpApi)"
-          body={`Fetched only when you ask. 1 SerpApi credit per page of reviews. ${project.hasSerpKey ? "A SerpApi key applies to this project." : "No SerpApi key yet."}`}
-        />
-        <Row label="Review analysis (OpenAI)" body="Runs only when you ask, on reviews not analysed yet." />
-        <Row label="PageSpeed Insights" body="Up to 15 tracked pages per project, checked once a day." />
-        <Row label="URL inspection" body="Google allows 2,000 inspections per property per day; one manual run does up to 500." />
-        <Row label="Indexing API" body="Submissions only for eligible pages (job postings and livestreams), within Google's daily quota." />
-        <Row label="Preview deployments" body="Paid and external actions are switched off on Preview." />
-      </ul>
-      <p className="mt-3 text-xs text-muted">These limits are fixed today; editable per-project budgets are planned.</p>
-    </Card>
+    <>
+      <Card
+        title="Usage, last 30 days (recorded)"
+        actions={
+          <button className={buttonClass} onClick={() => onNavigate(account("usage"))}>
+            Open Usage &amp; Costs
+          </button>
+        }
+      >
+        {!usage ? (
+          <p className="text-sm text-muted">Loading…</p>
+        ) : !r ? (
+          <p role="alert" className="text-sm" style={{ color: "var(--bad)" }}>
+            {usage.error}
+          </p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            <Row label="SerpApi requests" body={`${(r.serpapi.recorded?.requests ?? 0).toLocaleString("en-US")} sent for this project${r.serpapi.recorded?.failed ? ` (${r.serpapi.recorded.failed} failed)` : ""}.`} />
+            <Row
+              label="Model calls"
+              body={`${((r.openai.recorded?.requests ?? 0) + (r.anthropic.recorded?.requests ?? 0)).toLocaleString("en-US")} calls, about $${((r.openai.recorded?.estCostUsd ?? 0) + (r.anthropic.recorded?.estCostUsd ?? 0)).toFixed(2)} estimated.`}
+            />
+          </ul>
+        )}
+      </Card>
+      <BudgetLimits projectId={project.id} onOpenAccount={() => onNavigate(account("budgets"))} />
+      <Card title="Other limits (fixed)">
+        <ul className="space-y-2 text-sm">
+          <Row label="Maps reviews (SerpApi)" body={`Fetched only when you ask; 1 SerpApi credit per page of reviews. ${project.hasSerpKey ? "A SerpApi key applies to this project." : "No SerpApi key yet."}`} />
+          <Row label="Review analysis (OpenAI)" body="Runs only when you ask, on reviews not analysed yet." />
+          <Row label="PageSpeed Insights" body="Up to 15 tracked pages per project, checked once a day." />
+          <Row label="URL inspection" body="Google allows 2,000 inspections per property per day; one manual run does up to 500." />
+          <Row label="Indexing API" body="Submissions only for eligible pages (job postings and livestreams), within Google's daily quota." />
+          <Row label="Preview deployments" body="Paid and external actions are switched off on Preview, except the capped SerpApi smoke test." />
+        </ul>
+      </Card>
+    </>
   );
 }
 

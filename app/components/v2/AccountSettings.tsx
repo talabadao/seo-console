@@ -2,7 +2,8 @@
 
 // Settings → Account: everything that belongs to the signed-in account rather than one project, addressed as
 // /p/<id>/settings/account/<section> (keeping the open project as context) or /portfolio/settings/account/<section>.
-// Sections: API credentials (encrypted, shared by this account's projects; other accounts have their own).
+// Sections: API credentials (encrypted, shared by this account's projects; other accounts have their own),
+// Usage & Costs (account-wide with a project filter), Budgets & limits (account-wide and per project).
 
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "../ProjectManager";
@@ -10,8 +11,14 @@ import { CREDENTIAL_PROVIDERS, type CredentialStatus } from "@/lib/credentials/p
 import type { LegacySerpState } from "@/lib/credentials/resolve";
 import { Card, buttonClass } from "./ui";
 import { CredentialField } from "./CredentialField";
+import { UsageCostsPage } from "./UsageCosts";
+import { BudgetLimits } from "./BudgetLimits";
 
-export const ACCOUNT_SECTIONS = [{ id: "credentials", label: "API credentials" }] as const;
+export const ACCOUNT_SECTIONS = [
+  { id: "credentials", label: "API credentials" },
+  { id: "usage", label: "Usage & Costs" },
+  { id: "budgets", label: "Budgets & limits" },
+] as const;
 type SectionId = (typeof ACCOUNT_SECTIONS)[number]["id"];
 
 export function AccountSettings({
@@ -45,6 +52,8 @@ export function AccountSettings({
       </nav>
       <div className="min-w-0 space-y-4">
         {section === "credentials" && <Credentials projects={projects} projectId={projectId} onProjectsChanged={onProjectsChanged} />}
+        {section === "usage" && <UsageCostsPage projectId={projectId} projects={projects} onOpenBudgets={() => onSub("budgets")} />}
+        {section === "budgets" && <BudgetLimits projectId={null} />}
       </div>
     </div>
   );

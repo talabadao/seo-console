@@ -23,7 +23,7 @@ export interface Answer {
 export async function platformUnavailable(platform: Platform, ctx: { userId: number; projectId: number; hasSerpKey: boolean }): Promise<string | null> {
   if (platform === "chatgpt") return llmUnavailable("openai", ctx.userId);
   if (platform === "claude") return llmUnavailable("anthropic", ctx.userId);
-  const d = serpDecision(ctx.projectId);
+  const d = await serpDecision(ctx.userId, ctx.projectId);
   if (!d.allowed) return d.reason;
   return ctx.hasSerpKey ? null : NO_SERP_KEY;
 }

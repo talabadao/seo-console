@@ -1,15 +1,14 @@
-// Brand Mentions cost projection and limits, adapted from the AI Brand Mention app. Spend figures come from the
-// SEO Console ledger (estimated from recorded token usage, with the pricing version), and the limits are the
-// ledger allowances: the account's daily model-spend limit and the project's SerpApi cap.
-import { allowanceState, dailyModelSpend, type DaySpend } from "@/lib/providers/ledger";
+// Brand Mentions run-cost estimate and the limits that apply to it, adapted from the AI Brand Mention app.
+// The limits themselves are configured in one place — Settings → Account → Budgets & limits and Project
+// settings → Budgets — and enforced by lib/providers/policy.ts; this report only reads them, so Brand Mentions
+// shows a compact estimate and allowance warning and links to Settings instead of keeping its own budget form.
+import { allowanceStatuses, tightest, type LimitLine } from "@/lib/providers/ledger";
 import { llmDecision, serpDecision } from "@/lib/providers/policy";
 import { PRICING_VERSION } from "@/lib/providers/pricing";
 import { ANALYSIS_MODEL, CHATGPT_MODELS, CLAUDE_MODELS, SERP_CREDITS, analysisCost, typicalAnswerCost } from "./pricing";
 import { platformUnavailable } from "./providers";
 import { listCycles, readCycle } from "./store";
 import { PLATFORMS, type BrandSettings, type Platform } from "./types";
-
-export type { DaySpend };
 
 export interface CostReport {
   promptCount: number;
@@ -18,14 +17,14 @@ export interface CostReport {
   basis: { chatgpt: "observed" | "estimate"; claude: "observed" | "estimate" };
   /** Projected cost of one answer for each selectable model, for the model pickers. */
   models: Array<{ id: string; label: string; provider: "openai" | "anthropic"; note: string; perAnswer: number; perRun: number }>;
-  today: DaySpend;
-  /** The account's daily model-spend limit, or null when paid model calls are off here (Preview). */
-  limit: number | null;
-  llmPolicy: { allowed: boolean; scope: string };
-  serp: { allowed: boolean; scope: string; used: number | null; max: number | null };
-  recent: DaySpend[];
-  /** How many runs today's remaining model budget covers. */
-  runsLeftToday: number | null;
+  /** Model spend limits that apply to this project's calls (account per day, project per month), or why calls are off. */
+  llmPolicy: { allowed: boolean; scope: string; limits: LimitLine[] };
+  /** SerpApi limits that apply (Preview smoke test, project per month, account per month), or why calls are off. */
+  serp: { allowed: boolean; scope: string; limits: LimitLine[]; left: number | null };
+  /** Estimated USD left under the tightest model limit; null when there's no limit or calls are off. */
+  modelLeft: number | null;
+  /** How many runs the tightest model limit still covers. */
+  runsLeft: number | null;
   /** Why each platform can't be asked right now, or null. */
   unavailable: Record<Platform, string | null>;
   pricingVersion: string;
@@ -62,13 +61,11 @@ export async function costReport(
   const total = chatgpt + claude + analysisTotal;
   const serpCredits = promptCount * platforms.reduce((s, p) => s + SERP_CREDITS[p], 0);
 
-  const llm = llmDecision(ctx.userId);
-  const serp = serpDecision(ctx.projectId);
-  const recent = await dailyModelSpend(ctx.userId, 14);
-  const today = recent.at(-1)!;
-  const llmUsed = llm.allowed ? ((await allowanceState(llm.allowanceKey))?.used ?? 0) : 0;
-  const serpState = serp.allowed ? await allowanceState(serp.allowanceKey) : null;
-  const limit = llm.allowed ? llm.max : null;
+  const llm = await llmDecision(ctx.userId, ctx.projectId);
+  const serp = await serpDecision(ctx.userId, ctx.projectId);
+  const llmLimits = llm.allowed ? await allowanceStatuses(llm.allowances) : [];
+  const serpLimits = serp.allowed ? await allowanceStatuses(serp.allowances) : [];
+  const modelLeft = tightest(llmLimits)?.left ?? null;
   return {
     promptCount,
     platforms,
@@ -78,14 +75,12 @@ export async function costReport(
       const perAnswer = typicalAnswerCost(m) + analysis;
       return { id: m.id, label: m.label, provider: m.provider, note: m.note, perAnswer, perRun: perAnswer * promptCount };
     }),
-    today,
-    limit,
-    llmPolicy: llm.allowed ? { allowed: true, scope: llm.scope } : { allowed: false, scope: llm.reason },
+    llmPolicy: llm.allowed ? { allowed: true, scope: llm.scope, limits: llmLimits } : { allowed: false, scope: llm.reason, limits: [] },
     serp: serp.allowed
-      ? { allowed: true, scope: serp.scope, used: serpState?.used ?? 0, max: serpState?.max ?? serp.max }
-      : { allowed: false, scope: serp.reason, used: null, max: null },
-    recent,
-    runsLeftToday: limit !== null && total > 0 ? Math.max(0, (limit - llmUsed) / total) : null,
+      ? { allowed: true, scope: serp.scope, limits: serpLimits, left: tightest(serpLimits)?.left ?? null }
+      : { allowed: false, scope: serp.reason, limits: [], left: null },
+    modelLeft,
+    runsLeft: modelLeft !== null && total > 0 ? Math.max(0, modelLeft / total) : null,
     unavailable: Object.fromEntries(await Promise.all(PLATFORMS.map(async (p) => [p, await platformUnavailable(p, ctx)]))) as Record<Platform, string | null>,
     pricingVersion: PRICING_VERSION,
   };

@@ -131,7 +131,7 @@ export function TrackingTab({
         if (!r.ok) throw new Error(body.error ?? `Couldn't load tracking data (status ${r.status})`);
         return body as Loaded;
       }),
-      fetch(`/api/ai-area/${projectId}/usage?days=30`, { cache: "no-store" })
+      fetch(`/api/account/usage?days=30&project=${projectId}`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ])
@@ -244,7 +244,8 @@ export function TrackingTab({
   const account = usage?.serpapi.account.data ?? null;
   const searchesLeft = account?.totalSearchesLeft ?? account?.planSearchesLeft ?? null;
   const policy = usage?.serpapi.policy ?? null;
-  const allowanceLeft = policy && policy.max != null ? Math.max(0, policy.max - (policy.used ?? 0)) : null;
+  // The tightest of the limits that apply (Preview smoke test, project per month, account per month).
+  const allowanceLeft = policy && policy.limits.length ? Math.min(...policy.limits.map((l) => l.left)) : null;
   const est = loaded.estimate;
   const lastRun = loaded.runs[0];
 

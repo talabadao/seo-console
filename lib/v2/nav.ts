@@ -177,11 +177,11 @@ export const NAV: NavGroup[] = [
     id: "ai-area",
     label: "AI Area",
     icon: "sparkle",
-    // Phase one ports the AI Brand Mention app's two screens; Searchable is not part of it.
+    // Phase one ports the AI Brand Mention app's two screens; Searchable is not part of it. Usage, costs and
+    // budgets live in Settings → Account (old ai-area/usage addresses redirect there; see LEGACY_ITEMS).
     items: [
       { id: "google-search-tracking", label: "Google Search Tracking", status: "live" },
       { id: "brand-mentions", label: "Brand Mentions", status: "live" },
-      { id: "usage", label: "Usage & Costs", status: "live" },
     ],
   },
   {
@@ -239,6 +239,14 @@ export function findItem(group: string, item: string): { group: NavGroup; item: 
   return g && i ? { group: g, item: i } : null;
 }
 
+/**
+ * Pages that moved: old group/item → new group/item/sub. Old bookmarks keep working, with the same project
+ * (and, from All projects, no project) — never a hard-coded one.
+ */
+export const LEGACY_ITEMS: Record<string, { group: string; item: string; sub: string }> = {
+  "ai-area/usage": { group: "settings", item: "account", sub: "usage" },
+};
+
 /** True for paths the v2 shell owns; everything else stays with the legacy dashboard. */
 export function isShellPath(segments: string[]): boolean {
   return segments[0] === "portfolio" || segments[0] === "p" || segments[0] === "docs";
@@ -249,12 +257,16 @@ export function parseShellPath(segments: string[]): ShellLocation | null {
   const [root, a, b, c, d] = segments;
   if (root === "docs") return { kind: "docs" };
   if (root === "portfolio") {
+    const moved = a && b ? LEGACY_ITEMS[`${a}/${b}`] : undefined;
+    if (moved) return { kind: "pick", group: moved.group, item: moved.item, sub: moved.sub };
     if (a && b && findItem(a, b)) return c ? { kind: "pick", group: a, item: b, sub: c } : { kind: "pick", group: a, item: b };
     return { kind: "portfolio" };
   }
   if (root === "p") {
     const projectId = Number(a);
     if (!Number.isSafeInteger(projectId) || projectId <= 0) return { kind: "portfolio" };
+    const moved = b && c ? LEGACY_ITEMS[`${b}/${c}`] : undefined;
+    if (moved) return { kind: "project", projectId, ...moved };
     if (b && c && findItem(b, c)) return { kind: "project", projectId, group: b, item: c, sub: d ?? "" };
     return { kind: "project", projectId, ...DEFAULT_ITEM, sub: "" };
   }
