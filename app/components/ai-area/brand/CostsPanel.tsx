@@ -1,8 +1,9 @@
 "use client";
 
-// Costs & limits for Brand Mentions, ported from the AI Brand Mention app. Spend comes from the SEO Console ledger
-// (estimated from recorded token usage, with the pricing version); the limits are the server's allowances and
-// aren't edited here. No weekly schedule in this phase.
+// Platforms & cost estimate for Brand Mentions, ported from the AI Brand Mention app's "Costs & limits".
+// Budgets and spending limits are configured in one place — Settings → Account → Budgets & limits (and
+// Project settings → Budgets) — so this panel shows the run-cost estimate, which limits apply and how much is
+// left, and links there. Platforms and models are Brand Mentions settings and stay here.
 
 import { useState } from "react";
 import type { CostReport } from "@/lib/ai-area/brand/costs";
@@ -16,14 +17,14 @@ export function CostsPanel({
   costs,
   settings,
   onSave,
+  onOpenBudgets,
 }: {
   costs: CostReport;
   settings: BrandSettings;
   onSave: (patch: Partial<BrandSettings>) => Promise<void>;
+  onOpenBudgets: () => void;
 }) {
   const [, setSaving] = useState(false);
-  const limit = costs.limit;
-  const usedPct = limit != null && limit > 0 ? Math.min(100, (costs.today.totalUsd / limit) * 100) : 0;
   const save = async (patch: Partial<BrandSettings>) => {
     setSaving(true);
     try {
@@ -32,53 +33,9 @@ export function CostsPanel({
       setSaving(false);
     }
   };
-  const maxRecent = Math.max(limit ?? 0, ...costs.recent.map((d) => d.totalUsd), 0.01);
-  const serpLeft = costs.serp.allowed && costs.serp.max != null && costs.serp.used != null ? Math.max(0, costs.serp.max - costs.serp.used) : null;
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-      <Panel title="Daily model spending limit" subtitle="ChatGPT + Claude + analysis, for your account across projects (UTC day); estimated from token usage">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex flex-col">
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Spent today
-            </span>
-            <span className="tabular text-3xl font-semibold" style={{ color: "var(--text-primary)" }}>
-              {usd(costs.today.totalUsd)}
-              <span className="text-base font-normal" style={{ color: "var(--text-muted)" }}>
-                {" "}
-                {limit != null ? `of ${usd(limit)}` : ""}
-              </span>
-            </span>
-            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              OpenAI {usd(costs.today.byProvider.openai)} · Anthropic {usd(costs.today.byProvider.anthropic)} · {costs.today.calls} calls
-            </span>
-          </div>
-          <span className="max-w-xs text-xs" style={{ color: "var(--text-secondary)" }}>
-            {costs.llmPolicy.scope}
-            {costs.llmPolicy.allowed ? ". Set on the server (AI_AREA_DAILY_USD_LIMIT)." : ""}
-          </span>
-        </div>
-        <div className="h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--meter-track)" }} role="img" aria-label={`${Math.round(usedPct)}% of today's limit used`}>
-          <div className="h-full rounded-full" style={{ width: `${usedPct}%`, background: usedPct >= 90 ? "var(--status-critical)" : "var(--series-1)" }} />
-        </div>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-          When the limit is reached, the run pauses; answers collected so far are kept and Run continues the same cycle (the next day, once the limit resets). SerpApi requests are capped separately, below. Prices: {costs.pricingVersion}.
-        </p>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-            Last 14 days
-          </span>
-          <div className="flex h-16 items-end gap-1" role="img" aria-label="Daily spend, last 14 days">
-            {costs.recent.map((d) => (
-              <div key={d.day} className="flex h-full flex-1 flex-col items-center justify-end" title={`${d.day}: ${usd(d.totalUsd)}`}>
-                <div className="w-full rounded-t" style={{ height: `${Math.max(2, (d.totalUsd / maxRecent) * 100)}%`, background: d.totalUsd ? "var(--series-1)" : "var(--gridline)" }} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </Panel>
-
       <Panel title="Projected cost per run" subtitle={`${costs.promptCount} active prompts × ${costs.platforms.length} platforms; runs start only when you click Run`}>
         <div className="grid grid-cols-2 gap-3">
           {[
@@ -122,22 +79,47 @@ export function CostsPanel({
           </tbody>
         </table>
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-          {costs.runsLeftToday !== null && limit != null && costs.perRun.total > limit
-            ? `One run costs more than the daily limit, so each run spreads over about ${Math.ceil(costs.perRun.total / Math.max(0.01, limit))} days.`
-            : costs.runsLeftToday !== null
-              ? `Today's remaining budget covers about ${costs.runsLeftToday.toFixed(1)} runs.`
-              : ""}{" "}
+          {costs.runsLeft !== null ? `Your tightest model limit covers about ${costs.runsLeft.toFixed(1)} more runs. ` : ""}
           Estimates use typical web-search answers (search results count as input tokens); after a run they switch to the real average cost.
         </p>
       </Panel>
 
-      <Panel title="SerpApi limit" subtitle="Google AI Mode and AI Overview answers, shared with Google Search Tracking">
-        <p className="text-sm" style={{ color: "var(--text-primary)" }}>
-          {costs.serp.scope}
-          {serpLeft != null ? `: ${costs.serp.used} used, ${serpLeft} left.` : "."}
-        </p>
+      <Panel
+        title="Limits that apply"
+        subtitle="set in Settings, shared with Google Search Tracking"
+        actions={
+          <button type="button" onClick={onOpenBudgets} className="text-xs font-medium hover:underline" style={{ color: "var(--series-1)" }}>
+            Manage usage and budget
+          </button>
+        }
+      >
+        <ul className="flex flex-col gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
+          {!costs.serp.allowed ? (
+            <li>SerpApi: {costs.serp.scope}</li>
+          ) : costs.serp.limits.length ? (
+            costs.serp.limits.map((l) => (
+              <li key={l.label}>
+                SerpApi — {l.label}: <strong>{l.left.toLocaleString("en-US")}</strong> left
+              </li>
+            ))
+          ) : (
+            <li>SerpApi: no limit set.</li>
+          )}
+          {!costs.llmPolicy.allowed ? (
+            <li>Models: {costs.llmPolicy.scope}</li>
+          ) : costs.llmPolicy.limits.length ? (
+            costs.llmPolicy.limits.map((l) => (
+              <li key={l.label}>
+                Models — {l.label}: <strong>{usd(l.left)}</strong> left (estimated)
+              </li>
+            ))
+          ) : (
+            <li>Models: no spending limit set.</li>
+          )}
+        </ul>
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-          Every request is recorded before it&apos;s sent, including retries and the second request that loads an AI Overview. Details in AI Area → Usage &amp; Costs.
+          A run stops when a limit is reached; answers collected by then are kept. Every request is recorded before it&apos;s sent, including retries and the
+          second request that loads an AI Overview.
         </p>
       </Panel>
 

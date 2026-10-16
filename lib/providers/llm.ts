@@ -9,7 +9,7 @@
 
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
-import { CapReached, adjustAllowance, completeUsage, keyFingerprint, reserveUsage, takeAllowance } from "./ledger";
+import { CapReached, adjustAllowances, completeUsage, keyFingerprint, reserveUsage, takeAllowances } from "./ledger";
 import { llmDecision } from "./policy";
 import { resolveCredential } from "@/lib/credentials/resolve";
 import { PRICING_VERSION, capCost, estimateCost } from "./pricing";
@@ -50,7 +50,7 @@ async function apiKey(userId: number, provider: LlmProvider): Promise<{ key: str
 
 /** Why a provider can't be called right now, or null when it can (before caps). Used to show unavailable states. */
 export async function llmUnavailable(provider: LlmProvider, userId: number): Promise<string | null> {
-  const decision = llmDecision(userId);
+  const decision = await llmDecision(userId);
   if (!decision.allowed) return decision.reason;
   if (!(await apiKey(userId, provider))) return missingKey(provider);
   return null;
@@ -89,18 +89,19 @@ export async function meteredCall<T>(
   expected: LlmUsage,
   call: (apiKey: string) => Promise<{ result: T; usage: LlmUsage; model?: string }>,
 ): Promise<{ result: T; costUsd: number | null; model: string }> {
-  const decision = llmDecision(meter.userId);
+  const decision = await llmDecision(meter.userId, meter.projectId);
   if (!decision.allowed) throw new LlmRefused(decision.reason, "policy");
+  const keys = decision.allowances.map((a) => a.key);
   const resolved = await apiKey(meter.userId, provider);
   if (!resolved) throw new LlmRefused(missingKey(provider), "not-configured");
   const key = resolved.key;
 
   const reserved = capCost(model, expected);
   try {
-    await takeAllowance(decision.allowanceKey, reserved, decision.max, decision.note);
+    await takeAllowances(decision.allowances, reserved);
   } catch (e) {
     if (e instanceof CapReached) {
-      throw new LlmRefused(`Daily AI spending limit reached ($${e.used.toFixed(2)} of $${e.max.toFixed(2)}, estimated). The rest can run tomorrow.`, "cap");
+      throw new LlmRefused(`AI spending limit reached — ${e.message} (estimated). Change it in Settings → Account → Budgets & limits, or wait for the next period.`, "cap");
     }
     throw e;
   }
@@ -128,7 +129,7 @@ export async function meteredCall<T>(
       model: served,
     });
     // Unknown prices stay at the conservative cap cost in the allowance.
-    await adjustAllowance(decision.allowanceKey, (cost ?? capCost(served, out.usage)) - reserved);
+    await adjustAllowances(keys, (cost ?? capCost(served, out.usage)) - reserved);
     return { result: out.result, costUsd: cost, model: served };
   } catch (e) {
     const usage = e instanceof LlmCallError ? e.usage : null;
@@ -143,7 +144,7 @@ export async function meteredCall<T>(
       pricingVersion: cost == null ? null : PRICING_VERSION,
       model: served,
     });
-    if (usage) await adjustAllowance(decision.allowanceKey, (cost ?? capCost(served, usage)) - reserved);
+    if (usage) await adjustAllowances(keys, (cost ?? capCost(served, usage)) - reserved);
     throw e;
   }
 }

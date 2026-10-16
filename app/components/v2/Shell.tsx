@@ -46,7 +46,7 @@ import { AccountSettings } from "./AccountSettings";
 import { LlmTrafficReport } from "./LlmTrafficReport";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
-import { AiUsageSummary, UsageCostsPage } from "../ai-area/UsageCosts";
+import { AiUsageSummary } from "./UsageCosts";
 import { useStored, writeStored } from "./summaryClient";
 
 interface SiteMeta {
@@ -798,7 +798,7 @@ function ProjectPage({
     case "organic-serp/google":
       return (
         <div className="ai-area">
-          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "ai-area", item: "usage", sub: "" })} />
+          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "settings", item: "account", sub: "usage" })} />
           {loc.group === "organic-serp" && (
             <p className="mb-3 text-xs text-muted">Same keywords, data and runs as AI Area → Google Search Tracking; nothing is tracked or charged twice.</p>
           )}
@@ -808,18 +808,17 @@ function ProjectPage({
     case "ai-area/brand-mentions":
       return (
         <div className="ai-area">
-          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "ai-area", item: "usage", sub: "" })} />
+          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "settings", item: "account", sub: "usage" })} />
           <BrandMentionsView
             projectId={project.id}
             sub={loc.sub}
             onSub={subNav}
             onOpenTrackingSettings={() => onNavigate({ ...loc, group: "ai-area", item: "google-search-tracking", sub: "settings" })}
             onOpenReviews={() => onNavigate({ ...loc, group: "local-seo", item: "reviews", sub: "" })}
+            onOpenBudgets={() => onNavigate({ ...loc, group: "settings", item: "account", sub: "budgets" })}
           />
         </div>
       );
-    case "ai-area/usage":
-      return <UsageCostsPage projectId={project.id} />;
     case "analytics/llm-traffic":
       return <LlmTrafficReport projectId={project.id} />;
     case "analytics/overview":

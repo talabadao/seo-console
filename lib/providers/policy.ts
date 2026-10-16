@@ -1,19 +1,25 @@
 // Who may spend what, where. Paid provider calls go through these rules and the atomic allowances in
-// ledger.ts; nothing here is a global "allow everything" switch.
+// ledger.ts; nothing here is a global "allow everything" switch. Every applicable limit is enforced together:
+// a request takes one unit (or its estimated cost) from each of its allowances, atomically per allowance, and
+// gives back what it took if a later one is full — so concurrent requests and retries can't get past any of
+// them (ledger.takeAllowances).
 //
 // Preview (VERCEL_ENV=preview):
 // - SerpApi: only for the one project named in PREVIEW_SERPAPI_TEST_PROJECT_ID, and at most
 //   PREVIEW_SERPAPI_TEST_MAX_REQUESTS requests in total (never more than 5), counting pagination and
-//   retries. The allowance is created once and never refills. Every other project: refused.
+//   retries. That allowance is created once and never refills, whatever the limits in Settings say; the
+//   account and project limits apply on top. Every other project: refused.
 // - OpenAI, Anthropic, DataForSEO: always refused. The broader ALLOW_PREVIEW_EXTERNAL_WRITES switch (Asana,
-//   Indexing) deliberately doesn't open them.
+//   Indexing) deliberately doesn't open them, and saving a credential doesn't either.
 // - Asana writes, Indexing submissions and publishing are unaffected: they keep their own Preview block.
-// Production and local development:
-// - SerpApi: a per-project monthly cap (AI_AREA_SERPAPI_MONTHLY_CAP, default 500 requests).
-// - Model calls: a per-account daily cap in USD (AI_AREA_DAILY_USD_LIMIT, default $5), checked against
-//   the estimated cost before each call.
+// Everywhere, the limits come from Settings (lib/budgets.ts), falling back to the server defaults:
+// - SerpApi: per-project requests per month (default AI_AREA_SERPAPI_MONTHLY_CAP or 500) and, if set, an
+//   account-wide requests-per-month limit across all projects.
+// - Model calls: account-wide estimated USD per day (default AI_AREA_DAILY_USD_LIMIT or $5) and, if set, a
+//   project's estimated USD per month.
 
 import { deploymentOf } from "@/lib/environment";
+import { effectiveLimits } from "@/lib/budgets";
 
 type Env = Record<string, string | undefined>;
 
@@ -33,47 +39,116 @@ export function previewSerpTest(env: Env = process.env): PreviewSerpTest {
   };
 }
 
-export type Decision = { allowed: true; allowanceKey: string; max: number; note: string; scope: string } | { allowed: false; reason: string };
+/** One allowance a request must fit into. `syncMax`: the period's maximum follows the current setting. */
+export interface Allowance {
+  key: string;
+  max: number;
+  note: string;
+  label: string;
+  syncMax: boolean;
+}
+
+export type Decision = { allowed: true; allowances: Allowance[]; scope: string } | { allowed: false; reason: string };
 
 const month = (now: Date) => now.toISOString().slice(0, 7);
 const day = (now: Date) => now.toISOString().slice(0, 10);
 
-export function serpDecision(projectId: number, env: Env = process.env, now = new Date()): Decision {
+export const allowanceKeys = {
+  previewSerp: (projectId: number) => `preview-serpapi-test:project:${projectId}`,
+  projectSerpMonth: (projectId: number, now: Date) => `serpapi-month:project:${projectId}:${month(now)}`,
+  accountSerpMonth: (userId: number, now: Date) => `serpapi-month:user:${userId}:${month(now)}`,
+  accountModelDay: (userId: number, now: Date) => `llm-usd:user:${userId}:${day(now)}`,
+  projectModelMonth: (projectId: number, now: Date) => `llm-usd-month:project:${projectId}:${month(now)}`,
+};
+
+export async function serpDecision(userId: number, projectId: number, env: Env = process.env, now = new Date()): Promise<Decision> {
+  const allowances: Allowance[] = [];
   if (deploymentOf(env) === "preview") {
     const test = previewSerpTest(env);
     if (test.projectId !== projectId) {
       return { allowed: false, reason: "SerpApi calls are switched off on Preview, except for the one project set up for the SerpApi smoke test." };
     }
     if (test.max <= 0) return { allowed: false, reason: "The Preview SerpApi smoke test has no requests allowed." };
-    return {
-      allowed: true,
-      allowanceKey: `preview-serpapi-test:project:${projectId}`,
+    allowances.push({
+      key: allowanceKeys.previewSerp(projectId),
       max: test.max,
       note: "Preview SerpApi smoke test",
-      scope: `Preview smoke test: at most ${test.max} SerpApi requests in total for this project`,
-    };
+      label: `Preview smoke test: at most ${test.max} SerpApi requests in total for this project`,
+      syncMax: false,
+    });
   }
-  const cap = Number(env.AI_AREA_SERPAPI_MONTHLY_CAP ?? 500);
-  return {
-    allowed: true,
-    allowanceKey: `serpapi-month:project:${projectId}:${month(now)}`,
-    max: Number.isFinite(cap) && cap >= 0 ? cap : 500,
-    note: "Monthly SerpApi cap for this project",
-    scope: `Monthly cap: ${Number.isFinite(cap) ? cap : 500} SerpApi requests for this project in ${month(now)}`,
-  };
+  const limits = await effectiveLimits(userId, projectId, env);
+  const project = limits.find((l) => l.scope === "project" && l.metric === "serpapi_requests_month");
+  const account = limits.find((l) => l.scope === "account" && l.metric === "serpapi_requests_month");
+  if (project?.value != null) {
+    allowances.push({
+      key: allowanceKeys.projectSerpMonth(projectId, now),
+      max: project.value,
+      note: "Monthly SerpApi limit for this project",
+      label: `${project.value.toLocaleString("en-US")} SerpApi requests for this project in ${month(now)}`,
+      syncMax: true,
+    });
+  }
+  if (account?.value != null) {
+    allowances.push({
+      key: allowanceKeys.accountSerpMonth(userId, now),
+      max: account.value,
+      note: "Monthly SerpApi limit for all your projects",
+      label: `${account.value.toLocaleString("en-US")} SerpApi requests across all your projects in ${month(now)}`,
+      syncMax: true,
+    });
+  }
+  return { allowed: true, allowances, scope: allowances.map((a) => a.label).join("; ") || "No SerpApi limit set" };
 }
 
-export function llmDecision(userId: number, env: Env = process.env, now = new Date()): Decision {
+/**
+ * The account-wide SerpApi limits only (for the account Usage & Costs view). Actual requests always go through
+ * serpDecision, which adds the project's own limit and, on Preview, the smoke-test allowance.
+ */
+export async function accountSerpDecision(userId: number, env: Env = process.env, now = new Date()): Promise<Decision> {
+  const limits = await effectiveLimits(userId, null, env);
+  const account = limits.find((l) => l.scope === "account" && l.metric === "serpapi_requests_month");
+  const allowances: Allowance[] =
+    account?.value != null
+      ? [
+          {
+            key: allowanceKeys.accountSerpMonth(userId, now),
+            max: account.value,
+            note: "Monthly SerpApi limit for all your projects",
+            label: `${account.value.toLocaleString("en-US")} SerpApi requests across all your projects in ${month(now)}`,
+            syncMax: true,
+          },
+        ]
+      : [];
+  const preview = deploymentOf(env) === "preview" ? " On Preview, SerpApi runs only for the smoke-test project, within its 5-request allowance." : "";
+  return { allowed: true, allowances, scope: (allowances.map((a) => a.label).join("; ") || "No account-wide SerpApi limit set; each project has its own") + preview };
+}
+
+export async function llmDecision(userId: number, projectId: number | null = null, env: Env = process.env, now = new Date()): Promise<Decision> {
   if (deploymentOf(env) === "preview") {
     return { allowed: false, reason: "Paid model calls (OpenAI, Anthropic) are switched off on Preview." };
   }
-  const cap = Number(env.AI_AREA_DAILY_USD_LIMIT ?? 5);
-  const max = Number.isFinite(cap) && cap >= 0 ? cap : 5;
-  return {
-    allowed: true,
-    allowanceKey: `llm-usd:user:${userId}:${day(now)}`,
-    max,
-    note: "Daily AI spending limit",
-    scope: `Daily limit: $${max.toFixed(2)} of estimated model spend for this account (UTC day)`,
-  };
+  const limits = await effectiveLimits(userId, projectId, env);
+  const allowances: Allowance[] = [];
+  const daily = limits.find((l) => l.scope === "account" && l.metric === "model_usd_day");
+  const monthly = limits.find((l) => l.scope === "project" && l.metric === "model_usd_month");
+  if (daily?.value != null) {
+    allowances.push({
+      key: allowanceKeys.accountModelDay(userId, now),
+      max: daily.value,
+      note: "Daily AI spending limit",
+      label: `$${daily.value.toFixed(2)} of estimated model spend per day for this account (UTC)`,
+      syncMax: true,
+    });
+  }
+  if (projectId != null && monthly?.value != null) {
+    allowances.push({
+      key: allowanceKeys.projectModelMonth(projectId, now),
+      max: monthly.value,
+      note: "Monthly AI spending limit for this project",
+      label: `$${monthly.value.toFixed(2)} of estimated model spend for this project in ${month(now)}`,
+      syncMax: true,
+    });
+  }
+  return { allowed: true, allowances, scope: allowances.map((a) => a.label).join("; ") || "No model spending limit set" };
 }
