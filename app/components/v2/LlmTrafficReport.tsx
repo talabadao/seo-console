@@ -36,17 +36,28 @@ export function LlmTrafficReport({ projectId }: { projectId: number }) {
 
   useEffect(() => {
     let live = true;
-    const q = new URLSearchParams({ preset: period.preset, compare: period.compare, metric, granularity, platform });
-    if (nonce) q.set("refresh", "1");
-    fetch(`/api/v2/llm-traffic/${projectId}?${q}`)
-      .then(async (r) => {
-        const body = await r.json();
-        if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
-        if (live) setRes({ key, value: body as Response });
-      })
-      .catch((e) => live && setRes({ key, value: { state: "fetch-error", message: e instanceof Error ? e.message : String(e) } }));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = (refresh: boolean, polls: number) => {
+      const q = new URLSearchParams({ preset: period.preset, compare: period.compare, metric, granularity, platform });
+      if (refresh) q.set("refresh", "1");
+      fetch(`/api/v2/llm-traffic/${projectId}?${q}`)
+        .then(async (r) => {
+          const body = await r.json();
+          if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
+          if (!live) return;
+          // First load still running on the server: keep the loading state and ask again (joins the same job).
+          if (body.state === "pending" && polls < 40) {
+            timer = setTimeout(() => load(false, polls + 1), 3000);
+            return;
+          }
+          setRes({ key, value: body as Response });
+        })
+        .catch((e) => live && setRes({ key, value: { state: "fetch-error", message: e instanceof Error ? e.message : String(e) } }));
+    };
+    load(nonce > 0, 0);
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
   }, [key, projectId, period.preset, period.compare, metric, granularity, platform, nonce]);
 

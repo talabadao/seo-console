@@ -4,7 +4,6 @@ import { summarizeTasks, type RawTask } from "@/lib/v2/summary/tasks";
 import { alertsFor, meetsKpi, needsAttention } from "@/lib/v2/summary/alerts";
 import { demoSummary, isDemoWebsite } from "@/lib/v2/summary/demo";
 import { ALL_PARTS, type ProjectSummary } from "@/lib/v2/summary/types";
-import { cacheGet, cacheSet, cacheClear } from "@/lib/v2/summary/cache";
 
 const NOW = new Date("2026-10-15T09:00:00Z");
 
@@ -128,11 +127,4 @@ describe("alerts", () => {
   });
 });
 
-describe("summary cache", () => {
-  it("expires entries after 15 minutes", () => {
-    cacheClear();
-    cacheSet("k", { a: 1 }, 0);
-    expect(cacheGet("k", 14 * 60_000)).toEqual({ a: 1 });
-    expect(cacheGet("k", 16 * 60_000)).toBeNull();
-  });
-});
+// The per-instance summary cache was replaced by the shared cache; see tests/unit/syncCache.test.ts.

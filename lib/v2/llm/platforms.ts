@@ -10,7 +10,7 @@
 // This measures visits that arrive with an AI referrer. It is not every visit an
 // AI answer influenced: many arrive with no referrer and show as Direct.
 
-import { classifyTraffic } from "@/lib/ga4";
+import { classifyTraffic } from "@/lib/ga4Traffic";
 
 export interface Platform {
   id: string;

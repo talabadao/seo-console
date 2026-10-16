@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { currentUser } from "@/lib/session";
 import { getProject } from "@/lib/projects";
 import { aiDomainsFor } from "@/lib/gaConfig";
 import { cleanGaError } from "@/lib/ga4";
 import { DEFAULT_COMPARE, DEFAULT_PRESET, isCompare, isPreset, resolvePeriod } from "@/lib/v2/summary/period";
 import { isDemoWebsite } from "@/lib/v2/summary/demo";
-import { cacheGet, cacheSet } from "@/lib/v2/summary/cache";
+import { readThrough, setBackgroundRunner, syncReady } from "@/lib/sync/cache";
+import { projectConfigVersion, type LlmQuery } from "@/lib/sync/kinds";
 import { gaContext, gaPreconditions, googleToken } from "@/lib/v2/summary/live";
 import { llmReport, type Granularity, type LlmMetric, type LlmReport } from "@/lib/v2/llm/report";
 import { demoLlmReport } from "@/lib/v2/llm/demo";
@@ -15,7 +16,8 @@ export const maxDuration = 60;
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * LLMs Traffic for one project's GA4 property. Read-only GA4 queries, cached for 15 minutes per user.
+ * LLMs Traffic for one project's GA4 property. Read-only GA4 queries through the shared cache (lib/sync/cache.ts):
+ * saved results are served with their timestamp; a first load answers "pending" until its one job finishes.
  *   ?preset=last28&compare=previous&metric=sessions|users&granularity=day|week|month&platform=all|<id>
  */
 export async function GET(req: NextRequest, ctx: Ctx) {
@@ -42,11 +44,21 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const token = await googleToken(user, "Google Analytics 4");
   if ("error" in token) return NextResponse.json(token.error);
 
-  const key = ["llm", user.id, id, preset, compare, period.current.end, metric, granularity, platform].join("|");
-  if (q.get("refresh") !== "1") {
-    const hit = cacheGet<LlmReport>(key);
-    if (hit) return NextResponse.json({ state: "live", report: hit, cached: true });
+  if (await syncReady()) {
+    setBackgroundRunner((fn) => after(fn));
+    const query: LlmQuery = { projectId: id, period, metric, granularity, platform, config: await projectConfigVersion(user, project) };
+    const r = await readThrough<LlmQuery, LlmReport>({ kind: "llm-traffic", userId: user.id, projectId: id, query, waitMs: 15_000, force: q.get("refresh") === "1" });
+    if (r.payload) {
+      return NextResponse.json({
+        state: "live",
+        report: r.payload,
+        cache: { state: r.state === "stale" ? "stale" : "fresh", fetchedAt: r.fetchedAt ?? null, refreshing: Boolean(r.refreshing), lastError: r.error ?? null, cooldown: r.cooldown },
+      });
+    }
+    if (r.state === "pending") return NextResponse.json({ state: "pending", message: "Fetching from GA4 for the first time…" });
+    return NextResponse.json({ state: "error", source: "Google Analytics 4", message: r.error ?? "The refresh failed." });
   }
+  // Before migration 0008: read GA4 directly, as before.
   try {
     const { timeZone } = await gaContext(user, token.token, project.gaPropertyId!);
     const report = await llmReport({
@@ -59,7 +71,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       granularity,
       platformFilter: platform,
     });
-    cacheSet(key, report);
     return NextResponse.json({ state: "live", report });
   } catch (e) {
     return NextResponse.json({ state: "error", source: "Google Analytics 4", message: cleanGaError(e instanceof Error ? e.message : String(e)).message });

@@ -16,6 +16,7 @@ const STATE: Record<SectionState, { label: string; color: string; title: string 
   "not-connected": { label: "Not connected", color: "var(--bad)", title: "This project is missing the connection this needs" },
   unavailable: { label: "Unavailable", color: "var(--muted)", title: "Connected, but there's nothing to show yet" },
   error: { label: "Error", color: "var(--bad)", title: "The request to the source failed" },
+  pending: { label: "Loading", color: "var(--muted)", title: "Fetching from the source for the first time" },
 };
 
 export function StateBadge({ state, small = false }: { state: SectionState; small?: boolean }) {
@@ -136,12 +137,16 @@ export function Stat({
 export function SourceLine({ meta }: { meta: SectionMeta }) {
   const parts = [`Source: ${meta.source}`];
   if (meta.dataThrough) parts.push(`data through ${meta.dataThrough}`);
-  const t = fmtTime(meta.fetchedAt);
+  const t = fmtTime(meta.cache?.fetchedAt ?? meta.fetchedAt);
   if (t) parts.push(`fetched ${t}`);
+  const c = meta.cache;
   return (
     <p className="mt-3 flex flex-wrap items-center gap-2 border-t pt-2 text-xs text-muted">
       <span>{parts.join(" · ")}</span>
       {meta.state === "demo" && <span className="font-medium text-foreground">Demo data — not a measurement.</span>}
+      {c?.state === "stale" && <span className="font-medium text-foreground">Saved result{c.refreshing ? "; refreshing in the background" : ""}.</span>}
+      {c?.cooldown && <span>Refreshed a few minutes ago, so it wasn&apos;t fetched again.</span>}
+      {c?.lastError && <span title={c.lastError}>Last refresh failed; showing the last successful result.</span>}
     </p>
   );
 }
@@ -176,7 +181,7 @@ export function SectionCard<T>({
         {headerExtra && <div className="ml-auto flex items-center gap-2">{headerExtra}</div>}
       </div>
       <div className="flex min-w-0 flex-1 flex-col p-4">
-        {loading || !section ? (
+        {loading || !section || section.state === "pending" ? (
           <div role="status" className="space-y-3" aria-label={`Loading ${title}`}>
             {[80, 65, 50].map((w) => (
               <div key={w} className="h-4 animate-pulse rounded bg-border/70" style={{ width: `${w}%` }} />

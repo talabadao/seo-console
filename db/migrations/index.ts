@@ -6,6 +6,7 @@ import { migration as projectSerpapiMeta } from "./0004_project_serpapi_meta";
 import { migration as accountCredentials } from "./0005_account_credentials";
 import { migration as budgetLimits } from "./0006_budget_limits";
 import { migration as kpiTargets } from "./0007_kpi_targets";
+import { migration as syncCache } from "./0008_sync_cache";
 
 /** Every migration, in id order. Append new ones; never edit or reorder applied ones. */
-export const MIGRATIONS: readonly Migration[] = [baseline, projectSettings, aiArea, projectSerpapiMeta, accountCredentials, budgetLimits, kpiTargets];
+export const MIGRATIONS: readonly Migration[] = [baseline, projectSettings, aiArea, projectSerpapiMeta, accountCredentials, budgetLimits, kpiTargets, syncCache];
