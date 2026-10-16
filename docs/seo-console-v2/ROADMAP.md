@@ -16,6 +16,11 @@ Each row is one reviewable PR on its own branch, merged to `main` only by the ow
 | ★ L (#10) | `feat/v2-llm-traffic` | Analytics → LLMs Traffic | R | — | Same session-scoped definitions as GA4 |
 | ★ AI1 (#11) | `feat/ai-area-usage` | AI Area: Google Search Tracking (also Organic SERP → Google), Usage & Costs, provider ledger, atomic caps, run locks, Preview SerpApi smoke-test policy; migration 0003 | L | — | PGlite tests: caps under concurrency, retries counted, no refill, locks and leases |
 | ★ AI2 (#12) | `feat/ai-area-brand` | AI Area: Brand Mentions (Dashboard, Customer reviews, Prompts, AI answers, Costs & limits), metered model calls | AI1 | OpenAI / Anthropic keys for Production use | Preview run stops at the cap and keeps partial answers |
+| ★ S1 (#13) | `fix/serpapi-credential-persistence` | SerpApi key saved on its own, with honest status (cause: coupled to other field validation; status conflated with the Maps link) | AI2 | — | Decoupling and status tests |
+| ★ S2 (#14) | `feat/account-credentials` | Encrypted account credentials (SerpApi, OpenAI, Anthropic, DataForSEO), one resolver, legacy key consolidation; migration 0005 | S1 | CREDENTIALS_ENCRYPTION_KEY per environment | Encryption, isolation, persistence, resolver, conflict tests |
+| ★ S3 (#15) | `feat/settings-usage-budgets` | Usage & Costs and Budgets & limits in Settings; account + project limits enforced together; old addresses redirect; migration 0006 | S2 | — | Combined limits, concurrency, redirect tests |
+| ★ K (#16) | `feat/kpi-planning` | Multi-month KPI planning; kpi_targets as the one source (migration 0007, backfilled) | S3 | — | Backfill, transaction, blank-vs-zero, consistency tests |
+| ★ R5 (#17+) | `feat/consistency-review` | App-wide consistency fixes; authenticated review matrix | K | Owner Preview sign-in | Review matrix |
 | 01d | `feat/v2-routes` | `/p/<id>/…` and `/portfolio` addresses with legacy redirect (ROUTE-MAP) | 01b | — | Old bookmarks redirect; Back/Forward; renaming a project keeps links |
 | 02a | `feat/workspace-identity` | Workspaces and members; one workspace per existing user (no merging); shared authorization helper; first real migration, rehearsed in Preview | 01a, P | Preview isolation verified | Rerun backfill = no duplicates; cross-workspace API requests rejected |
 | 02b | `feat/encrypted-connections` | Encrypted connection store, masked reads, test-connection; move SerpApi/Asana/Bing keys | 02a | Owner creates the encryption key variable | No secret in browser payloads; rotation works |
@@ -36,6 +41,6 @@ Each row is one reviewable PR on its own branch, merged to `main` only by the ow
 
 **Merge order:** #2 → #3 → #4, #5, #6, #7 in any order. All four are stacked on #3; once #3 is merged each is retargeted to `main` and re-checked. Known overlaps, already resolved once on the `preview` branch: #4 and #5 both add an import to `lib/session.ts`; #4 and #7 both edit `app/[[...path]]/page.tsx`.
 
-**Integration preview:** branch `preview` merges #3–#12 so they can be tested together at the stable Preview address. It is never merged into `main`; it's rebuilt from `main` plus whatever is still open.
+**Integration preview:** branch `preview` merges #3–#17 so they can be tested together at the stable Preview address. It is never merged into `main`; it's rebuilt from `main` plus whatever is still open.
 
 **Out of scope:** `seo-console-official` (separate product, left unchanged); the AI Brand Mention deployment and its stored data.

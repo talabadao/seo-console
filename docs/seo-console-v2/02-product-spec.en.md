@@ -37,11 +37,11 @@ Suggested route root: `/p/[projectId]/...` for project modules and `/portfolio` 
 | Technical SEO → PageSpeed Insights | Tracked pages, Lab results, Field results, History | Reuse host; separate PSI and CrUX contracts |
 | Technical SEO → Indexing | Inventory, Inspection, Submissions | Reuse host; fix eligibility and quota semantics |
 | Content | Briefs, Editorial board, Editor, Review queue | Demo; external actions disabled with explanations |
-| AI Area | Google Search Tracking (Overview, Rank tracker, Mentions & Citations, AI responses, Settings); Brand Mentions (Dashboard, Customer reviews, Prompts, AI answers, Costs & limits); Usage & Costs | Port of the AI Brand Mention app onto SEO Console data, auth and metering (owner decision 2026-10-15); Searchable dropped |
+| AI Area | Google Search Tracking (Overview, Rank tracker, Mentions & Citations, AI responses, Settings); Brand Mentions (Dashboard, Customer reviews, Prompts, AI answers, Platforms & cost estimate) | Port of the AI Brand Mention app onto SEO Console data, auth and metering (owner decision 2026-10-15); Searchable dropped. Usage, costs and budgets live in Settings |
 | Automation | Workflows, Schedule, Run history | GBP workflow status/bridge only after audit |
 | Report | Weekly Report, Monthly Report | Weekly live; Monthly demo |
 | Docs | Product guide, SOPs, Intern training | Real document catalogue; labelled sample content |
-| Settings | Project, Connections, KPI, Tracking, AI models, Budget, Workspace | Live configuration with scope boundaries |
+| Settings | Project settings (General, Integrations, KPI planning, Analytics / Key events, Tracking, Usage & budgets, Sync and history); Account settings (API credentials, Usage & Costs, Budgets & limits) | Live configuration with scope boundaries (revised 2026-10-16) |
 
 When `All projects` is selected, project-only modules show a project picker rather than selecting a hidden default. Remember safe per-project filters, but never send one project's cached data or credentials into another project. Cancel or ignore stale in-flight responses on scope changes.
 
@@ -194,6 +194,15 @@ flowchart LR
 Minimum foundations: workspaces, memberships, projects, project access/mappings, connections, connection capabilities, sync jobs/attempts, usage/reservations, audit events. Add module-specific tables only when implementing the module: keyword contexts/observations, reviews/analyses, audit runs/issues, saved views, tasks/external links, report snapshots, and content revisions/approvals.
 
 Every project-owned row has workspace/project scope; external identifiers include provider and connection scope. Enforce uniqueness at the database layer for idempotency. Keep provider business dates separate from UTC ingestion timestamps. Composite indexes follow real queries by project/source/date. Store large response bodies/images in private object storage with authorized access; store queryable metadata in Postgres. Avoid object-storage read-modify-write as the concurrency mechanism for task status or budgets.
+
+Settings (revised 2026-10-16, implemented in #13–#17):
+
+- **Account settings** belong to the signed-in account (internal user id), with or without a project open.
+  - *API credentials*: SerpApi, OpenAI API, Anthropic API and DataForSEO (API login + API password), shared by all of the account's projects; other accounts keep their own. Stored with AES-256-GCM under CREDENTIALS_ENCRYPTION_KEY (not the session secret), bound to account and provider, with a key id per row for rotation. Storage status (Saved: masked hint, last updated) is separate from connection status (Verified / Check failed / Untested), which comes only from non-billable checks. Saving never runs anything billable. Asana and Bing account connections are listed here too.
+  - *One credential resolver* for every consumer: legacy project key (until resolved) → account credential → a server key only for accounts listed in LEGACY_SERVER_CREDENTIAL_ACCOUNTS. Identical legacy project keys are consolidated into the account credential; different ones are never chosen between automatically.
+  - *Usage & Costs*: one report, account-wide with a project filter and per-project attribution; provider-reported balances, app-recorded consumption and estimated cost kept apart.
+  - *Budgets & limits*: account-wide SerpApi requests/month and model spend/day; per-project SerpApi requests/month and model spend/month. Unset values use the server defaults. Every applicable limit is enforced together on each request (atomic take with refund), including Maps reviews.
+- **Project settings → KPI planning**: monthly targets per project, metric and period (YYYY-MM) in a spreadsheet-style grid for any range of months (presets: next 6 / 12 months, calendar years). Paste from Excel / Google Sheets, copy a month, fill, compound growth, with a preview before replacing values; blank (no target) and 0 are distinct; Save all is one transaction with conflict detection. The dashboard, All projects and the Weekly report read these targets; the current month follows the project's GA4 time zone.
 
 Credentials: server-only encrypted storage with key versioning and redaction; safe rotation; scope selection; test-connection action; show only masked metadata. OAuth connection ownership is separate from the person using the app. Preserve reauthorization/revocation behavior. Company email allowlisting is validated server-side from verified identity. All mutations and cron/webhook endpoints require the appropriate authorization and CSRF/signature/replay defenses.
 
