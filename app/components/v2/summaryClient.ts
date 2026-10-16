@@ -1,8 +1,9 @@
 "use client";
 
 // Browser side of the project summaries: a small request queue (at most
-// MAX_CONCURRENT at once, so a portfolio page never fires dozens of provider
-// requests together) and a 10-minute sessionStorage cache per period.
+// MAX_CONCURRENT at once) and a short sessionStorage cache per period. The server keeps the shared, persistent
+// cache (lib/sync/cache.ts); this tab cache only avoids re-asking while you move between pages. A summary with a
+// part still loading for the first time ("pending") isn't cached here, and the page polls until it's ready.
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ProjectSummary, SummaryPart } from "@/lib/v2/summary/types";
@@ -72,12 +73,20 @@ export async function fetchSummary(r: SummaryRequest, refresh = false): Promise<
     const res = await fetch(urlFor(r, refresh));
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
-    writeCache(key, body as ProjectSummary);
+    if (!hasPending(body as ProjectSummary, r.parts)) writeCache(key, body as ProjectSummary);
     return body as ProjectSummary;
   }).finally(() => inflight.delete(key));
   inflight.set(key, p);
   return p;
 }
+
+/** True while any requested part is still loading for the first time on the server. */
+export function hasPending(s: ProjectSummary, parts: SummaryPart[]): boolean {
+  return parts.some((p) => (s as unknown as Record<string, { state?: string } | undefined>)[p]?.state === "pending");
+}
+
+const POLL_MS = 3000;
+const MAX_POLLS = 40;
 
 export type Loaded = { status: "loading" } | { status: "ready"; summary: ProjectSummary } | { status: "error"; message: string };
 
@@ -88,11 +97,20 @@ export function useSummary(r: SummaryRequest | null, nonce = 0): Loaded {
   useEffect(() => {
     if (!r) return;
     let live = true;
-    fetchSummary(r, nonce > 0)
-      .then((summary) => live && setResult({ key, value: { status: "ready", summary } }))
-      .catch((e) => live && setResult({ key, value: { status: "error", message: e instanceof Error ? e.message : String(e) } }));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = (refresh: boolean, polls: number) =>
+      fetchSummary(r, refresh)
+        .then((summary) => {
+          if (!live) return;
+          setResult({ key, value: { status: "ready", summary } });
+          // A part still fetching for the first time: ask again shortly (the server joins the same job).
+          if (hasPending(summary, r.parts) && polls < MAX_POLLS) timer = setTimeout(() => void load(false, polls + 1), POLL_MS);
+        })
+        .catch((e) => live && setResult({ key, value: { status: "error", message: e instanceof Error ? e.message : String(e) } }));
+    void load(nonce > 0, 0);
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);

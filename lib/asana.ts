@@ -1,14 +1,23 @@
+import { providerFetch } from "@/lib/sync/providerHttp";
+import { keyFingerprint } from "@/lib/providers/ledger";
 import { addDays, endOfWeek, startOfWeek, subDays } from "date-fns";
 
 const API = "https://app.asana.com/api/1.0";
 
 async function afetch<T = unknown>(token: string, path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
+  // Asana limits each token (150 requests/minute on free plans); writes are never retried after a timeout.
+  const res = await providerFetch({
+    provider: "asana",
+    bucket: `asana:token:${keyFingerprint(token)}`,
+    limit: { max: 2, windowMs: 1000 },
+    url: `${API}${path}`,
+    init: {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
     },
   });
   const body = await res.text();

@@ -8,9 +8,23 @@
 //   unavailable    connected, but nothing to show (no targets set, missing
 //                  permission, nothing tracked) — not the same as zero
 //   error          the provider request failed; no numbers are substituted
+//   pending        first load: a refresh job is running; the page polls until it finishes
 // Missing values are null, never 0.
 
-export type SectionState = "live" | "demo" | "not-connected" | "unavailable" | "error";
+export type SectionState = "live" | "demo" | "not-connected" | "unavailable" | "error" | "pending";
+
+/** Where a section came from in the shared cache (lib/sync/cache.ts). */
+export interface SectionCacheInfo {
+  /** fresh: within its refresh interval; stale: older, shown while one refresh runs; pending: first load. */
+  state: "fresh" | "stale" | "pending";
+  /** When the provider data was fetched (ms). */
+  fetchedAt: number | null;
+  refreshing: boolean;
+  /** The last refresh failed with this message; the result shown is the last successful one. */
+  lastError?: string | null;
+  /** A manual refresh was skipped because the data was refreshed a few minutes ago. */
+  cooldown?: boolean;
+}
 
 export interface SectionMeta {
   state: SectionState;
@@ -24,6 +38,7 @@ export interface SectionMeta {
   stale?: boolean;
   /** When the numbers were fetched from the provider (ms since epoch). */
   fetchedAt?: number;
+  cache?: SectionCacheInfo;
 }
 
 export type Section<T> = SectionMeta & { data?: T };

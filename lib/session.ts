@@ -52,3 +52,13 @@ export async function currentUser(): Promise<UserRow | null> {
   if (!row || !isAllowedEmail(row.email)) return null;
   return row;
 }
+
+/**
+ * The account for a background job (no request, no cookie): the same row and the same allowlist rule as
+ * currentUser, so a job never runs for an account that can no longer sign in.
+ */
+export async function userById(id: number): Promise<UserRow | null> {
+  const row = (await db.prepare("SELECT * FROM users WHERE id = ?").get(id)) as UserRow | undefined;
+  if (!row || !isAllowedEmail(row.email)) return null;
+  return row;
+}

@@ -5,9 +5,12 @@
  * "not configured".
  */
 
+import { ProviderBusyError, providerFetch } from "@/lib/sync/providerHttp";
+import { keyFingerprint } from "@/lib/providers/ledger";
+
 const BASE_URL = "https://api.seranking.com/v1/";
-/** SE Ranking allows 5 requests per second; requests start at least this far apart. */
-const MIN_GAP_MS = 220;
+/** SE Ranking allows 5 requests per second per API key; the window is shared by every server instance. */
+const RATE = { max: 5, windowMs: 1000 };
 const TIMEOUT_MS = 30_000;
 
 export function seRankingKey(): string | null {
@@ -26,19 +29,6 @@ export class SeRankingError extends Error {
 
 type ParamValue = string | number | undefined | null | Array<string | number>;
 
-let queue: Promise<void> = Promise.resolve();
-let lastStart = 0;
-
-/** Spaces request starts out to stay under the rate limit, across concurrent callers in this instance. */
-function rateSlot(): Promise<void> {
-  const turn = queue.then(async () => {
-    const wait = lastStart + MIN_GAP_MS - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    lastStart = Date.now();
-  });
-  queue = turn.catch(() => {});
-  return turn;
-}
 
 function buildQuery(params: Record<string, ParamValue>): string {
   const q = new URLSearchParams();
@@ -56,40 +46,32 @@ export async function seGet<T = unknown>(path: string, params: Record<string, Pa
   const key = seRankingKey();
   if (!key) throw new SeRankingError(401, "SE Ranking API key is not configured");
   const url = `${BASE_URL}${path}${buildQuery(params)}`;
-  let lastError: SeRankingError | null = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    await rateSlot();
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        headers: { Authorization: `Token ${key}`, Accept: "application/json" },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-        cache: "no-store",
-      });
-    } catch (err) {
-      lastError = new SeRankingError(0, err instanceof Error && err.name === "TimeoutError" ? "SE Ranking did not respond in time" : "Could not reach SE Ranking");
-      await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
-      continue;
-    }
-    const text = await res.text();
-    let body: unknown = null;
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = null;
-    }
-    if (res.ok) return body as T;
-    const message =
-      (body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string" && (body as { message: string }).message) ||
-      `HTTP ${res.status}`;
-    lastError = new SeRankingError(res.status, `SE Ranking ${path}: ${message}`.slice(0, 300));
-    if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
-      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
-      continue;
-    }
-    throw lastError;
+  let res: Response;
+  try {
+    res = await providerFetch({
+      provider: "seranking",
+      bucket: `seranking:key:${keyFingerprint(key)}`,
+      limit: RATE,
+      url,
+      timeoutMs: TIMEOUT_MS,
+      init: { headers: { Authorization: `Token ${key}`, Accept: "application/json" } },
+    });
+  } catch (err) {
+    if (err instanceof ProviderBusyError) throw err;
+    throw new SeRankingError(0, err instanceof Error && err.name === "TimeoutError" ? "SE Ranking did not respond in time" : "Could not reach SE Ranking");
   }
-  throw lastError ?? new SeRankingError(0, "SE Ranking request failed");
+  const text = await res.text();
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  if (res.ok) return body as T;
+  const message =
+    (body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string" && (body as { message: string }).message) ||
+    `HTTP ${res.status}`;
+  throw new SeRankingError(res.status, `SE Ranking ${path}: ${message}`.slice(0, 300));
 }
 
 /** List responses come as a bare array, or wrapped in `data` / `items`. */
