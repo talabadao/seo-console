@@ -128,7 +128,7 @@ export function Shell({
     // The server render doesn't see the query string; account pages read their ?project filter here.
     const actual = parseShellPath(segmentsOf(window.location.pathname), window.location.search);
     const current = actual?.kind === "account" ? actual : loc;
-    if (current !== loc) setLoc(current);
+    if (current !== loc) void Promise.resolve().then(() => setLoc(current));
     const want = buildShellPath(current);
     const have = window.location.pathname + (current.kind === "account" ? window.location.search : "");
     if (have !== want) window.history.replaceState(null, "", current.kind === "account" ? want : want + window.location.search);
@@ -744,7 +744,6 @@ function Page(props: PageProps) {
 function ProjectPage({
   loc,
   project,
-  projects,
   item,
   connected,
   sites,
@@ -756,7 +755,6 @@ function ProjectPage({
   onNeedsReconnect,
   onNotice,
   onRetryProjects,
-  bingConnected,
 }: PageProps & { project: Project; item: NavItem; connected: boolean }) {
   if (loc.kind !== "project") return null;
   const subNav = (sub: string) => onNavigate({ ...loc, sub });

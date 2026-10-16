@@ -137,7 +137,7 @@ export function AccountMenu({
             type="button"
             onClick={async () => {
               await fetch("/api/auth/logout", { method: "POST" });
-              window.location.assign("/");
+              window.location.reload();
             }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent-soft focus:bg-accent-soft focus:outline-none"
           >

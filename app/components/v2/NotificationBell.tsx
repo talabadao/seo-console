@@ -5,8 +5,7 @@
 // item, project filter, severity, the source time and a link to the underlying report or item. Polls local
 // records once a minute while the page is visible.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ShellLocation } from "@/lib/v2/nav";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 
 export interface NotificationItem {
@@ -36,24 +35,29 @@ export function NotificationBell({ projectId, onNavigate }: { projectId: number 
   const panel = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
 
-  const load = useCallback(async () => {
-    const scope = filter === "project" && projectId ? String(projectId) : "all";
-    try {
-      const res = await fetch(`/api/notifications?project=${scope}&limit=40`, { cache: "no-store" });
-      if (res.status === 404 || res.status === 503) return setState("unavailable");
-      if (!res.ok) return setState("error");
-      setData(await res.json());
-      setState("ok");
-    } catch {
-      setState("error");
-    }
-  }, [filter, projectId]);
+  const [nonce, setNonce] = useState(0);
+  const scope = filter === "project" && projectId ? String(projectId) : "all";
 
+  // Local records only; refreshed every minute while visible, and after marking read/unread.
   useEffect(() => {
-    void load();
-    const t = setInterval(() => document.visibilityState === "visible" && void load(), 60_000);
-    return () => clearInterval(t);
-  }, [load]);
+    let live = true;
+    const tick = () =>
+      fetch(`/api/notifications?project=${scope}&limit=40`, { cache: "no-store" })
+        .then(async (res) => {
+          if (!live) return;
+          if (res.status === 404 || res.status === 503) return setState("unavailable");
+          if (!res.ok) return setState("error");
+          setData(await res.json());
+          setState("ok");
+        })
+        .catch(() => live && setState("error"));
+    void tick();
+    const t = setInterval(() => document.visibilityState === "visible" && void tick(), 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [scope, nonce]);
 
   useEffect(() => {
     if (!open) return;
@@ -76,7 +80,7 @@ export function NotificationBell({ projectId, onNavigate }: { projectId: number 
 
   async function mark(body: Record<string, unknown>) {
     await fetch("/api/notifications/read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    await load();
+    setNonce((n) => n + 1);
   }
 
   const unread = data?.unread ?? 0;
