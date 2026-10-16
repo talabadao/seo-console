@@ -315,7 +315,7 @@ export function SettingsPanel({
           <p className="mt-1 text-xs text-muted">
             Asana → My Settings → Apps → Developer apps → Personal access tokens. Used by the
             Weekly Report&apos;s Insights tab to pull tasks and post status updates to the
-            project set in the Weekly report's Report settings.
+            project set in the Weekly report&apos;s Report settings.
           </p>
           <div className="mt-2 flex gap-2">
             <input
