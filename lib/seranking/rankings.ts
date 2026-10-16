@@ -12,42 +12,22 @@
 //   left out (not counted as 100). The mean over ranked keywords only is kept as rankedAvgPosition.
 // - Comparison = the latest check on or before (latest check − comparison days), same engine, same keywords.
 
-import { SeRankingError, asList, num, seGet, seRankingKey, str } from "./client";
-import { positionOnOrBefore, rankCounts, type RankCounts } from "./metrics";
 
-export { UNRANKED_AS, positionOnOrBefore, rankCounts, rankOf, type RankCounts } from "./metrics";
+import { asList, num, seGet, seRankingKey, str } from "./client";
+import { rankingsFromView, reportRange, viewReport, type RankingsData, type SeSite } from "./metrics";
+import { fetchRawReport } from "./report";
 
-export interface RankingContext {
-  siteId: number;
-  siteTitle: string;
-  siteUrl: string;
-  engine: string;
-  region: string | null;
-  language: string | null;
-  /** Only when the API reports it. */
-  device: string | null;
-  keywordGroup: string;
-  trackedKeywords: number;
-  otherEngines: number;
-  latestDate: string;
-  comparisonDate: string | null;
-}
-
-export interface RankingsData {
-  context: RankingContext;
-  current: RankCounts;
-  previous: RankCounts | null;
-}
-
-export interface SeSite {
-  id: number;
-  title: string;
-  url: string;
-  keywordCount: number;
-}
-
-const DAY_MS = 86_400_000;
-const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+export {
+  UNRANKED_AS,
+  positionOnOrBefore,
+  rankCounts,
+  rankOf,
+  rankingsFromView,
+  type RankCounts,
+  type RankingContext,
+  type RankingsData,
+  type SeSite,
+} from "./metrics";
 
 function hostOf(url: string): string {
   try {
@@ -89,62 +69,11 @@ export function seRankingConfigured(): boolean {
   return Boolean(seRankingKey());
 }
 
-/** Rankings for one site over the last `compareDays` (plus a margin to find the comparison check). */
+/**
+ * Rankings for one site over the last `compareDays`: the default view of the SE Ranking report (main engine, all
+ * keyword groups), so the dashboard card and Rank tracking → SE Ranking always agree.
+ */
 export async function rankingsFor(site: SeSite, compareDays: number, now = new Date()): Promise<RankingsData> {
-  const to = isoDay(now.getTime());
-  const from = isoDay(now.getTime() - (compareDays + 7) * DAY_MS);
-  const [enginesRaw, positionsRaw, historyRaw] = await Promise.all([
-    seGet("project-management/sites/search-engines", { site_id: site.id }),
-    seGet("project-management/sites/positions", { site_id: site.id, date_from: from, date_to: to }),
-    // Only used for engine names: the engines endpoint returns catalogue IDs.
-    seGet("project-management/sites/positions/history", { site_id: site.id, type: "avg_pos", date_from: isoDay(now.getTime() - 3 * DAY_MS), date_to: to }).catch(() => []),
-  ]);
-  const engines = asList(enginesRaw)
-    .map((r) => ({
-      id: num(r.site_engine_id) ?? 0,
-      searchEngineId: num(r.search_engine_id) ?? 0,
-      region: str(r.region_name),
-      language: str(r.lang_code),
-      device: str(r.device) ?? (r.is_mobile === true || r.is_mobile === 1 ? "mobile" : null),
-      keywordCount: num(r.keyword_count) ?? 0,
-    }))
-    .filter((e) => e.id > 0)
-    .sort((a, b) => b.keywordCount - a.keywordCount);
-  const main = engines[0];
-  if (!main) throw new SeRankingError(404, "This SE Ranking project has no search engines configured.");
-  const names = asList(historyRaw);
-  const engineName =
-    // The history series carries the site-engine id in its "search_engine_id" field.
-    str(names.find((s) => str(s.type) === "search_engine" && (num(s.search_engine_id) === main.id || num(s.site_engine_id) === main.id))?.name) ??
-    `Search engine ${main.searchEngineId}`;
-
-  const block = asList(positionsRaw).find((e) => num(e.site_engine_id) === main.id);
-  const keywords = asList(block?.keywords).map((k) =>
-    asList(k.positions)
-      .map((p) => ({ date: str(p.date) ?? "", pos: num(p.pos) ?? 0 }))
-      .filter((p) => p.date),
-  );
-  const latestDate = keywords.flatMap((k) => k.map((p) => p.date)).sort().at(-1);
-  if (!latestDate) throw new SeRankingError(404, "SE Ranking has no checks for this project in the selected period.");
-  const comparisonTarget = isoDay(Date.parse(`${latestDate}T00:00:00Z`) - compareDays * DAY_MS);
-  const comparisonDate = keywords.flatMap((k) => k.map((p) => p.date)).filter((d) => d <= comparisonTarget).sort().at(-1) ?? null;
-
-  return {
-    context: {
-      siteId: site.id,
-      siteTitle: site.title,
-      siteUrl: site.url,
-      engine: engineName,
-      region: main.region,
-      language: main.language,
-      device: main.device,
-      keywordGroup: "All tracked keywords",
-      trackedKeywords: keywords.length,
-      otherEngines: engines.length - 1,
-      latestDate,
-      comparisonDate,
-    },
-    current: rankCounts(keywords.map((k) => positionOnOrBefore(k, latestDate))),
-    previous: comparisonDate ? rankCounts(keywords.map((k) => positionOnOrBefore(k, comparisonDate))) : null,
-  };
+  const { from, to } = reportRange(compareDays, now);
+  return rankingsFromView(viewReport(await fetchRawReport(site, from, to, { groups: false }), { compareDays }));
 }
