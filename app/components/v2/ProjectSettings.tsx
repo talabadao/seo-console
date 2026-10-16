@@ -208,7 +208,7 @@ function Integrations({
         </ul>
         <p className="mt-3 text-xs text-muted">
           API keys, the Asana token and the Bing key belong to your account, not the project.{" "}
-          <button className="text-accent hover:underline" onClick={() => onNavigate({ kind: "project", projectId: project.id, group: "settings", item: "account", sub: "" })}>
+          <button className="text-accent hover:underline" onClick={() => onNavigate({ kind: "account", section: "", projectId: project.id })}>
             Account settings
           </button>
         </p>
@@ -257,7 +257,7 @@ function SerpApiKeyCard({
 }) {
   const [busy, setBusy] = useState<null | "check" | "clear">(null);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const accountHref: ShellLocation = { kind: "project", projectId: project.id, group: "settings", item: "account", sub: "" };
+  const accountHref: ShellLocation = { kind: "account", section: "", projectId: project.id };
   const updated = project.serpKeyUpdatedAt
     ? ` · updated ${new Date(project.serpKeyUpdatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
     : "";
@@ -394,7 +394,7 @@ function SeRankingCard({ project }: { project: Project }) {
  * this project's limits are editable here; account-wide limits are shown and edited in Account settings.
  */
 function Budgets({ project, onNavigate }: { project: Project; onNavigate: (l: ShellLocation) => void }) {
-  const account = (sub: string): ShellLocation => ({ kind: "project", projectId: project.id, group: "settings", item: "account", sub });
+  const account = (section: string): ShellLocation => ({ kind: "account", section, projectId: project.id });
   const usage = useUsage(project.id, 30);
   const r = usage?.report;
   return (

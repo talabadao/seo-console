@@ -43,6 +43,8 @@ import { ProjectDashboard } from "./ProjectDashboard";
 import { PortfolioDashboard } from "./PortfolioDashboard";
 import { ProjectSettings } from "./ProjectSettings";
 import { AccountSettings } from "./AccountSettings";
+import { AccountMenu, ACCOUNT_SECTION_LABEL } from "./AccountMenu";
+import { NotificationBell } from "./NotificationBell";
 import { LlmTrafficReport } from "./LlmTrafficReport";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
@@ -94,13 +96,14 @@ export function Shell({
 
   const navigate = useCallback((next: ShellLocation | string, replace = false) => {
     const href = typeof next === "string" ? next : buildShellPath(next);
-    const parsed = parseShellPath(segmentsOf(href.split("?")[0]));
+    const [path, query] = href.split("?");
+    const parsed = parseShellPath(segmentsOf(path), query ? `?${query}` : "");
     if (!parsed) {
       window.location.assign(href); // a classic-dashboard address
       return;
     }
     // Always record the canonical address (old addresses, e.g. /p/4/ai-area/usage, resolve to their new page).
-    const canonical = buildShellPath(parsed) + (href.includes("?") ? href.slice(href.indexOf("?")) : "");
+    const canonical = parsed.kind === "account" ? buildShellPath(parsed) : buildShellPath(parsed) + (query ? `?${query}` : "");
     if (window.location.pathname + window.location.search !== canonical) {
       if (replace) window.history.replaceState(null, "", canonical);
       else window.history.pushState(null, "", canonical);
@@ -112,7 +115,7 @@ export function Shell({
 
   // Back / Forward.
   useEffect(() => {
-    const onPop = () => setLoc(parseShellPath(segmentsOf(window.location.pathname)) ?? { kind: "portfolio" });
+    const onPop = () => setLoc(parseShellPath(segmentsOf(window.location.pathname), window.location.search) ?? { kind: "portfolio" });
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -122,8 +125,13 @@ export function Shell({
   useEffect(() => {
     if (normalised.current) return;
     normalised.current = true;
-    const want = buildShellPath(loc);
-    if (window.location.pathname !== want) window.history.replaceState(null, "", want + window.location.search);
+    // The server render doesn't see the query string; account pages read their ?project filter here.
+    const actual = parseShellPath(segmentsOf(window.location.pathname), window.location.search);
+    const current = actual?.kind === "account" ? actual : loc;
+    if (current !== loc) setLoc(current);
+    const want = buildShellPath(current);
+    const have = window.location.pathname + (current.kind === "account" ? window.location.search : "");
+    if (have !== want) window.history.replaceState(null, "", current.kind === "account" ? want : want + window.location.search);
   }, [loc]);
 
   const loadSites = useCallback(async () => {
@@ -152,7 +160,8 @@ export function Shell({
     })();
   }, [loadSites, loadProjects]);
 
-  const project = loc.kind === "project" ? (projects.find((p) => p.id === loc.projectId) ?? null) : null;
+  const contextId = loc.kind === "project" ? loc.projectId : loc.kind === "account" ? loc.projectId : null;
+  const project = contextId != null ? (projects.find((p) => p.id === contextId) ?? null) : null;
 
   useEffect(() => {
     if (!project) return;
@@ -169,6 +178,7 @@ export function Shell({
     <Sidebar
       loc={loc}
       project={project}
+      user={user}
       collapsed={!mobile && collapsed}
       onNavigate={navigate}
       onToggleCollapsed={mobile ? () => setDrawer(false) : toggleCollapsed}
@@ -216,22 +226,20 @@ export function Shell({
           <a href="/" className="hidden text-muted hover:text-foreground sm:inline" title="The current console, unchanged">
             Classic view
           </a>
-          {user.picture ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={user.picture} alt="" className="h-7 w-7 rounded-full" />
-          ) : null}
-          <span className="hidden max-w-48 truncate text-muted md:inline" title={user.email}>
-            {user.email}
-          </span>
-          <button
-            onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.reload();
+          <a
+            href="/docs"
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey) return;
+              e.preventDefault();
+              navigate({ kind: "docs" });
             }}
-            className="text-muted hover:text-foreground"
+            aria-current={loc.kind === "docs" ? "page" : undefined}
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-accent-soft ${loc.kind === "docs" ? "text-accent" : "text-muted hover:text-foreground"}`}
           >
-            Sign out
-          </button>
+            <Icon name="book" className="h-4 w-4" />
+            <span className="hidden sm:inline">Docs</span>
+          </a>
+          <NotificationBell projectId={project?.id ?? null} onNavigate={navigate} />
         </div>
       </header>
 
@@ -273,6 +281,7 @@ export function Shell({
             onNotice={setNotice}
             onRetryProjects={loadProjects}
             bingConnected={bingConnected}
+            userEmail={user.email}
           />
         </main>
       </div>
@@ -313,6 +322,7 @@ function itemHref(loc: ShellLocation, project: Project | null, group: string, it
 function Sidebar({
   loc,
   project,
+  user,
   collapsed,
   mobile,
   onNavigate,
@@ -320,6 +330,7 @@ function Sidebar({
 }: {
   loc: ShellLocation;
   project: Project | null;
+  user: { email: string; name: string | null; picture: string | null };
   collapsed: boolean;
   mobile: boolean;
   onNavigate: (l: ShellLocation) => void;
@@ -420,17 +431,7 @@ function Sidebar({
         })}
       </div>
       <div className="border-t p-2">
-        {link({ kind: "docs" }, "Docs", loc.kind === "docs", (
-          <>
-            <Icon name="book" />
-            {!collapsed && (
-              <>
-                <span className="flex-1">Docs</span>
-                <span className="shrink-0 rounded border border-dashed px-1 text-[10px] uppercase tracking-wide text-muted">Soon</span>
-              </>
-            )}
-          </>
-        ))}
+        <AccountMenu user={user} collapsed={collapsed} projectId={project?.id ?? null} loc={loc} onNavigate={onNavigate} />
       </div>
     </nav>
   );
@@ -568,6 +569,7 @@ function ProjectSwitcher({
 
 interface PageProps {
   bingConnected: boolean;
+  userEmail: string;
   loc: ShellLocation;
   project: Project | null;
   projects: Project[];
@@ -617,28 +619,31 @@ function Page(props: PageProps) {
     );
   }
 
+  if (loc.kind === "account") {
+    const label = ACCOUNT_SECTION_LABEL[loc.section] ?? "API credentials";
+    return (
+      <>
+        <PageHeader
+          crumbs={[{ label: "All projects", href: "/portfolio" }, { label: "Account" }, { label }]}
+          title="Account settings"
+          description={`Signed in as ${props.userEmail}. These settings belong to this account, not to a project.`}
+          onNavigate={nav}
+        />
+        <AccountSettings
+          sub={loc.section}
+          projectId={loc.projectId}
+          projects={projects}
+          onSub={(section) => onNavigate({ kind: "account", section, projectId: loc.projectId })}
+          onProjectsChanged={props.onRetryProjects}
+          bingConnected={props.bingConnected}
+          onOpenConnections={props.onOpenSettings}
+        />
+      </>
+    );
+  }
+
   if (loc.kind === "pick") {
     const found = findItem(loc.group, loc.item)!;
-    if (found.item.scope === "account") {
-      return (
-        <>
-          <PageHeader
-            crumbs={[{ label: "All projects", href: "/portfolio" }, { label: found.group.label }, { label: found.item.label }]}
-            title={found.item.label}
-            onNavigate={nav}
-          />
-          <AccountSettings
-            sub={loc.sub ?? ""}
-            projectId={null}
-            projects={projects}
-            onSub={(sub) => onNavigate({ kind: "pick", group: loc.group, item: loc.item, ...(sub ? { sub } : {}) })}
-            onProjectsChanged={props.onRetryProjects}
-            bingConnected={props.bingConnected}
-            onOpenConnections={props.onOpenSettings}
-          />
-        </>
-      );
-    }
     return (
       <>
         <PageHeader
@@ -803,7 +808,7 @@ function ProjectPage({
     case "organic-serp/google":
       return (
         <div className="ai-area">
-          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "settings", item: "account", sub: "usage" })} />
+          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })} />
           {loc.group === "organic-serp" && (
             <p className="mb-3 text-xs text-muted">Same keywords, data and runs as AI Area → Google Search Tracking; nothing is tracked or charged twice.</p>
           )}
@@ -813,14 +818,14 @@ function ProjectPage({
     case "ai-area/brand-mentions":
       return (
         <div className="ai-area">
-          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ ...loc, group: "settings", item: "account", sub: "usage" })} />
+          <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })} />
           <BrandMentionsView
             projectId={project.id}
             sub={loc.sub}
             onSub={subNav}
             onOpenTrackingSettings={() => onNavigate({ ...loc, group: "ai-area", item: "google-search-tracking", sub: "settings" })}
             onOpenReviews={() => onNavigate({ ...loc, group: "local-seo", item: "reviews", sub: "" })}
-            onOpenBudgets={() => onNavigate({ ...loc, group: "settings", item: "account", sub: "budgets" })}
+            onOpenBudgets={() => onNavigate({ kind: "account", section: "budgets", projectId: project.id })}
           />
         </div>
       );
@@ -844,18 +849,6 @@ function ProjectPage({
       return <PageSpeed projectId={project.id} websiteUrl={project.websiteUrl} />;
     case "technical-seo/indexing":
       return gscReconnect || <Indexing property={property} neverSynced={!site?.lastSync?.finished_at} />;
-    case "settings/account":
-      return (
-        <AccountSettings
-          sub={loc.sub}
-          projectId={project.id}
-          projects={projects}
-          onSub={subNav}
-          onProjectsChanged={onRetryProjects}
-          bingConnected={bingConnected}
-          onOpenConnections={onOpenSettings}
-        />
-      );
     case "settings/project":
       return (
         <ProjectSettings

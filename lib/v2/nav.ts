@@ -3,8 +3,9 @@
 //
 // Addresses:
 //   /portfolio                       All projects (only the signed-in account's)
-//   /portfolio/<group>/<item>[/<sub>] A project-only page opened from All projects: pick a project first.
-//                                    Account-scoped pages (Settings → Account) render here directly, no project.
+//   /portfolio/<group>/<item>[/<sub>] A project-only page opened from All projects: pick a project first
+//   /account[/<section>][?project=<id>]  Account settings (API credentials, Usage & Costs, Budgets & limits,
+//                                    Sync & cache). Works without a project; ?project only pre-selects a filter.
 //   /p/<projectId>/<group>/<item>[/<sub>]
 //   /docs
 // The project is identified by its id, never by its (editable) name.
@@ -217,10 +218,8 @@ export const NAV: NavGroup[] = [
     id: "settings",
     label: "Settings",
     icon: "gear",
-    items: [
-      { id: "project", label: "Project settings", status: "live" },
-      { id: "account", label: "Account settings", status: "live", scope: "account" },
-    ],
+    // Project-specific configuration only. Account settings open from the account menu (bottom-left).
+    items: [{ id: "project", label: "Project settings", status: "live" }],
   },
 ];
 
@@ -231,7 +230,16 @@ export type ShellLocation =
   | { kind: "portfolio" }
   | { kind: "pick"; group: string; item: string; sub?: string }
   | { kind: "project"; projectId: number; group: string; item: string; sub: string }
-  | { kind: "docs" };
+  | { kind: "docs" }
+  | { kind: "account"; section: string; projectId: number | null };
+
+/** Account settings sections, in menu order ("" = API credentials). */
+export const ACCOUNT_SECTIONS = ["", "usage", "budgets", "sync"] as const;
+const accountSection = (s: string | undefined) => (s && (ACCOUNT_SECTIONS as readonly string[]).includes(s) ? s : "");
+const projectParam = (search: string | undefined) => {
+  const id = Number(new URLSearchParams(search ?? "").get("project"));
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+};
 
 export function findItem(group: string, item: string): { group: NavGroup; item: NavItem } | null {
   const g = NAV.find((x) => x.id === group);
@@ -243,30 +251,34 @@ export function findItem(group: string, item: string): { group: NavGroup; item: 
  * Pages that moved: old group/item → new group/item/sub. Old bookmarks keep working, with the same project
  * (and, from All projects, no project) — never a hard-coded one.
  */
-export const LEGACY_ITEMS: Record<string, { group: string; item: string; sub: string }> = {
-  "ai-area/usage": { group: "settings", item: "account", sub: "usage" },
+export const LEGACY_ITEMS: Record<string, { section: string }> = {
+  "ai-area/usage": { section: "usage" },
+  "settings/account": { section: "" },
 };
 
 /** True for paths the v2 shell owns; everything else stays with the legacy dashboard. */
 export function isShellPath(segments: string[]): boolean {
-  return segments[0] === "portfolio" || segments[0] === "p" || segments[0] === "docs";
+  return segments[0] === "portfolio" || segments[0] === "p" || segments[0] === "docs" || segments[0] === "account";
 }
 
 /** Reads a shell address. Unknown pages fall back to the project overview; unknown roots give null. */
-export function parseShellPath(segments: string[]): ShellLocation | null {
+export function parseShellPath(segments: string[], search?: string): ShellLocation | null {
   const [root, a, b, c, d] = segments;
   if (root === "docs") return { kind: "docs" };
+  if (root === "account") return { kind: "account", section: accountSection(a), projectId: projectParam(search) };
   if (root === "portfolio") {
+    // Older account / usage addresses: Account settings without a project.
     const moved = a && b ? LEGACY_ITEMS[`${a}/${b}`] : undefined;
-    if (moved) return { kind: "pick", group: moved.group, item: moved.item, sub: moved.sub };
+    if (moved) return { kind: "account", section: accountSection(c) || moved.section, projectId: null };
     if (a && b && findItem(a, b)) return c ? { kind: "pick", group: a, item: b, sub: c } : { kind: "pick", group: a, item: b };
     return { kind: "portfolio" };
   }
   if (root === "p") {
     const projectId = Number(a);
     if (!Number.isSafeInteger(projectId) || projectId <= 0) return { kind: "portfolio" };
+    // Older account / usage addresses keep the project as the usage filter.
     const moved = b && c ? LEGACY_ITEMS[`${b}/${c}`] : undefined;
-    if (moved) return { kind: "project", projectId, ...moved };
+    if (moved) return { kind: "account", section: accountSection(d) || moved.section, projectId };
     if (b && c && findItem(b, c)) return { kind: "project", projectId, group: b, item: c, sub: d ?? "" };
     return { kind: "project", projectId, ...DEFAULT_ITEM, sub: "" };
   }
@@ -281,6 +293,8 @@ export function buildShellPath(loc: ShellLocation): string {
       return "/docs";
     case "pick":
       return `/portfolio/${loc.group}/${loc.item}${loc.sub ? `/${loc.sub}` : ""}`;
+    case "account":
+      return `/account${loc.section ? `/${loc.section}` : ""}${loc.projectId ? `?project=${loc.projectId}` : ""}`;
     case "project":
       return `/p/${loc.projectId}/${loc.group}/${loc.item}${loc.sub ? `/${loc.sub}` : ""}`;
   }
@@ -292,15 +306,9 @@ export function buildShellPath(loc: ShellLocation): string {
  * section); "All projects" goes to the portfolio.
  */
 export function switchProject(current: ShellLocation, projectId: number | null): ShellLocation {
-  const account = (current.kind === "project" || current.kind === "pick") && findItem(current.group, current.item)?.item.scope === "account";
-  if (projectId == null) {
-    // Account settings don't need a project: stay on the same page without one.
-    if (account && (current.kind === "project" || current.kind === "pick")) return { kind: "pick", group: current.group, item: current.item, ...(current.sub ? { sub: current.sub } : {}) };
-    return { kind: "portfolio" };
-  }
-  if (current.kind === "pick" && account) {
-    return { kind: "project", projectId, group: current.group, item: current.item, sub: current.sub ?? "" };
-  }
+  // Account settings don't depend on a project: stay on the page; the project only becomes the usage filter.
+  if (current.kind === "account") return { ...current, projectId };
+  if (projectId == null) return { kind: "portfolio" };
   if (current.kind === "project") {
     // Settings sections are the same for every project, so they carry over; data sub-tabs don't.
     const sub = current.group === "settings" ? current.sub : "";
