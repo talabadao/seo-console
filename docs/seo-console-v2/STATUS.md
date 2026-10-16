@@ -7,7 +7,7 @@ Vercel Authentication stays on. Sign in to Vercel as the team owner (or use a sh
 
 | Check | Result |
 |---|---|
-| Deployed commit | `5712cf2` on `preview` (READY). `main` unchanged at `05f0c1d` |
+| Deployed commit | `5850e15` on `preview`. `main` unchanged at `05f0c1d` |
 | Database | Isolated Preview Neon store (`ep-spring-firefly-…`). Migrations 0001–0007 apply on the first signed-in database access (Preview and local only). Production never self-migrates |
 | External writes / schedules | Off / off |
 | Preview variables | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `SERANKING_API_KEY`, `CREDENTIALS_ENCRYPTION_KEY` (new; created once via the CLI, never printed, separate from `SESSION_SECRET`), `V2_SHELL`, `GOOGLE_REDIRECT_URI` |
@@ -58,7 +58,7 @@ Vercel Authentication stays on. Sign in to Vercel as the team owner (or use a sh
 
 ## Automated checks (2026-10-16)
 - typecheck clean.
-- Lint: 0 errors, 18 warnings, all pre-existing.
+- Lint: 0 errors, 17 warnings, all pre-existing.
 - 181 tests pass. New suites (PGlite, the KPI suite on the real baseline schema plus all migrations):
   - **credentials**: encryption binding and rotation, save / replace / remove, placeholders, DataForSEO fields, isolation, persistence across a fresh module instance, resolver order, consolidation and conflicts
   - **budgets**: defaults, validation, combined limits with refunds, concurrency, mid-period changes, Preview allowance intact, history intact, redirects, shared budget with Maps reviews
