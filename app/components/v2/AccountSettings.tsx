@@ -27,6 +27,8 @@ export function AccountSettings({
   projects,
   onSub,
   onProjectsChanged,
+  bingConnected,
+  onOpenConnections,
 }: {
   sub: string;
   /** The project open when Settings was reached, used as the default filter; null from All projects. */
@@ -34,6 +36,9 @@ export function AccountSettings({
   projects: Project[];
   onSub: (sub: string) => void;
   onProjectsChanged: () => void | Promise<void>;
+  bingConnected: boolean;
+  /** Opens the editor for the Asana token and Bing Webmaster key (Tracking & connections). */
+  onOpenConnections: () => void;
 }) {
   const section: SectionId = ACCOUNT_SECTIONS.some((s) => s.id === sub) ? (sub as SectionId) : "credentials";
   return (
@@ -51,7 +56,12 @@ export function AccountSettings({
         ))}
       </nav>
       <div className="min-w-0 space-y-4">
-        {section === "credentials" && <Credentials projects={projects} projectId={projectId} onProjectsChanged={onProjectsChanged} />}
+        {section === "credentials" && (
+          <>
+            <Credentials projects={projects} projectId={projectId} onProjectsChanged={onProjectsChanged} />
+            <OtherConnections bingConnected={bingConnected} onOpen={onOpenConnections} />
+          </>
+        )}
         {section === "usage" && <UsageCostsPage projectId={projectId} projects={projects} onOpenBudgets={() => onSub("budgets")} />}
         {section === "budgets" && <BudgetLimits projectId={null} />}
       </div>
@@ -217,6 +227,50 @@ function LegacySerpKeys({ state, onAction }: { state: LegacySerpState; onAction:
           {error}
         </p>
       )}
+    </Card>
+  );
+}
+
+/** Account connections kept in their existing editor (Tracking & connections): Asana and Bing Webmaster Tools. */
+function OtherConnections({ bingConnected, onOpen }: { bingConnected: boolean; onOpen: () => void }) {
+  const [asana, setAsana] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/settings/asana", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: { connected?: boolean }) => live && setAsana(Boolean(j.connected)))
+      .catch(() => live && setAsana(null));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const badge = (on: boolean | null) => (
+    <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: on ? "var(--good)" : on === null ? "var(--muted, #888)" : "var(--bad)" }} aria-hidden="true" />
+      {on === null ? "Unknown" : on ? "Connected" : "Not connected"}
+    </span>
+  );
+  return (
+    <Card
+      title="Other account connections"
+      actions={
+        <button className={buttonClass} onClick={onOpen}>
+          Edit
+        </button>
+      }
+    >
+      <ul className="divide-y text-sm">
+        <li className="flex flex-wrap items-center gap-3 py-2.5">
+          <span className="w-48 font-medium">Asana</span>
+          {badge(asana)}
+          <span className="text-muted">Personal access token: weekly report status updates and task lists.</span>
+        </li>
+        <li className="flex flex-wrap items-center gap-3 py-2.5">
+          <span className="w-48 font-medium">Bing Webmaster Tools</span>
+          {badge(bingConnected)}
+          <span className="text-muted">API key for every verified Bing site.</span>
+        </li>
+      </ul>
     </Card>
   );
 }

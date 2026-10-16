@@ -102,6 +102,35 @@ export async function serpSearch(params: Record<string, string>, ctx: SerpContex
   }
 }
 
+/**
+ * Meters one SerpApi search made by another client (Maps reviews' own SerpApi client): the same policy, limits
+ * and ledger as serpSearch. Throws SerpRefused (nothing to send) when a limit or policy stops it; otherwise
+ * returns a function to call when the search has finished, ok or not.
+ */
+export async function meterSerpSearch(
+  ctx: { userId: number; projectId: number; fingerprint: string },
+  operation: string,
+): Promise<(ok: boolean, error?: string) => Promise<void>> {
+  const decision = await serpDecision(ctx.userId, ctx.projectId);
+  if (!decision.allowed) throw new SerpRefused(decision.reason);
+  try {
+    await takeAllowances(decision.allowances, 1);
+  } catch (e) {
+    if (e instanceof CapReached) throw new SerpRefused(`${e.message} Change it in Settings → Account → Budgets & limits.`);
+    throw e;
+  }
+  const usageId = await reserveUsage({
+    userId: ctx.userId,
+    projectId: ctx.projectId,
+    provider: "serpapi",
+    operation,
+    keyFingerprint: ctx.fingerprint,
+    units: 1,
+    unitType: "search",
+  });
+  return (ok, error) => completeUsage(usageId, { ok, error });
+}
+
 export interface SerpAccount {
   fetchedAt: number;
   planId: string | null;

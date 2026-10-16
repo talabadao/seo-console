@@ -104,11 +104,31 @@ export interface SyncResult {
 export async function syncReviews(
   project: ReviewProject,
   key: string,
-  opts: { mode: "refresh" | "older"; max: number; budgetMs: number },
+  opts: {
+    mode: "refresh" | "older";
+    max: number;
+    budgetMs: number;
+    /**
+     * Meters each SerpApi search against the same limits and ledger as the AI Area (lib/providers/serpapi.ts
+     * meterSerpSearch). Throws (before the search is sent) when a limit is reached.
+     */
+    meter?: (operation: string) => Promise<(ok: boolean, error?: string) => Promise<void>>;
+  },
 ): Promise<SyncResult> {
   const started = Date.now();
   let creditsUsed = 0;
   let location = project.placeRef;
+  const metered = async <T,>(operation: string, fn: () => Promise<T>): Promise<T> => {
+    const done = opts.meter ? await opts.meter(operation) : null;
+    try {
+      const out = await fn();
+      await done?.(true);
+      return out;
+    } catch (e) {
+      await done?.(false, e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
 
   const spend = async (loc: string, extra: Record<string, unknown> = {}) => {
     const cols = Object.keys(extra);
@@ -128,7 +148,7 @@ export async function syncReviews(
       const { ref, finalUrl } = await resolveMapsUrl(project.mapsUrl);
       location = ref;
       if (!location) {
-        location = await findPlace(key, finalUrl);
+        location = await metered("google_maps", () => findPlace(key, finalUrl));
         creditsUsed++;
         if (!location) {
           throw new SerpApiError(
@@ -164,7 +184,8 @@ export async function syncReviews(
 
     for (let page = 0; ; page++) {
       if (page > 0 && (added >= opts.max || Date.now() - started > opts.budgetMs)) break;
-      const res = await reviewsPage(key, location, token);
+      const loc = location;
+      const res = await metered("google_maps_reviews", () => reviewsPage(key, loc, token));
       creditsUsed++;
       place = res.place ?? place;
       fetched += res.reviews.length;

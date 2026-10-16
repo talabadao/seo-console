@@ -170,7 +170,7 @@ export function WeeklyReport({
           disabled={!data}
           className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
         >
-          Configure KPIs
+          Report settings
         </button>
 
         {loading && <span className="text-xs text-muted">Loading…</span>}
@@ -348,7 +348,7 @@ function KpiTile({
           {kpi.actualMtd >= kpi.target ? " · Target achieved" : ""}
         </div>
       ) : (
-        <div className="mt-1.5 text-xs text-muted">No target set. Set one in Configure KPIs.</div>
+        <div className="mt-1.5 text-xs text-muted">No target set. Plan targets in Project settings → KPI planning.</div>
       )}
     </div>
   );
@@ -556,7 +556,7 @@ function Insights({
           <button
             onClick={() => setShowPost(true)}
             disabled={!projectGid}
-            title={projectGid ? undefined : "Set an Asana project ID in Configure KPIs first"}
+            title={projectGid ? undefined : "Set an Asana project ID in Report settings first"}
             className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
           >
             Post to Asana…
@@ -571,7 +571,7 @@ function Insights({
           <h4 className="text-sm font-semibold text-muted">Tasks (from Asana)</h4>
           {tasksNeedConnect && (
             <p className="mt-2 text-xs text-muted">
-              Connect Asana and set a project ID in Configure KPIs to pull tasks here.
+              Connect Asana and set a project ID in Report settings to pull tasks here.
             </p>
           )}
           {tasksErr && <p className="mt-2 text-xs text-bad">{tasksErr}</p>}
@@ -866,7 +866,7 @@ function ConfigModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Configure KPIs</h2>
+          <h2 className="text-lg font-semibold">Report settings</h2>
           <button onClick={onClose} className="text-muted hover:text-foreground">
             ✕
           </button>

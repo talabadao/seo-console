@@ -272,6 +272,7 @@ export function Shell({
             onNeedsReconnect={() => setNeedsReconnect(true)}
             onNotice={setNotice}
             onRetryProjects={loadProjects}
+            bingConnected={bingConnected}
           />
         </main>
       </div>
@@ -566,6 +567,7 @@ function ProjectSwitcher({
 // ---------- pages ----------
 
 interface PageProps {
+  bingConnected: boolean;
   loc: ShellLocation;
   project: Project | null;
   projects: Project[];
@@ -631,6 +633,8 @@ function Page(props: PageProps) {
             projects={projects}
             onSub={(sub) => onNavigate({ kind: "pick", group: loc.group, item: loc.item, ...(sub ? { sub } : {}) })}
             onProjectsChanged={props.onRetryProjects}
+            bingConnected={props.bingConnected}
+            onOpenConnections={props.onOpenSettings}
           />
         </>
       );
@@ -747,6 +751,7 @@ function ProjectPage({
   onNeedsReconnect,
   onNotice,
   onRetryProjects,
+  bingConnected,
 }: PageProps & { project: Project; item: NavItem; connected: boolean }) {
   if (loc.kind !== "project") return null;
   const subNav = (sub: string) => onNavigate({ ...loc, sub });
@@ -847,6 +852,8 @@ function ProjectPage({
           projects={projects}
           onSub={subNav}
           onProjectsChanged={onRetryProjects}
+          bingConnected={bingConnected}
+          onOpenConnections={onOpenSettings}
         />
       );
     case "settings/project":

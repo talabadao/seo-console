@@ -210,7 +210,7 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
           }}
         </SectionCard>
 
-        <SectionCard title="Monthly KPIs" section={summary?.kpi} loading={loading} action={settingsLink("kpi", "Set KPI targets")}>
+        <SectionCard title="Monthly KPIs" section={summary?.kpi} loading={loading} action={settingsLink("kpi", "Plan KPI targets")}>
           {(d) => (
             <>
               <p className="mb-3 text-xs text-muted">

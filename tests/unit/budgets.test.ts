@@ -31,7 +31,7 @@ import { migration as aiArea } from "@/db/migrations/0003_ai_area";
 import { migration as budgetLimits } from "@/db/migrations/0006_budget_limits";
 import { BudgetInputError, effectiveLimits, setLimit } from "@/lib/budgets";
 import { allowanceState } from "@/lib/providers/ledger";
-import { SerpRefused, serpSearch, type SerpKey } from "@/lib/providers/serpapi";
+import { SerpRefused, meterSerpSearch, serpSearch, type SerpKey } from "@/lib/providers/serpapi";
 import { buildShellPath, parseShellPath, switchProject } from "@/lib/v2/nav";
 
 const KEY: SerpKey = { key: "test-key-not-real", source: "account", fingerprint: "fp" };
@@ -127,6 +127,18 @@ describe("account and project limits together", () => {
     expect(await allowanceState(`serpapi-month:project:1:${month}`)).toEqual({ used: 5, max: 5 });
     // Usage history is the ledger, untouched by limit changes.
     expect((await pg.query("SELECT 1 FROM provider_usage")).rows).toHaveLength(5);
+  });
+});
+
+describe("Maps reviews share the same SerpApi budget", () => {
+  it("counts review searches against the project's limit, together with AI Area searches", async () => {
+    await setLimit(1, "project", 1, "serpapi_requests_month", 3);
+    expect(await send(1, 2)).toEqual(["ok", "ok"]);
+    const done = await meterSerpSearch({ userId: 1, projectId: 1, fingerprint: "fp" }, "google_maps_reviews");
+    await done(true);
+    await expect(meterSerpSearch({ userId: 1, projectId: 1, fingerprint: "fp" }, "google_maps_reviews")).rejects.toBeInstanceOf(SerpRefused);
+    const ops = (await pg.query<{ operation: string }>("SELECT operation FROM provider_usage ORDER BY id")).rows.map((r) => r.operation);
+    expect(ops).toEqual(["google", "google", "google_maps_reviews"]);
   });
 });
 
