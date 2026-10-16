@@ -16,11 +16,12 @@ import { Card, buttonClass, primaryButtonClass } from "./ui";
 import { LeadEventsEditor } from "../LeadEventsEditor";
 import { BudgetLimits } from "./BudgetLimits";
 import { useUsage } from "./UsageCosts";
+import { KpiPlanner } from "./KpiPlanner";
 
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
   { id: "integrations", label: "Integrations" },
-  { id: "kpi", label: "KPI targets" },
+  { id: "kpi", label: "KPI planning" },
   { id: "analytics", label: "Analytics / Key events" },
   { id: "tracking", label: "Tracking" },
   { id: "budgets", label: "Usage & budgets" },
@@ -93,7 +94,16 @@ export function ProjectSettings({
 
         {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onOpenConsoleSettings={onOpenConsoleSettings} onProjectChanged={onProjectChanged} />}
 
-        {section === "kpi" && <KpiTargets project={project} onLink={() => onEditProject(project.id)} onLeadEvents={() => onSub("analytics")} />}
+        {section === "kpi" && (
+          <KpiPlanner
+            key={project.id}
+            projectId={project.id}
+            hasGa={Boolean(project.gaPropertyId)}
+            leadEvents={null}
+            onLink={() => onEditProject(project.id)}
+            onLeadEvents={() => onSub("analytics")}
+          />
+        )}
 
         {section === "analytics" && (
           <Card title="Analytics / Key events">
@@ -376,152 +386,6 @@ function SeRankingCard({ project }: { project: Project }) {
           </select>
           {saving && <p className="text-xs text-muted">{saving}</p>}
         </div>
-      )}
-    </Card>
-  );
-}
-
-interface KpiConfig {
-  yearMonth: string;
-  trafficOrganicTarget: number;
-  trafficAiTarget: number;
-  leadOrganicTarget: number;
-  leadAiTarget: number;
-  leadEvents: string[];
-  asanaProjectGid: string;
-  asanaStatusTitle: string;
-}
-
-function monthOptions() {
-  const now = new Date();
-  return [0, 1].map((n) => {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + n, 1));
-    return { id: d.toISOString().slice(0, 7), label: d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }) };
-  });
-}
-
-function KpiTargets({ project, onLink, onLeadEvents }: { project: Project; onLink: () => void; onLeadEvents: () => void }) {
-  const months = monthOptions();
-  const [month, setMonth] = useState(months[0].id);
-  const pid = project.gaPropertyId;
-  const loadKey = `${pid}|${month}`;
-  // What was loaded, keyed by property and month; anything else is still loading.
-  const [loadedFor, setLoadedFor] = useState<{ key: string; cfg: KpiConfig | null; error: string | null } | null>(null);
-  const [edits, setEdits] = useState<{ key: string; cfg: KpiConfig } | null>(null);
-  const [save, setSave] = useState<{ key: string; state: "saving" | "saved" | "error"; message?: string } | null>(null);
-
-  useEffect(() => {
-    if (!pid) return;
-    let live = true;
-    fetch(`/api/weekly-report/config?propertyId=${encodeURIComponent(pid)}&yearMonth=${month}`)
-      .then(async (r) => {
-        const body = await r.json();
-        if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
-        if (live) setLoadedFor({ key: loadKey, cfg: body as KpiConfig, error: null });
-      })
-      .catch((e) => live && setLoadedFor({ key: loadKey, cfg: null, error: e instanceof Error ? e.message : String(e) }));
-    return () => {
-      live = false;
-    };
-  }, [pid, month, loadKey]);
-
-  const current = loadedFor?.key === loadKey ? loadedFor : null;
-  const cfg = edits?.key === loadKey ? edits.cfg : (current?.cfg ?? null);
-  const setCfg = (next: KpiConfig) => setEdits({ key: loadKey, cfg: next });
-  const saving = save?.key === loadKey ? save : null;
-  const state = !current ? "loading" : current.error ? "error" : (saving?.state ?? "ready");
-  const message = current?.error ?? saving?.message ?? null;
-
-  if (!pid) {
-    return (
-      <Card title="KPI targets">
-        <p className="text-sm text-muted">Monthly targets are measured in GA4. Link a GA4 property to this project first.</p>
-        <button className={`mt-3 ${primaryButtonClass}`} onClick={onLink}>
-          Link GA4
-        </button>
-      </Card>
-    );
-  }
-
-  const field = (key: keyof Pick<KpiConfig, "trafficOrganicTarget" | "trafficAiTarget" | "leadOrganicTarget" | "leadAiTarget">, label: string, hint: string) => (
-    <label className="block text-sm">
-      <span className="font-medium">{label}</span>
-      <span className="block text-xs text-muted">{hint}</span>
-      <input
-        type="number"
-        min={0}
-        inputMode="numeric"
-        value={cfg ? String(cfg[key] || "") : ""}
-        placeholder="No target"
-        onChange={(e) => cfg && setCfg({ ...cfg, [key]: Number(e.target.value) || 0 })}
-        className="mt-1 w-full rounded-md border bg-background px-3 py-1.5"
-      />
-    </label>
-  );
-
-  async function saveTargets() {
-    if (!cfg || !pid) return;
-    setSave({ key: loadKey, state: "saving" });
-    try {
-      const res = await fetch("/api/weekly-report/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...cfg, propertyId: pid, yearMonth: month }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
-      setSave({ key: loadKey, state: "saved" });
-    } catch (e) {
-      setSave({ key: loadKey, state: "error", message: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  return (
-    <Card
-      title="KPI targets"
-      actions={
-        <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month" className="rounded-md border bg-background px-2 py-1.5 text-sm">
-          {months.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-      }
-    >
-      {state === "loading" ? (
-        <p className="text-sm text-muted">Loading targets…</p>
-      ) : state === "error" && !cfg ? (
-        <p role="alert" className="text-sm" style={{ color: "var(--bad)" }}>
-          Couldn&apos;t load targets: {message}
-        </p>
-      ) : (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {field("trafficOrganicTarget", "Organic sessions", "GA4 Organic Search sessions this month")}
-            {field("leadOrganicTarget", "Organic leads", "Lead events from organic sessions")}
-            {field("trafficAiTarget", "AI search sessions", "Sessions from AI search sources")}
-            {field("leadAiTarget", "AI search leads", "Lead events from AI search sessions")}
-          </div>
-          <p className="mt-3 text-xs text-muted">
-            Lead KPIs count these lead events: {cfg?.leadEvents.length ? cfg.leadEvents.join(", ") : "none chosen"}.{" "}
-            <button className="text-accent hover:underline" onClick={onLeadEvents}>
-              Change lead events
-            </button>
-            . Leave a field empty for no target; KPIs without a target aren&apos;t shown.
-          </p>
-          <div className="mt-4 flex items-center gap-3">
-            <button className={primaryButtonClass} onClick={saveTargets} disabled={state === "saving"}>
-              {state === "saving" ? "Saving…" : "Save targets"}
-            </button>
-            {state === "saved" && <span className="text-sm text-muted">Saved.</span>}
-            {state === "error" && cfg && (
-              <span role="alert" className="text-sm" style={{ color: "var(--bad)" }}>
-                {message}
-              </span>
-            )}
-          </div>
-        </>
       )}
     </Card>
   );

@@ -36,12 +36,15 @@ export function evaluateKpi(input: {
   label: string;
   direction?: KpiDirection;
   actual: number;
-  target: number;
+  /** null = no target (blank in KPI Planning); 0 is an explicit target of zero. */
+  target: number | null;
   projected: number;
   monthComplete: boolean;
 }): KpiItem {
   const direction = input.direction ?? "higher";
-  const { actual, target, projected } = input;
+  const { actual, projected } = input;
+  const target = input.target ?? 0;
+  const hasTarget = input.target != null && input.target >= 0;
   const pct = (v: number) => (target > 0 ? (v / target) * 100 : 0);
   // For higher-is-better metrics, reaching the target is the goal; for lower-is-better ones (e.g. a cost or a
   // bounce rate), staying at or under it is, and going over is "above target".
@@ -49,7 +52,7 @@ export function evaluateKpi(input: {
     direction === "higher" ? (v >= target ? "achieved" : "below") : v <= target ? "achieved" : "above";
 
   let attainment: KpiAttainment;
-  if (!(target > 0)) attainment = "no-target";
+  if (!hasTarget) attainment = "no-target";
   else if (input.monthComplete) attainment = compare(actual);
   else if (direction === "higher") attainment = actual >= target ? "achieved" : "in-progress";
   // Lower-is-better: exceeding the full-month limit before the month ends is already final.
@@ -65,6 +68,6 @@ export function evaluateKpi(input: {
     attainment,
     projected,
     projectedPct: pct(projected),
-    projection: target > 0 ? compare(projected) : "achieved",
+    projection: hasTarget ? compare(projected) : "achieved",
   };
 }

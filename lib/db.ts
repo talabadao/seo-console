@@ -109,6 +109,22 @@ export const db = {
   },
 };
 
+/** A query function inside a transaction: same `?` placeholders as db.prepare, returns the rows. */
+export type TxQuery = (sqlText: string, ...args: unknown[]) => Promise<Record<string, unknown>[]>;
+
+/**
+ * Runs `fn` in one database transaction: every statement commits together, or — if `fn` throws — none do.
+ * Used where a partial write would be misleading (e.g. saving many months of KPI targets at once).
+ */
+export async function withTransaction<T>(fn: (q: TxQuery) => Promise<T>): Promise<T> {
+  await ready();
+  return (await getSql().begin(async (tx) => {
+    const q: TxQuery = async (sqlText, ...args) =>
+      (await tx.unsafe(toPositional(sqlText), args as postgres.ParameterOrJSON<never>[])) as unknown as Record<string, unknown>[];
+    return fn(q);
+  })) as T;
+}
+
 /**
  * The underlying postgres.js tagged-template client, for call sites that need
  * multi-row inserts (`sql(array, ...cols)`) or other features the `?`-based
