@@ -31,6 +31,17 @@ describe("planMigrations", () => {
   });
 });
 
+describe("registered migrations", () => {
+  it("registers every migration file under db/migrations, in order", async () => {
+    const { readdirSync } = await import("node:fs");
+    const files = readdirSync("db/migrations")
+      .filter((f) => /^d{4}_.+.ts$/.test(f))
+      .map((f) => f.replace(/.ts$/, ""))
+      .sort();
+    expect(MIGRATIONS.map((m) => m.id)).toEqual(files);
+  });
+});
+
 describe("baseline migration", () => {
   it("is the first migration and uses the app's own schema statements", () => {
     expect(MIGRATIONS[0].id).toBe("0001_baseline");
