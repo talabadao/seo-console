@@ -90,13 +90,8 @@ export const NAV: NavGroup[] = [
     label: "Rank tracking",
     icon: "chart",
     items: [
-      {
-        id: "se-ranking",
-        label: "SE Ranking",
-        status: "planned",
-        milestone: "06",
-        description: "Daily rankings, competitors, backlinks, site audit and AI prompts from SE Ranking. Needs an SE Ranking API key.",
-      },
+      // Read-only report from the SE Ranking project mapped in Project settings → Integrations.
+      { id: "se-ranking", label: "SE Ranking", status: "live" },
       // Shares data and runs with AI Area → Google Search Tracking (opens on its Rank tracker view).
       { id: "google", label: "Google", status: "live" },
       { id: "bing", label: "Bing", status: "planned", milestone: "07", description: "Bing SERP tracking through SerpApi." },

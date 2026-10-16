@@ -5,7 +5,7 @@
 
 import { addDaysYmd, daysBetween, taskMonth } from "./period";
 import { evaluateKpi } from "./kpi";
-import { rankCounts } from "@/lib/seranking/metrics";
+import { rankingsFromView, viewReport, type SeRawReport } from "@/lib/seranking/metrics";
 import {
   CONTENT_STAGES,
   type ContentData,
@@ -216,35 +216,71 @@ const DEMO_HOST = "lumencoast.example";
 const DEMO_PAGES = ["/", "/rooms/ocean-suite/", "/dining/", "/offers/spring-escape/", "/blog/things-to-do-nearby/", "/spa/"];
 const DEMO_QUERIES = ["lumen coast resort", "beachfront resort with spa", "ocean suite hotel", "lumen coast dining", "spring escape package", "family resort near the beach"];
 
-export function demoRankings(id: number, period: PeriodInfo, now: Date = new Date()): Section<RankingsData> {
+const DEMO_KEYWORDS = [
+  "lumen coast resort", "beachfront resort with spa", "ocean suite hotel", "lumen coast dining", "spring escape package",
+  "family resort near the beach", "resort with private beach", "spa weekend deal", "seafood restaurant by the sea", "honeymoon resort",
+  "beach wedding venue", "kids club resort", "sunset bar beach", "all inclusive beach resort", "pet friendly beach hotel",
+  "resort day pass", "yoga retreat by the sea", "luxury villa with pool", "airport transfer resort", "best breakfast buffet",
+];
+
+/**
+ * A demo SE Ranking report for projects on the .example domain: two engines, three keyword groups, daily checks.
+ * Invented, deterministic per project; the dashboard card is derived from it, as for real projects.
+ */
+export function demoSeRawReport(id: number, days: number, now: Date = new Date()): SeRawReport {
   const r = rng(seedOf(id, "rank"));
-  const tracked = 40 + Math.floor(r() * 80);
-  const positions = (shift: number) =>
-    Array.from({ length: tracked }, () => {
-      const x = r();
-      // About a fifth of keywords don't rank (outside the top 100): never position 0.
-      return x < 0.2 ? null : Math.max(1, Math.min(100, Math.round(1 + x * x * 60 + shift)));
+  const to = addDaysYmd(now.toISOString().slice(0, 10), -1);
+  const from = addDaysYmd(to, -(days + 7));
+  const dates: string[] = [];
+  for (let d = from; d <= to; d = addDaysYmd(d, 1)) dates.push(d);
+  const engines = [
+    { id: 1, name: "Google Vietnam", region: "Ho Chi Minh City", language: "en", device: "desktop", keywordCount: 0 },
+    { id: 2, name: "Google Singapore", region: null, language: "en", device: "mobile", keywordCount: 0 },
+  ];
+  const tracked = 40 + Math.floor(r() * 40);
+  const keywords: SeRawReport["keywords"] = {};
+  for (const e of engines) {
+    const n = e.id === 1 ? tracked : Math.round(tracked / 3);
+    e.keywordCount = n;
+    keywords[String(e.id)] = Array.from({ length: n }, (_, i) => {
+      const base = r();
+      const trend = (r() - 0.5) * 0.4;
+      const name = i < DEMO_KEYWORDS.length ? DEMO_KEYWORDS[i] : `${DEMO_KEYWORDS[i % DEMO_KEYWORDS.length]} ${["2026", "deals", "reviews", "near me"][Math.floor(i / DEMO_KEYWORDS.length) % 4]}`;
+      return {
+        id: `demo-${e.id}-${i}`,
+        name,
+        groupId: String(1 + (i % 3)),
+        volume: Math.round(20 + r() * r() * 4000),
+        landing: base < 0.2 ? null : `https://${DEMO_HOST}${DEMO_PAGES[i % DEMO_PAGES.length]}`,
+        features: r() < 0.4 ? ["local_pack", "images"] : ["images"],
+        ownFeatures: r() < 0.2 ? ["local_pack"] : [],
+        positions: dates.map((date, di) => {
+          // About a fifth of keywords don't rank: SE Ranking reports those as 0.
+          if (base < 0.2) return { date, pos: 0 };
+          const x = Math.max(0, Math.min(1, base + trend * (1 - di / dates.length) + (r() - 0.5) * 0.05));
+          return { date, pos: Math.max(1, Math.min(100, Math.round(1 + x * x * 60))) };
+        }),
+      };
     });
-  const latest = addDaysYmd(now.toISOString().slice(0, 10), -1);
+  }
+  return {
+    site: { id: 0, title: "Demo SE Ranking project", url: `https://${DEMO_HOST}/` },
+    from,
+    to,
+    engines,
+    groups: [
+      { id: "1", name: "Brand" },
+      { id: "2", name: "Rooms & offers" },
+      { id: "3", name: "Experiences" },
+    ],
+    keywords,
+  };
+}
+
+export function demoRankings(id: number, period: PeriodInfo, now: Date = new Date()): Section<RankingsData> {
   const days = period.previous ? daysBetween(period.current.start, period.current.end) : 7;
-  return demo("SE Ranking", {
-    context: {
-      siteId: 0,
-      siteTitle: "Demo SE Ranking project",
-      siteUrl: `https://${DEMO_HOST}/`,
-      engine: "Google Vietnam",
-      region: "Ho Chi Minh City",
-      language: "en",
-      device: "desktop",
-      keywordGroup: "All tracked keywords",
-      trackedKeywords: tracked,
-      otherEngines: 1,
-      latestDate: latest,
-      comparisonDate: addDaysYmd(latest, -days),
-    },
-    current: rankCounts(positions(0)),
-    previous: rankCounts(positions(1 + r() * 3)),
-  }, { dataThrough: latest });
+  const data = rankingsFromView(viewReport(demoSeRawReport(id, days, now), { compareDays: days }));
+  return demo("SE Ranking", data, { dataThrough: data.context.latestDate });
 }
 
 /** Content progress: always demo until a real content workflow exists. */

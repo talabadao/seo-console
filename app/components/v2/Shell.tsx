@@ -46,6 +46,7 @@ import { AccountSettings } from "./AccountSettings";
 import { AccountMenu, ACCOUNT_SECTION_LABEL } from "./AccountMenu";
 import { NotificationBell } from "./NotificationBell";
 import { LlmTrafficReport } from "./LlmTrafficReport";
+import { SeRankingPage } from "./SeRankingPage";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
 import { AiUsageSummary } from "./UsageCosts";
@@ -827,6 +828,8 @@ function ProjectPage({
           />
         </div>
       );
+    case "organic-serp/se-ranking":
+      return <SeRankingPage projectId={project.id} onOpenIntegrations={() => onNavigate({ ...loc, group: "settings", item: "project", sub: "integrations" })} />;
     case "analytics/llm-traffic":
       return <LlmTrafficReport projectId={project.id} />;
     case "analytics/overview":

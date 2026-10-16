@@ -15,6 +15,10 @@ import type { PeriodInfo, Section, SummaryPart } from "@/lib/v2/summary/types";
 import { ga4Section, gaContext, googleToken, gscSection, healthSection, kpiSection, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
 import { llmReport, type Granularity, type LlmMetric } from "@/lib/v2/llm/report";
 import { registerKind } from "./cache";
+import { SeRankingError } from "@/lib/seranking/client";
+import { listSites, matchSite } from "@/lib/seranking/rankings";
+import { fetchRawReport, reportRange, type SeRawReport } from "@/lib/seranking/report";
+import { seRankingSiteFor } from "@/lib/projectSettings";
 
 const H = 3600_000;
 export const FRESH: Record<string, number> = {
@@ -25,6 +29,7 @@ export const FRESH: Record<string, number> = {
   "summary:health": 6 * H,
   "summary:rankings": 12 * H,
   "llm-traffic": 2 * H,
+  "seranking:report": 12 * H,
 };
 
 export class AccessLostError extends Error {
@@ -147,6 +152,42 @@ registerKind<LlmQuery, unknown>({
       const message = cleanGaError(e instanceof Error ? e.message : String(e)).message;
       throw isAccess(e) ? new AccessLostError(message) : new SectionFailed(message);
     }
+  },
+});
+
+export interface SeReportQuery {
+  projectId: number;
+  /** Days shown; the range ends on the day the job runs, so a saved report stays usable across midnight. */
+  days: number;
+  config: string;
+}
+
+/** A finished SE Ranking read: the report, or why there is none (these are results, not failures). */
+export type SeReportPayload =
+  | { status: "ok"; raw: SeRawReport }
+  | { status: "not-mapped"; chosenMissing: boolean }
+  | { status: "no-data"; message: string; site: { id: number; title: string; url: string } };
+
+registerKind<SeReportQuery, SeReportPayload>({
+  kind: "seranking:report",
+  provider: "seranking",
+  freshMs: FRESH["seranking:report"],
+  isAccessError: (e) => e instanceof AccessLostError || (e instanceof SeRankingError && (e.status === 401 || e.status === 403)),
+  async run({ userId, projectId, query }) {
+    const { project } = await context(userId, projectId);
+    const sites = await listSites();
+    const chosen = await seRankingSiteFor(project.id);
+    const site = chosen ? sites.find((x) => x.id === chosen) : matchSite(sites, project.websiteUrl);
+    if (!site) return { payload: { status: "not-mapped", chosenMissing: Boolean(chosen) } };
+    const { from, to } = reportRange(query.days);
+    const raw = await fetchRawReport(site, from, to);
+    const latest = Object.values(raw.keywords)
+      .flatMap((ks) => ks.flatMap((k) => k.positions.map((p) => p.date)))
+      .sort()
+      .at(-1);
+    if (!raw.engines.length) return { payload: { status: "no-data", message: "This SE Ranking project has no search engines configured.", site: raw.site } };
+    if (!latest) return { payload: { status: "no-data", message: "SE Ranking has no checks for this project in the selected period.", site: raw.site } };
+    return { payload: { status: "ok", raw }, dataThrough: latest };
   },
 });
 

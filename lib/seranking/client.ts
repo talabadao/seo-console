@@ -17,15 +17,8 @@ export function seRankingKey(): string | null {
   return process.env.SERANKING_API_KEY?.trim() || null;
 }
 
-export class SeRankingError extends Error {
-  constructor(
-    readonly status: number,
-    message: string
-  ) {
-    super(message);
-    this.name = "SeRankingError";
-  }
-}
+export { SeRankingError } from "./metrics";
+import { SeRankingError } from "./metrics";
 
 type ParamValue = string | number | undefined | null | Array<string | number>;
 
