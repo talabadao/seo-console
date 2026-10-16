@@ -236,23 +236,11 @@ export function BrandMentionsView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1 rounded-lg p-0.5" style={{ background: "var(--page-plane)", border: "1px solid var(--border-hairline)" }} role="tablist" aria-label="Brand mentions sections">
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              role="tab"
-              aria-selected={section === s.id}
-              onClick={() => setSection(s.id)}
-              className="rounded-md px-3 py-1 text-xs font-medium"
-              style={{ background: section === s.id ? "var(--surface-1)" : "transparent", color: section === s.id ? "var(--text-primary)" : "var(--text-muted)", boxShadow: section === s.id ? "0 1px 2px rgba(0,0,0,0.08)" : undefined }}
-            >
-              {s.label}
-              {s.id === "prompts" ? ` (${activePrompts})` : ""}
-            </button>
-          ))}
-        </div>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          What Google AI Mode, AI Overviews, ChatGPT and Claude say about {data.brand.name || "your brand"}
+          {current ? ` · last run ${new Date(current.startedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""} · runs only when you click Run
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>
             {!data.costs.llmPolicy.allowed
@@ -260,10 +248,7 @@ export function BrandMentionsView({
               : modelLeft != null
                 ? `$${modelLeft.toFixed(2)} of model spend left under your limits (estimated)`
                 : "No model spending limit set"}
-            {serpLeft != null ? ` · ${serpLeft} SerpApi requests left under your limits` : ""} ·{" "}
-            <button type="button" className="underline" onClick={onOpenBudgets}>
-              Manage usage and budget
-            </button>
+            {serpLeft != null ? ` · ${serpLeft} SerpApi requests left under your limits` : ""}
           </span>
           {running ? (
             <button type="button" onClick={() => (stopRef.current = true)} className="rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: "var(--border-hairline)", color: "var(--text-primary)" }}>
@@ -280,7 +265,23 @@ export function BrandMentionsView({
             {running ? "Running…" : unfinished ? `Continue run (${unfinished.done}/${unfinished.total})` : "Run brand check now"}
           </button>
         </div>
-      </div>
+      </header>
+
+      <nav className="flex gap-1 overflow-x-auto border-b" style={{ borderColor: "var(--gridline)" }} aria-label="Brand Mentions sections">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => setSection(s.id)}
+            aria-current={section === s.id ? "page" : undefined}
+            className="-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium"
+            style={{ borderColor: section === s.id ? "var(--text-primary)" : "transparent", color: section === s.id ? "var(--text-primary)" : "var(--text-muted)" }}
+          >
+            {s.label}
+            {s.id === "prompts" ? ` (${activePrompts})` : ""}
+          </button>
+        ))}
+      </nav>
 
       {confirming && (
         <div role="dialog" aria-label="Confirm brand check" className="rounded-lg border p-4 text-sm" style={{ borderColor: "var(--series-1)", background: "var(--surface-1)" }}>

@@ -228,7 +228,7 @@ export function Reviews({
         else {
           const credits = j.creditsUsed ?? 0;
           setMsg({
-            text: `${j.added ? `Saved ${j.added.toLocaleString()} new review${j.added === 1 ? "" : "s"}` : "No new reviews"} · ${credits} SerpApi credit${credits === 1 ? "" : "s"} used.`,
+            text: `${j.added ? `Saved ${j.added.toLocaleString()} new review${j.added === 1 ? "" : "s"}` : "No new reviews"} · ${credits} SerpApi search${credits === 1 ? "" : "es"} used.`,
           });
         }
         fresh = await load();
@@ -344,7 +344,7 @@ export function Reviews({
                 data.totalReviews ? ` (${Math.min(100, Math.round((saved / data.totalReviews) * 100))}%)` : ""
               }`,
               data.syncedAt ? `updated ${format(data.syncedAt, "MMM d, yyyy")}` : "not fetched yet",
-              `${data.creditsSpent} SerpApi credit${data.creditsSpent === 1 ? "" : "s"} spent so far`,
+              `${data.creditsSpent} SerpApi search${data.creditsSpent === 1 ? "" : "es"} used so far`,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -378,15 +378,15 @@ export function Reviews({
           className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent-soft disabled:opacity-50"
           title={
             fetchedBefore
-              ? "Checks for new reviews: 1 credit if nothing is new, plus 1 for every 20 new reviews."
-              : `First fetch: up to ${firstFetch} credits for ${limit === 5000 ? "all" : `up to ${limit}`} reviews.`
+              ? "Checks for new reviews: 1 SerpApi search if nothing is new, plus 1 for every 20 new reviews."
+              : `First fetch: up to ${firstFetch} SerpApi searches for ${limit === 5000 ? "all" : `up to ${limit}`} reviews.`
           }
         >
           {busy === "refresh"
             ? "Fetching…"
             : fetchedBefore
-              ? "Refresh · from 1 credit"
-              : `Fetch reviews · up to ${firstFetch} credit${firstFetch === 1 ? "" : "s"}`}
+              ? "Refresh · from 1 search"
+              : `Fetch reviews · up to ${firstFetch} search${firstFetch === 1 ? "" : "es"}`}
         </button>
         {fetchedBefore && data.olderAvailable && olderCredits > 0 && (
           <button
@@ -409,7 +409,7 @@ export function Reviews({
       {notEnough && !data.keyError && (
         <div className="rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm">
           This SerpApi key has {data.creditsLeft} search{data.creditsLeft === 1 ? "" : "es"} left, fewer than
-          the {refreshCost} this fetch may need. Lower the review limit or add credits to the key.
+          the {refreshCost} this fetch may need. Lower the review limit or add searches to the SerpApi account.
         </div>
       )}
       {(msg || data.syncError) && (
@@ -425,9 +425,9 @@ export function Reviews({
         <div className="rounded-xl border bg-surface p-6 text-sm">
           <p className="font-medium">No reviews fetched yet.</p>
           <p className="mt-1 text-muted">
-            Reviews are only fetched when you ask, to save SerpApi credits. Fetching{" "}
+            Reviews are only fetched when you ask, to save SerpApi searches. Fetching{" "}
             {limit === 5000 ? "all reviews" : `up to ${limit.toLocaleString()} reviews`} uses at most{" "}
-            {firstFetch} credit{firstFetch === 1 ? "" : "s"}
+            {firstFetch} search{firstFetch === 1 ? "" : "es"}
             {data.lookupCredit ? " (including 1 to look the business up from its Maps link)" : ""}: 1 for the
             first {FIRST_PAGE} reviews, then 1 for every {NEXT_PAGE}. Fewer are used if the business has fewer
             reviews.

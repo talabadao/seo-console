@@ -3,6 +3,8 @@ import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment
 import { currentUser } from "@/lib/session";
 import { reviewContext } from "@/lib/reviewContext";
 import { syncReviews } from "@/lib/reviews";
+import { meterSerpSearch } from "@/lib/providers/serpapi";
+import { keyFingerprint } from "@/lib/providers/ledger";
 
 export const maxDuration = 300;
 
@@ -26,6 +28,8 @@ export async function POST(req: NextRequest) {
         mode: body.mode === "older" ? "older" : "refresh",
         max,
         budgetMs: 230_000,
+        // Same SerpApi limits and ledger as the AI Area: one budget per project and account.
+        meter: (operation) => meterSerpSearch({ userId: user.id, projectId: ctx.project.id, fingerprint: keyFingerprint(ctx.key) }, operation),
       }),
     );
   } catch (e) {

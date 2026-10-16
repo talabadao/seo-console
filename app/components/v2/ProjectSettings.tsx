@@ -92,7 +92,7 @@ export function ProjectSettings({
           </Card>
         )}
 
-        {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onOpenConsoleSettings={onOpenConsoleSettings} onProjectChanged={onProjectChanged} />}
+        {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onProjectChanged={onProjectChanged} />}
 
         {section === "kpi" && (
           <KpiPlanner
@@ -125,7 +125,7 @@ export function ProjectSettings({
             title="Tracking"
             actions={
               <button className={buttonClass} onClick={onOpenConsoleSettings}>
-                Open tracking settings
+                Open tracking &amp; connections
               </button>
             }
           >
@@ -175,13 +175,11 @@ function Integrations({
   project,
   edit,
   onNavigate,
-  onOpenConsoleSettings,
   onProjectChanged,
 }: {
   project: Project;
   edit: ReactNode;
   onNavigate: (l: ShellLocation) => void;
-  onOpenConsoleSettings: () => void;
   onProjectChanged: () => void | Promise<void>;
 }) {
   const connections = [
@@ -209,9 +207,9 @@ function Integrations({
           ))}
         </ul>
         <p className="mt-3 text-xs text-muted">
-          The Asana token and Bing key belong to your account, not the project.{" "}
-          <button className="text-accent hover:underline" onClick={onOpenConsoleSettings}>
-            Account keys
+          API keys, the Asana token and the Bing key belong to your account, not the project.{" "}
+          <button className="text-accent hover:underline" onClick={() => onNavigate({ kind: "project", projectId: project.id, group: "settings", item: "account", sub: "" })}>
+            Account settings
           </button>
         </p>
       </Card>
@@ -428,7 +426,7 @@ function Budgets({ project, onNavigate }: { project: Project; onNavigate: (l: Sh
       <BudgetLimits projectId={project.id} onOpenAccount={() => onNavigate(account("budgets"))} />
       <Card title="Other limits (fixed)">
         <ul className="space-y-2 text-sm">
-          <Row label="Maps reviews (SerpApi)" body={`Fetched only when you ask; 1 SerpApi credit per page of reviews. ${project.hasSerpKey ? "A SerpApi key applies to this project." : "No SerpApi key yet."}`} />
+          <Row label="Maps reviews (SerpApi)" body={`Fetched only when you ask; 1 SerpApi search per page of reviews. ${project.hasSerpKey ? "A SerpApi key applies to this project." : "No SerpApi key yet."}`} />
           <Row label="Review analysis (OpenAI)" body="Runs only when you ask, on reviews not analysed yet." />
           <Row label="PageSpeed Insights" body="Up to 15 tracked pages per project, checked once a day." />
           <Row label="URL inspection" body="Google allows 2,000 inspections per property per day; one manual run does up to 500." />

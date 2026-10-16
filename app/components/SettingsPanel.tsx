@@ -233,7 +233,7 @@ export function SettingsPanel({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Settings</h2>
+          <h2 className="text-lg font-semibold">Tracking &amp; connections</h2>
           <button onClick={onClose} className="text-muted hover:text-foreground">
             ✕
           </button>
@@ -315,7 +315,7 @@ export function SettingsPanel({
           <p className="mt-1 text-xs text-muted">
             Asana → My Settings → Apps → Developer apps → Personal access tokens. Used by the
             Weekly Report&apos;s Insights tab to pull tasks and post status updates to the
-            project you set in Configure KPIs.
+            project set in the Weekly report's Report settings.
           </p>
           <div className="mt-2 flex gap-2">
             <input
