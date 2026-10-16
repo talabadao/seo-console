@@ -50,8 +50,9 @@ const fetchMock = vi.fn(async (input: string | URL) => {
 });
 
 beforeAll(async () => {
-  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, serpapi_key TEXT);
-    INSERT INTO users DEFAULT VALUES; INSERT INTO projects (serpapi_key) VALUES ('test-key-not-real'), ('test-key-not-real');`);
+  // Both projects belong to account 1 and still carry a legacy project key, which the resolver uses.
+  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, user_id BIGINT, serpapi_key TEXT, serpapi_key_updated_at BIGINT);
+    INSERT INTO users (email) VALUES ('owner@example.com'); INSERT INTO projects (user_id, serpapi_key) VALUES (1, 'test-key-not-real'), (1, 'test-key-not-real');`);
   for (const s of aiArea.statements) await pg.exec(s);
 });
 

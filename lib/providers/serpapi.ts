@@ -1,14 +1,15 @@
 // SerpApi for the AI Area (Google Search Tracking, Brand Mentions' Google AI sources, Rank tracking).
 //
-// - One key per project: the project's own SerpApi key (Project settings), else the server's
-//   SERPAPI_API_KEY. Keys stay on the server; there's no key rotation to get around an exhausted quota —
-//   an exhausted key stops the run with SerpApi's message.
+// - The key comes from the shared credential resolver (lib/credentials/resolve.ts): a legacy project key until
+//   it's resolved, else the signed-in account's encrypted SerpApi credential, else a server key only for
+//   accounts explicitly allowed to use it. Keys stay on the server; there's no key rotation to get around an
+//   exhausted quota — an exhausted key stops the run with SerpApi's message.
 // - Every search passes serpDecision (policy.ts), takes one unit from its allowance and is written to the
 //   ledger before it's sent. Account balance checks (account.json) are free and aren't metered.
 // - SerpApi doesn't charge for responses it serves from its own cache, but the app can't always tell which
 //   those were, so it counts every request it makes. SerpApi's own figures are shown next to it.
 
-import { serpKeyFor } from "@/lib/projects";
+import { resolveCredential, type CredentialSource } from "@/lib/credentials/resolve";
 import { CapReached, completeUsage, keyFingerprint, reserveUsage, takeAllowance } from "./ledger";
 import { serpDecision } from "./policy";
 
@@ -26,16 +27,17 @@ export class SerpRefused extends Error {
 
 export interface SerpKey {
   key: string;
-  source: "project" | "server";
+  source: CredentialSource;
   fingerprint: string;
 }
 
-export async function serpKey(projectId: number): Promise<SerpKey | null> {
-  const own = await serpKeyFor(projectId);
-  if (own) return { key: own, source: "project", fingerprint: keyFingerprint(own) };
-  const server = process.env.SERPAPI_API_KEY?.trim();
-  return server ? { key: server, source: "server", fingerprint: keyFingerprint(server) } : null;
+/** The SerpApi key this account uses for this project (or account-wide when projectId is null). */
+export async function serpKey(userId: number, projectId: number | null): Promise<SerpKey | null> {
+  const r = await resolveCredential(userId, "serpapi", projectId);
+  return r ? { key: r.values.apiKey, source: r.source, fingerprint: keyFingerprint(r.values.apiKey) } : null;
 }
+
+export const NO_SERP_KEY = "No SerpApi key: add one in Settings → Account → API credentials.";
 
 export interface SerpContext {
   userId: number;
@@ -109,7 +111,7 @@ export interface SerpAccount {
   thisMonthUsage: number | null;
   searchesPerMonth: number | null;
   /** Which account: the same key (and so the same balance) may serve several projects. */
-  keySource: "project" | "server";
+  keySource: CredentialSource;
   keyFingerprint: string;
 }
 

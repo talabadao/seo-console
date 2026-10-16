@@ -11,6 +11,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { CapReached, adjustAllowance, completeUsage, keyFingerprint, reserveUsage, takeAllowance } from "./ledger";
 import { llmDecision } from "./policy";
+import { resolveCredential } from "@/lib/credentials/resolve";
 import { PRICING_VERSION, capCost, estimateCost } from "./pricing";
 
 export type LlmProvider = "openai" | "anthropic";
@@ -38,29 +39,28 @@ export interface LlmUsage {
   webSearches?: number;
 }
 
-const KEY_ENV: Record<LlmProvider, string> = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY" };
+const LABEL: Record<LlmProvider, string> = { openai: "OpenAI", anthropic: "Anthropic" };
+const missingKey = (provider: LlmProvider) => `No ${LABEL[provider]} API key is saved for your account (Settings → Account → API credentials).`;
 
-function apiKey(provider: LlmProvider): string | null {
-  return process.env[KEY_ENV[provider]]?.trim() || null;
+/** The account's key for a provider, from the shared resolver (never read from the environment here). */
+async function apiKey(userId: number, provider: LlmProvider): Promise<{ key: string; fingerprint: string } | null> {
+  const r = await resolveCredential(userId, provider);
+  return r ? { key: r.values.apiKey, fingerprint: r.fingerprint } : null;
 }
 
 /** Why a provider can't be called right now, or null when it can (before caps). Used to show unavailable states. */
-export function llmUnavailable(provider: LlmProvider, userId: number): string | null {
+export async function llmUnavailable(provider: LlmProvider, userId: number): Promise<string | null> {
   const decision = llmDecision(userId);
   if (!decision.allowed) return decision.reason;
-  if (!apiKey(provider)) return `${KEY_ENV[provider]} isn't configured on the server.`;
+  if (!(await apiKey(userId, provider))) return missingKey(provider);
   return null;
 }
 
-export function openaiClient(): OpenAI {
-  const key = apiKey("openai");
-  if (!key) throw new LlmRefused("OPENAI_API_KEY isn't configured on the server.", "not-configured");
+export function openaiClient(key: string): OpenAI {
   return new OpenAI({ apiKey: key, maxRetries: 0, timeout: 120_000 });
 }
 
-export function anthropicClient(): Anthropic {
-  const key = apiKey("anthropic");
-  if (!key) throw new LlmRefused("ANTHROPIC_API_KEY isn't configured on the server.", "not-configured");
+export function anthropicClient(key: string): Anthropic {
   // Retries are made explicitly (each one is a separate ledger row), never inside the SDK.
   return new Anthropic({ apiKey: key, maxRetries: 0, timeout: 120_000 });
 }
@@ -87,12 +87,13 @@ export async function meteredCall<T>(
   operation: string,
   model: string,
   expected: LlmUsage,
-  call: () => Promise<{ result: T; usage: LlmUsage; model?: string }>,
+  call: (apiKey: string) => Promise<{ result: T; usage: LlmUsage; model?: string }>,
 ): Promise<{ result: T; costUsd: number | null; model: string }> {
   const decision = llmDecision(meter.userId);
   if (!decision.allowed) throw new LlmRefused(decision.reason, "policy");
-  const key = apiKey(provider);
-  if (!key) throw new LlmRefused(`${KEY_ENV[provider]} isn't configured on the server.`, "not-configured");
+  const resolved = await apiKey(meter.userId, provider);
+  if (!resolved) throw new LlmRefused(missingKey(provider), "not-configured");
+  const key = resolved.key;
 
   const reserved = capCost(model, expected);
   try {
@@ -115,7 +116,7 @@ export async function meteredCall<T>(
     model,
   });
   try {
-    const out = await call();
+    const out = await call(key);
     const served = out.model || model;
     const cost = estimateCost(served, out.usage);
     await completeUsage(usageId, {

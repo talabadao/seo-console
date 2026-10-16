@@ -1,5 +1,5 @@
 import { db, rawSql } from "@/lib/db";
-import { classifierConfigured, classifyBatch, discoverAspects } from "@/lib/reviewClassify";
+import { classifyBatch, discoverAspects } from "@/lib/reviewClassify";
 import {
   SerpApiError,
   creditsFor,
@@ -283,10 +283,12 @@ const WORKERS = 4;
 export async function classifyPending(
   project: ReviewProject,
   budgetMs: number,
+  openaiKey: string | null,
 ): Promise<{ classified: number; remaining: number; error?: string }> {
   const location = project.placeRef;
   if (!location) return { classified: 0, remaining: 0 };
-  if (!classifierConfigured()) return { classified: 0, remaining: await pendingCount(project.id, location) };
+  if (!openaiKey) return { classified: 0, remaining: await pendingCount(project.id, location) };
+  const apiKey: string = openaiKey;
   const started = Date.now();
   const business = project.placeTitle || project.name;
 
@@ -304,6 +306,7 @@ export async function classifyPending(
         .all(project.id, location)) as { text: string }[];
       if (!sample.length) return { classified: 0, remaining: 0 };
       aspects = await discoverAspects(
+        apiKey,
         business,
         sample.map((s) => s.text.slice(0, 300)),
       );
@@ -354,6 +357,7 @@ export async function classifyPending(
 
       try {
         const out = await classifyBatch(
+          apiKey,
           business,
           aspects,
           rows.map((r) => ({ id: r.review_id, star: r.star, text: (r.source_en ?? r.comment).slice(0, 1500) })),
@@ -384,7 +388,7 @@ export async function classifyPending(
 }
 
 /** Everything the Reviews tab shows, read from storage. Costs no SerpApi credits. */
-export async function reviewsData(project: ReviewProject, key: string): Promise<ReviewsData> {
+export async function reviewsData(project: ReviewProject, key: string, classifier: boolean): Promise<ReviewsData> {
   const location = await ensurePlaceRef(project);
 
   let creditsLeft: number | null = null;
@@ -453,7 +457,7 @@ export async function reviewsData(project: ReviewProject, key: string): Promise<
     topics: parseList<{ keyword: string; mentions: number }>(state?.topics_json),
     reviews,
     pending,
-    classifier: classifierConfigured(),
+    classifier,
     creditsLeft,
     keyError,
     creditsSpent: state?.credits_spent ?? 0,

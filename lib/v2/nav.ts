@@ -3,7 +3,8 @@
 //
 // Addresses:
 //   /portfolio                       All projects (only the signed-in account's)
-//   /portfolio/<group>/<item>        A project-only page opened from All projects: pick a project first
+//   /portfolio/<group>/<item>[/<sub>] A project-only page opened from All projects: pick a project first.
+//                                    Account-scoped pages (Settings → Account) render here directly, no project.
 //   /p/<projectId>/<group>/<item>[/<sub>]
 //   /docs
 // The project is identified by its id, never by its (editable) name.
@@ -23,6 +24,8 @@ export interface NavItem {
   milestone?: string;
   /** One sentence shown on demo and placeholder pages. */
   description?: string;
+  /** "account": the page belongs to the signed-in account, not a project (works with or without one selected). */
+  scope?: "account";
 }
 
 export interface NavGroup {
@@ -214,7 +217,10 @@ export const NAV: NavGroup[] = [
     id: "settings",
     label: "Settings",
     icon: "gear",
-    items: [{ id: "project", label: "Project settings", status: "live" }],
+    items: [
+      { id: "project", label: "Project settings", status: "live" },
+      { id: "account", label: "Account settings", status: "live", scope: "account" },
+    ],
   },
 ];
 
@@ -223,7 +229,7 @@ export const DEFAULT_ITEM = { group: "dashboard", item: "overview" } as const;
 
 export type ShellLocation =
   | { kind: "portfolio" }
-  | { kind: "pick"; group: string; item: string }
+  | { kind: "pick"; group: string; item: string; sub?: string }
   | { kind: "project"; projectId: number; group: string; item: string; sub: string }
   | { kind: "docs" };
 
@@ -243,7 +249,8 @@ export function parseShellPath(segments: string[]): ShellLocation | null {
   const [root, a, b, c, d] = segments;
   if (root === "docs") return { kind: "docs" };
   if (root === "portfolio") {
-    return a && b && findItem(a, b) ? { kind: "pick", group: a, item: b } : { kind: "portfolio" };
+    if (a && b && findItem(a, b)) return c ? { kind: "pick", group: a, item: b, sub: c } : { kind: "pick", group: a, item: b };
+    return { kind: "portfolio" };
   }
   if (root === "p") {
     const projectId = Number(a);
@@ -261,7 +268,7 @@ export function buildShellPath(loc: ShellLocation): string {
     case "docs":
       return "/docs";
     case "pick":
-      return `/portfolio/${loc.group}/${loc.item}`;
+      return `/portfolio/${loc.group}/${loc.item}${loc.sub ? `/${loc.sub}` : ""}`;
     case "project":
       return `/p/${loc.projectId}/${loc.group}/${loc.item}${loc.sub ? `/${loc.sub}` : ""}`;
   }
@@ -273,7 +280,15 @@ export function buildShellPath(loc: ShellLocation): string {
  * section); "All projects" goes to the portfolio.
  */
 export function switchProject(current: ShellLocation, projectId: number | null): ShellLocation {
-  if (projectId == null) return { kind: "portfolio" };
+  const account = (current.kind === "project" || current.kind === "pick") && findItem(current.group, current.item)?.item.scope === "account";
+  if (projectId == null) {
+    // Account settings don't need a project: stay on the same page without one.
+    if (account && (current.kind === "project" || current.kind === "pick")) return { kind: "pick", group: current.group, item: current.item, ...(current.sub ? { sub: current.sub } : {}) };
+    return { kind: "portfolio" };
+  }
+  if (current.kind === "pick" && account) {
+    return { kind: "project", projectId, group: current.group, item: current.item, sub: current.sub ?? "" };
+  }
   if (current.kind === "project") {
     // Settings sections are the same for every project, so they carry over; data sub-tabs don't.
     const sub = current.group === "settings" ? current.sub : "";

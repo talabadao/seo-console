@@ -10,7 +10,7 @@
 
 import type { UserRow } from "@/lib/session";
 import type { Project } from "@/lib/projects";
-import { SerpRefused, serpKey, serpSearch } from "@/lib/providers/serpapi";
+import { NO_SERP_KEY, SerpRefused, serpKey, serpSearch } from "@/lib/providers/serpapi";
 import { claimRun, finishRun, getRun, progressRun, releaseRun, startRun } from "@/lib/ai-area/runs";
 import { readConfig, readHistory, writeHistory } from "./store";
 import { todayDateString, trackKeyword } from "./run";
@@ -74,9 +74,9 @@ export async function continueTracking(user: UserRow, project: Project, runId: s
 }
 
 async function runChunk(user: UserRow, project: Project, runId: string, actual: TrackingActual): Promise<{ finished: boolean; actual: TrackingActual; status: string; error: string | null }> {
-  const key = await serpKey(project.id);
+  const key = await serpKey(user.id, project.id);
   if (!key) {
-    await finishRun(runId, "error", actual, "No SerpApi key: add one in Project settings or set SERPAPI_API_KEY on the server.");
+    await finishRun(runId, "error", actual, NO_SERP_KEY);
     return { finished: true, actual, status: "error", error: "No SerpApi key." };
   }
   const config = await readConfig(project);

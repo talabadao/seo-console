@@ -437,7 +437,7 @@ export function Reviews({
       {!data.classifier && data.reviews.length > 0 && (
         <div className="rounded-lg border bg-surface p-3 text-sm text-muted">
           Sentiment is based on star ratings only, and praise / criticism tags are off, because no
-          classifier key is set. Add <code>OPENAI_API_KEY</code> to the Vercel project and redeploy to
+          OpenAI API key is saved for your account. Add one in Settings → Account → API credentials to
           turn on full analysis.
         </div>
       )}

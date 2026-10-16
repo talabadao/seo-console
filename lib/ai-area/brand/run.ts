@@ -16,7 +16,7 @@ import type { UserRow } from "@/lib/session";
 import type { Project } from "@/lib/projects";
 import { deploymentOf } from "@/lib/environment";
 import { LlmRefused, type LlmMeter } from "@/lib/providers/llm";
-import { SerpRefused, serpKey, serpSearch } from "@/lib/providers/serpapi";
+import { NO_SERP_KEY, SerpRefused, serpKey, serpSearch } from "@/lib/providers/serpapi";
 import { claimRun, finishRun, getRun, progressRun, releaseRun, startRun } from "@/lib/ai-area/runs";
 import { readConfig } from "../tracking/store";
 import type { TrackingConfig } from "../tracking/types";
@@ -56,11 +56,11 @@ export interface BrandStep {
   cycle: CycleSummary | null;
 }
 
-function availability(user: UserRow, project: Project, hasSerpKey: boolean, settings: BrandSettings) {
+async function availability(user: UserRow, project: Project, hasSerpKey: boolean, settings: BrandSettings) {
   const unavailable: Partial<Record<Platform, string>> = {};
   const usable: Platform[] = [];
   for (const p of PLATFORMS.filter((x) => settings.platforms[x])) {
-    const why = platformUnavailable(p, { userId: user.id, projectId: project.id, hasSerpKey });
+    const why = await platformUnavailable(p, { userId: user.id, projectId: project.id, hasSerpKey });
     if (why) unavailable[p] = why;
     else usable.push(p);
   }
@@ -87,8 +87,8 @@ export function estimateBrand(settings: BrandSettings, prompts: number, platform
 
 /** What a Run now would do, for the confirmation dialog. Continuing an unfinished cycle covers only what's left. */
 export async function previewBrandRun(user: UserRow, project: Project): Promise<BrandEstimate & { continues: string | null }> {
-  const [prompts, settings, key, cycles] = await Promise.all([readPrompts(project.id), readSettings(project.id), serpKey(project.id), listCycles(project.id)]);
-  const { usable, unavailable } = availability(user, project, Boolean(key), settings);
+  const [prompts, settings, key, cycles] = await Promise.all([readPrompts(project.id), readSettings(project.id), serpKey(user.id, project.id), listCycles(project.id)]);
+  const { usable, unavailable } = await availability(user, project, Boolean(key), settings);
   const open = [...cycles].reverse().find((c) => c.status !== "done");
   if (open) {
     const cycle = await readCycle(project.id, open.id);
@@ -187,7 +187,7 @@ async function runChunk(user: UserRow, project: Project, runId: string, actual: 
     await finishRun(runId, "error", actual, "The run's cycle is missing.");
     return { finished: true, status: "error", error: "The run's cycle is missing.", actual, cycle: null };
   }
-  const [config, settings, key] = await Promise.all([readConfig(project), readSettings(project.id), serpKey(project.id)]);
+  const [config, settings, key] = await Promise.all([readConfig(project), readSettings(project.id), serpKey(user.id, project.id)]);
   const meter: LlmMeter = { userId: user.id, projectId: project.id, runId };
   const started = Date.now();
   // One at a time on Preview, where the SerpApi allowance is tiny, so the cap stops at an exact answer.
@@ -218,7 +218,7 @@ async function runChunk(user: UserRow, project: Project, runId: string, actual: 
       // Counts the SerpApi requests this answer actually sent (including a refused second AI Overview request's first one).
       let sent = 0;
       const search = async (params: Record<string, string>) => {
-        if (!key) throw new SerpRefused("No SerpApi key: add one in Project settings or set SERPAPI_API_KEY on the server.");
+        if (!key) throw new SerpRefused(NO_SERP_KEY);
         const out = serpSearch(params, { userId: user.id, projectId: project.id, runId, key });
         sent++;
         try {

@@ -42,6 +42,7 @@ import { Breadcrumbs, EmptyState, ErrorState, LoadingState, PageHeader, buttonCl
 import { ProjectDashboard } from "./ProjectDashboard";
 import { PortfolioDashboard } from "./PortfolioDashboard";
 import { ProjectSettings } from "./ProjectSettings";
+import { AccountSettings } from "./AccountSettings";
 import { LlmTrafficReport } from "./LlmTrafficReport";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
@@ -98,9 +99,11 @@ export function Shell({
       window.location.assign(href); // a classic-dashboard address
       return;
     }
-    if (window.location.pathname !== href) {
-      if (replace) window.history.replaceState(null, "", href);
-      else window.history.pushState(null, "", href);
+    // Always record the canonical address (old addresses, e.g. /p/4/ai-area/usage, resolve to their new page).
+    const canonical = buildShellPath(parsed) + (href.includes("?") ? href.slice(href.indexOf("?")) : "");
+    if (window.location.pathname + window.location.search !== canonical) {
+      if (replace) window.history.replaceState(null, "", canonical);
+      else window.history.pushState(null, "", canonical);
     }
     setLoc(parsed);
     setDrawer(false);
@@ -301,6 +304,7 @@ export function Shell({
 
 function itemHref(loc: ShellLocation, project: Project | null, group: string, item: string): ShellLocation {
   if (project) return { kind: "project", projectId: project.id, group, item, sub: "" };
+  if (findItem(group, item)?.item.scope === "account") return { kind: "pick", group, item };
   if (group === DEFAULT_ITEM.group && item === DEFAULT_ITEM.item) return { kind: "portfolio" };
   return { kind: "pick", group, item };
 }
@@ -613,6 +617,24 @@ function Page(props: PageProps) {
 
   if (loc.kind === "pick") {
     const found = findItem(loc.group, loc.item)!;
+    if (found.item.scope === "account") {
+      return (
+        <>
+          <PageHeader
+            crumbs={[{ label: "All projects", href: "/portfolio" }, { label: found.group.label }, { label: found.item.label }]}
+            title={found.item.label}
+            onNavigate={nav}
+          />
+          <AccountSettings
+            sub={loc.sub ?? ""}
+            projectId={null}
+            projects={projects}
+            onSub={(sub) => onNavigate({ kind: "pick", group: loc.group, item: loc.item, ...(sub ? { sub } : {}) })}
+            onProjectsChanged={props.onRetryProjects}
+          />
+        </>
+      );
+    }
     return (
       <>
         <PageHeader
@@ -713,6 +735,7 @@ function Page(props: PageProps) {
 function ProjectPage({
   loc,
   project,
+  projects,
   item,
   connected,
   sites,
@@ -816,6 +839,16 @@ function ProjectPage({
       return <PageSpeed projectId={project.id} websiteUrl={project.websiteUrl} />;
     case "technical-seo/indexing":
       return gscReconnect || <Indexing property={property} neverSynced={!site?.lastSync?.finished_at} />;
+    case "settings/account":
+      return (
+        <AccountSettings
+          sub={loc.sub}
+          projectId={project.id}
+          projects={projects}
+          onSub={subNav}
+          onProjectsChanged={onRetryProjects}
+        />
+      );
     case "settings/project":
       return (
         <ProjectSettings

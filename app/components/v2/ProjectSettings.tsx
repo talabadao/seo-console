@@ -14,7 +14,6 @@ import { hostOf } from "@/lib/projectMatch";
 import { NAV, meetsRequirement, type ShellLocation } from "@/lib/v2/nav";
 import { Card, buttonClass, primaryButtonClass } from "./ui";
 import { LeadEventsEditor } from "../LeadEventsEditor";
-import { CredentialField } from "./CredentialField";
 
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
@@ -204,7 +203,7 @@ function Integrations({
           </button>
         </p>
       </Card>
-      <SerpApiKeyCard project={project} onProjectChanged={onProjectChanged} />
+      <SerpApiKeyCard project={project} onProjectChanged={onProjectChanged} onNavigate={onNavigate} />
       <SeRankingCard project={project} />
       <Card title="Pages that need a connection">
         <ul className="grid gap-2 sm:grid-cols-2">
@@ -233,39 +232,82 @@ function Integrations({
 }
 
 /**
- * The project's SerpApi key as a standalone credential: Saved / Not configured, masked identifier, last-updated,
- * Replace / Remove, and a non-billable Check against SerpApi's free account endpoint. Saving goes to its own
- * endpoint, so it never depends on the Maps link or any other project field.
+ * Which SerpApi key this project uses. Keys are saved once per account (Settings → Account → API credentials);
+ * a legacy key stored on the project still applies until it's removed or adopted there. A free Check verifies
+ * the key that applies (SerpApi's account endpoint; no search spent).
  */
-function SerpApiKeyCard({ project, onProjectChanged }: { project: Project; onProjectChanged: () => void | Promise<void> }) {
-  const base = `/api/projects/${project.id}/serpapi-key`;
-  async function body(res: Response): Promise<string | null> {
-    const j = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) return j.error ?? `Couldn't save (status ${res.status}).`;
-    await onProjectChanged();
-    return null;
+function SerpApiKeyCard({
+  project,
+  onProjectChanged,
+  onNavigate,
+}: {
+  project: Project;
+  onProjectChanged: () => void | Promise<void>;
+  onNavigate: (l: ShellLocation) => void;
+}) {
+  const [busy, setBusy] = useState<null | "check" | "clear">(null);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const accountHref: ShellLocation = { kind: "project", projectId: project.id, group: "settings", item: "account", sub: "" };
+  const updated = project.serpKeyUpdatedAt
+    ? ` · updated ${new Date(project.serpKeyUpdatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+    : "";
+  async function check() {
+    setBusy("check");
+    const res = await fetch(`/api/projects/${project.id}/serpapi-key`, { method: "POST" });
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; account?: { totalSearchesLeft: number | null } };
+    setResult(
+      !res.ok || j.ok === false
+        ? { ok: false, message: j.error ?? `Check failed (status ${res.status}).` }
+        : { ok: true, message: j.account?.totalSearchesLeft == null ? "SerpApi accepted the key." : `SerpApi accepted the key; ${j.account.totalSearchesLeft.toLocaleString("en-US")} searches left on that account.` },
+    );
+    setBusy(null);
+  }
+  async function clear() {
+    setBusy("clear");
+    const res = await fetch(`/api/projects/${project.id}/serpapi-key`, { method: "DELETE" });
+    setBusy(null);
+    if (res.ok) await onProjectChanged();
+    else setResult({ ok: false, message: "Couldn't remove the project key." });
   }
   return (
     <Card title="SerpApi key">
-      <p className="mb-2 text-xs text-muted">
-        Used for this project&apos;s Google Maps reviews and AI Area → Google Search Tracking. Stored on the server and never shown again.
-      </p>
-      <CredentialField
-        label="SerpApi key"
-        hint="From serpapi.com → API key."
-        docsHref="https://serpapi.com/manage-api-key"
-        placeholder="Paste the key from serpapi.com"
-        status={{ last4: project.serpKeyLast4, updatedAt: project.serpKeyUpdatedAt }}
-        onSave={(value) => fetch(base, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: value }) }).then(body)}
-        onRemove={() => fetch(base, { method: "DELETE" }).then(body)}
-        onCheck={async () => {
-          const res = await fetch(base, { method: "POST" });
-          const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; account?: { totalSearchesLeft: number | null } };
-          if (!res.ok || j.ok === false) return { ok: false, message: j.error ?? `Check failed (status ${res.status}).` };
-          const left = j.account?.totalSearchesLeft;
-          return { ok: true, message: left == null ? "the key works." : `${left.toLocaleString("en-US")} SerpApi searches left on the account.` };
-        }}
-      />
+      <ul className="space-y-2 text-sm">
+        <Row
+          label="Key that applies"
+          body={
+            project.serpKeySource === "account"
+              ? `Your account's SerpApi key ••••${project.serpKeyLast4 ?? ""}${updated}`
+              : project.serpKeySource === "project-legacy"
+                ? `A legacy key stored on this project ••••${project.serpKeyLast4 ?? ""}${updated}. It keeps working until you remove it or move it to your account.`
+                : project.serpKeySource === "server-legacy"
+                  ? "The server's SerpApi key (legacy, allowed for this account)."
+                  : "None. Add a SerpApi key for your account."
+          }
+          right={<ConnectionBadge on={project.hasSerpKey} />}
+        />
+      </ul>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button className={buttonClass} onClick={() => onNavigate(accountHref)}>
+          Manage in Account → API credentials
+        </button>
+        {project.hasSerpKey && (
+          <button className={buttonClass} onClick={check} disabled={busy !== null} title="Reads your SerpApi account (free; no search is used)">
+            {busy === "check" ? "Checking…" : "Check connection"}
+          </button>
+        )}
+        {project.serpKeySource === "project-legacy" && (
+          <button className="text-sm text-muted hover:text-bad" onClick={clear} disabled={busy !== null}>
+            {busy === "clear" ? "Removing…" : "Remove project key (use account key)"}
+          </button>
+        )}
+      </div>
+      {result && (
+        <p role="status" className="mt-2 text-xs" style={{ color: result.ok ? "var(--good)" : "var(--bad)" }}>
+          {result.ok ? "Verified: " : "Check failed: "}
+          {result.message}
+        </p>
+      )}
+      <p className="mt-2 text-xs text-muted">Used for Maps reviews, Google Search Tracking, Rank tracking → Google and Brand Mentions.</p>
     </Card>
   );
 }
@@ -489,7 +531,7 @@ function Budgets({ project }: { project: Project }) {
       <ul className="space-y-2 text-sm">
         <Row
           label="Maps reviews (SerpApi)"
-          body={`Fetched only when you ask. 1 SerpApi credit per page of reviews. ${project.hasSerpKey ? "A key is saved for this project." : "No key saved."}`}
+          body={`Fetched only when you ask. 1 SerpApi credit per page of reviews. ${project.hasSerpKey ? "A SerpApi key applies to this project." : "No SerpApi key yet."}`}
         />
         <Row label="Review analysis (OpenAI)" body="Runs only when you ask, on reviews not analysed yet." />
         <Row label="PageSpeed Insights" body="Up to 15 tracked pages per project, checked once a day." />

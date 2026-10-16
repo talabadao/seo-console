@@ -4,6 +4,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { anthropicClient, LlmCallError, llmUnavailable, meteredCall, openaiClient, type LlmMeter } from "@/lib/providers/llm";
 import { serpDecision } from "@/lib/providers/policy";
+import { NO_SERP_KEY } from "@/lib/providers/serpapi";
 import { extractDomain, flattenTextBlocks, mapReferences, type Search } from "../tracking/serpapi";
 import type { TrackingSettings } from "../tracking/types";
 import { CHATGPT_MODELS, CLAUDE_MODELS } from "./pricing";
@@ -19,12 +20,12 @@ export interface Answer {
 }
 
 /** Why a platform can't be asked right now (policy, missing key), or null. Caps are checked per request. */
-export function platformUnavailable(platform: Platform, ctx: { userId: number; projectId: number; hasSerpKey: boolean }): string | null {
+export async function platformUnavailable(platform: Platform, ctx: { userId: number; projectId: number; hasSerpKey: boolean }): Promise<string | null> {
   if (platform === "chatgpt") return llmUnavailable("openai", ctx.userId);
   if (platform === "claude") return llmUnavailable("anthropic", ctx.userId);
   const d = serpDecision(ctx.projectId);
   if (!d.allowed) return d.reason;
-  return ctx.hasSerpKey ? null : "No SerpApi key: add one in Project settings or set SERPAPI_API_KEY on the server.";
+  return ctx.hasSerpKey ? null : NO_SERP_KEY;
 }
 
 function dedupeSources(list: SourceLink[], max = 20): SourceLink[] {
@@ -80,8 +81,8 @@ export async function askChatGpt(prompt: string, settings: TrackingSettings, mod
     "brand-answer",
     model,
     { input: typical.input, output: typical.output, webSearches: typical.searches },
-    async () => {
-      const r = await openaiClient().responses.create({
+    async (key) => {
+      const r = await openaiClient(key).responses.create({
         model,
         input: prompt,
         tools: [{ type: "web_search", user_location: { type: "approximate", country: settings.country.toUpperCase() } }],
@@ -120,7 +121,6 @@ const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-sonnet-5-5"]);
 const NEW_SEARCH_MODELS = new Set(["claude-opus-5-5", "claude-sonnet-5-5"]);
 
 export async function askClaude(prompt: string, settings: TrackingSettings, model: string, meter: LlmMeter): Promise<Answer> {
-  const client = anthropicClient();
   const typical = (CLAUDE_MODELS.find((m) => m.id === model) ?? CLAUDE_MODELS[0]).typical;
   const fallbacks = FALLBACK_MODELS.has(model);
   const tools: Anthropic.Beta.BetaToolUnion[] = [
@@ -141,8 +141,8 @@ export async function askClaude(prompt: string, settings: TrackingSettings, mode
       "brand-answer",
       model,
       { input: typical.input, output: typical.output, webSearches: typical.searches },
-      async () => {
-        const r = await client.beta.messages.create({
+      async (key) => {
+        const r = await anthropicClient(key).beta.messages.create({
           model,
           max_tokens: 4000,
           tools,

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       readSettings(g.project.id),
       readPrompts(g.project.id),
       readFacts(g.project.id),
-      serpKey(g.project.id),
+      serpKey(g.user.id, g.project.id),
     ]);
     const inRange = summaries.filter((c) => !since || c.startedAt >= since).slice(-26);
     const cycles = (await Promise.all(inRange.map((c) => readCycle(g.project.id, c.id)))).filter((c): c is Cycle => c !== null);
