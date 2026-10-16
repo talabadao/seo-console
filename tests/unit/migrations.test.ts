@@ -35,8 +35,8 @@ describe("registered migrations", () => {
   it("registers every migration file under db/migrations, in order", async () => {
     const { readdirSync } = await import("node:fs");
     const files = readdirSync("db/migrations")
-      .filter((f) => /^d{4}_.+.ts$/.test(f))
-      .map((f) => f.replace(/.ts$/, ""))
+      .filter((f) => /^\d{4}_.+\.ts$/.test(f))
+      .map((f) => f.replace(/\.ts$/, ""))
       .sort();
     expect(MIGRATIONS.map((m) => m.id)).toEqual(files);
   });
