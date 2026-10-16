@@ -1,6 +1,6 @@
 // Invented LLMs Traffic for demo projects and local mock mode. Always shown with a Demo label.
 
-import { DEFAULT_AI_DOMAINS } from "@/lib/ga4";
+import { DEFAULT_AI_DOMAINS } from "@/lib/ga4Traffic";
 import { addDaysYmd, daysBetween } from "@/lib/v2/summary/period";
 import type { PeriodInfo } from "@/lib/v2/summary/types";
 import { platformOf } from "./platforms";

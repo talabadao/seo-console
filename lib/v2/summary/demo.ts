@@ -5,7 +5,7 @@
 
 import { addDaysYmd, daysBetween, taskMonth } from "./period";
 import { evaluateKpi } from "./kpi";
-import { rankCounts } from "@/lib/seranking/rankings";
+import { rankCounts } from "@/lib/seranking/metrics";
 import {
   CONTENT_STAGES,
   type ContentData,
