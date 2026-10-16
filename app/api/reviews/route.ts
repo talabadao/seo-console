@@ -9,5 +9,5 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const ctx = await reviewContext(user.id, Number(req.nextUrl.searchParams.get("projectId")));
   if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
-  return NextResponse.json(await reviewsData(ctx.project, ctx.key));
+  return NextResponse.json(await reviewsData(ctx.project, ctx.key, Boolean(ctx.openaiKey)));
 }

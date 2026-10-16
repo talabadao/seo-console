@@ -14,7 +14,7 @@ export function SerpUsageBadge({ account, unavailable }: { account: SerpAccount 
       style={{ borderColor: "var(--border-hairline)", color: "var(--text-secondary)", background: "var(--surface-1)" }}
       title={
         account
-          ? `SerpApi account (${account.keySource === "project" ? "this project's key" : "server key"}): ${account.thisMonthUsage ?? "?"} used of ${account.searchesPerMonth ?? "?"} this month. Account-wide, shared by every project using this key. Checked ${new Date(account.fetchedAt).toLocaleString("en-GB")}.`
+          ? `SerpApi account (${account.keySource === "project-legacy" ? "this project's legacy key" : account.keySource === "account" ? "your account key" : "server key"}): ${account.thisMonthUsage ?? "?"} used of ${account.searchesPerMonth ?? "?"} this month. Account-wide, shared by every project using this key. Checked ${new Date(account.fetchedAt).toLocaleString("en-GB")}.`
           : (unavailable ?? "SerpApi balance unavailable")
       }
     >

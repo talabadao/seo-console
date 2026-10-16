@@ -9,7 +9,8 @@ import { db } from "@/lib/db";
 import { allowanceState, ledgerAvailable, usageTotals, type UsageTotals } from "./ledger";
 import { PRICING_VERSION } from "./pricing";
 import { llmDecision, previewSerpTest, serpDecision } from "./policy";
-import { serpAccount, serpKey, type SerpAccount } from "./serpapi";
+import { NO_SERP_KEY, serpAccount, serpKey, type SerpAccount } from "./serpapi";
+import { resolveCredential, type CredentialSource } from "@/lib/credentials/resolve";
 import { deploymentOf } from "@/lib/environment";
 
 type State = "live" | "unavailable" | "error";
@@ -38,7 +39,7 @@ export interface UsageReport {
   since: number;
   ledger: boolean;
   serpapi: {
-    keySource: "project" | "server" | null;
+    keySource: CredentialSource | null;
     account: ProviderReported<SerpAccount>;
     recorded: UsageTotals | null;
     policy: { allowed: boolean; scope: string; used: number | null; max: number | null };
@@ -99,11 +100,11 @@ async function anthropicReported(since: number): Promise<ProviderReported<{ amou
   }
 }
 
-async function dataforseoReported(): Promise<ProviderReported<{ balance: number | null; totalSpent: number | null }>> {
+async function dataforseoReported(userId: number): Promise<ProviderReported<{ balance: number | null; totalSpent: number | null }>> {
   const scope = "DataForSEO account";
-  const login = process.env.DATAFORSEO_LOGIN?.trim();
-  const password = process.env.DATAFORSEO_PASSWORD?.trim();
-  if (!login || !password) return { state: "unavailable", scope, message: "Not connected: SEO Console has no DataForSEO credentials, and nothing in the app uses DataForSEO yet." };
+  const cred = await resolveCredential(userId, "dataforseo");
+  if (!cred) return { state: "unavailable", scope, message: "Not connected: no DataForSEO API login and password in Settings → Account → API credentials." };
+  const { login, password } = cred.values;
   try {
     // Account information is a free endpoint; no paid task is created.
     const res = await fetch("https://api.dataforseo.com/v3/appendix/user_data", {
@@ -123,12 +124,12 @@ export async function usageReport(userId: number, projectId: number, since: numb
   const ledger = await ledgerAvailable();
   const totals = await usageTotals(userId, projectId, since);
   const pick = (p: string) => totals.find((t) => t.provider === p) ?? null;
-  const key = await serpKey(projectId);
+  const key = await serpKey(userId, projectId);
   let account: ProviderReported<SerpAccount>;
   const accountScope = key
-    ? `SerpApi account behind the ${key.source === "project" ? "project's own key" : "server key"} (shared by every project that uses this key)`
+    ? `SerpApi account behind ${key.source === "project-legacy" ? "this project's own legacy key" : key.source === "account" ? "your account's SerpApi key" : "the server key (legacy, allowed for this account)"} — shared by every project that uses the same key`
     : "SerpApi account";
-  if (!key) account = { state: "unavailable", scope: accountScope, message: "No SerpApi key: add one in Project settings, or set SERPAPI_API_KEY on the server." };
+  if (!key) account = { state: "unavailable", scope: accountScope, message: NO_SERP_KEY };
   else {
     try {
       const a = await serpAccount(key);
@@ -154,7 +155,7 @@ export async function usageReport(userId: number, projectId: number, since: numb
       return null;
     }
   };
-  const [openai, anthropic, dataforseo] = await Promise.all([openaiReported(since), anthropicReported(since), dataforseoReported()]);
+  const [openai, anthropic, dataforseo] = await Promise.all([openaiReported(since), anthropicReported(since), dataforseoReported(userId)]);
   return {
     since,
     ledger,

@@ -17,5 +17,5 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { projectId?: number };
   const ctx = await reviewContext(user.id, Number(body.projectId));
   if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
-  return NextResponse.json(await classifyPending(ctx.project, 170_000));
+  return NextResponse.json(await classifyPending(ctx.project, 170_000, ctx.openaiKey));
 }

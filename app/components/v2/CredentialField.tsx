@@ -1,116 +1,98 @@
 "use client";
 
-// A single stored API credential: shows whether it's saved (masked identifier + when it was last saved),
-// separately from whether it has been verified, and offers Add / Replace / Remove / Check. The raw secret is
-// only ever sent to the server — it is never read back, so the input starts empty and an empty unchanged input
-// means "keep the saved credential". Removal is an explicit action. Reused for project- and account-level keys.
+// One stored API credential. Two separate states, never merged:
+// - Storage: Saved (masked identifier, last updated) or Not configured.
+// - Connection: Verified / Check failed (with when and why) or Untested — from a non-billable check.
+// The secret is only ever sent to the server; it is never read back, so the inputs start empty and leaving
+// them untouched keeps the saved credential. Replace and Remove are explicit actions; success is shown only
+// after the server confirms the write.
 
 import { useState } from "react";
+import type { CredentialFieldSpec, CredentialStatus } from "@/lib/credentials/providers";
 import { buttonClass, primaryButtonClass } from "./ui";
 
-export interface CredentialStatus {
-  /** A saved credential's masked identifier, e.g. the last 4 characters; null when nothing is saved. */
-  last4: string | null;
-  /** When it was last saved (epoch ms); null when nothing is saved. */
-  updatedAt: number | null;
-}
+const fmt = (ms: number) => new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-export type CheckResult = { ok: boolean; message: string } | null;
+function Dot({ color }: { color: string }) {
+  return <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} aria-hidden="true" />;
+}
 
 export function CredentialField({
   label,
-  hint,
+  usedFor,
+  fields,
   docsHref,
+  checkNote,
   status,
   onSave,
   onRemove,
   onCheck,
-  inputType = "password",
-  placeholder = "Paste the key",
 }: {
   label: string;
-  hint?: string;
-  docsHref?: string;
+  usedFor: string;
+  fields: CredentialFieldSpec[];
+  docsHref: string;
+  checkNote: string;
   status: CredentialStatus;
-  /** Saves (or replaces) the credential; resolves to an error message, or null on success. */
-  onSave: (value: string) => Promise<string | null>;
-  /** Removes the saved credential; resolves to an error message, or null on success. */
+  /** Resolves to an error message, or null when the server confirmed the save. */
+  onSave: (values: Record<string, string>) => Promise<string | null>;
   onRemove: () => Promise<string | null>;
-  /** Optional non-billable verification; resolves to a result to show, or null if unsupported. */
-  onCheck?: () => Promise<CheckResult>;
-  inputType?: "password" | "text";
-  placeholder?: string;
+  onCheck: () => Promise<string | null>;
 }) {
-  const saved = status.updatedAt != null || status.last4 != null;
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<null | "save" | "remove" | "check">(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [check, setCheck] = useState<CheckResult>(null);
+  const saved = status.saved;
+  const server = !saved && status.source === "server-legacy";
+
+  async function run(kind: "save" | "remove" | "check", fn: () => Promise<string | null>, done: string) {
+    setBusy(kind);
+    setError(null);
+    setNotice(null);
+    const err = await fn();
+    setBusy(null);
+    if (err) setError(err);
+    else setNotice(done);
+    return !err;
+  }
 
   async function save() {
-    if (!value.trim()) {
-      setError("Enter a key to save, or press Cancel to keep the saved one.");
+    const missing = fields.find((f) => !(values[f.name] ?? "").trim());
+    if (missing) {
+      setError(`Enter the ${missing.label.toLowerCase()}, or press Cancel to keep ${saved ? "the saved credential" : "it unset"}.`);
       return;
     }
-    setBusy("save");
-    setError(null);
-    const err = await onSave(value.trim());
-    setBusy(null);
-    if (err) {
-      setError(err);
-      return;
+    const ok = await run("save", () => onSave(Object.fromEntries(fields.map((f) => [f.name, values[f.name].trim()]))), saved ? "Replaced. The new credential is saved and untested." : "Saved. Untested until you run Check.");
+    if (ok) {
+      setValues({});
+      setEditing(false);
     }
-    setValue("");
-    setEditing(false);
-    setCheck(null);
-  }
-
-  async function remove() {
-    setBusy("remove");
-    setError(null);
-    const err = await onRemove();
-    setBusy(null);
-    setConfirmRemove(false);
-    if (err) setError(err);
-    else setCheck(null);
-  }
-
-  async function runCheck() {
-    if (!onCheck) return;
-    setBusy("check");
-    setError(null);
-    setCheck(await onCheck());
-    setBusy(null);
   }
 
   return (
-    <div className="flex flex-col gap-2 border-b border-border/60 py-3 last:border-0">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="w-40 shrink-0 text-sm font-medium">{label}</span>
-        <span
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium"
-          title={saved ? "A credential is stored on the server" : "No credential stored"}
-        >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: saved ? "var(--good)" : "var(--bad)" }} aria-hidden="true" />
-          {saved ? "Saved" : "Not configured"}
-        </span>
-        {saved && (
-          <span className="text-xs text-muted">
-            {status.last4 ? <>••••{status.last4}</> : "stored"}
-            {status.updatedAt ? ` · updated ${new Date(status.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
-          </span>
-        )}
-        <span className="ml-auto flex flex-wrap items-center gap-2">
+    <section className="border-b border-border/60 py-4 last:border-0" aria-label={label}>
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium">{label}</h3>
+          <p className="mt-0.5 text-xs text-muted">
+            {usedFor}{" "}
+            <a href={docsHref} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+              Where to find it
+            </a>
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           {!editing && (
-            <button type="button" className={buttonClass} onClick={() => { setEditing(true); setError(null); setCheck(null); }}>
+            <button type="button" className={buttonClass} onClick={() => { setEditing(true); setError(null); setNotice(null); }}>
               {saved ? "Replace" : "Add"}
             </button>
           )}
-          {saved && onCheck && !editing && (
-            <button type="button" className={buttonClass} onClick={runCheck} disabled={busy === "check"}>
-              {busy === "check" ? "Checking…" : "Check"}
+          {saved && !editing && (
+            <button type="button" className={buttonClass} onClick={() => run("check", onCheck, "Check finished.")} disabled={busy === "check"} title={checkNote}>
+              {busy === "check" ? "Checking…" : "Check connection"}
             </button>
           )}
           {saved && !editing && !confirmRemove && (
@@ -120,46 +102,107 @@ export function CredentialField({
           )}
           {confirmRemove && (
             <span className="flex items-center gap-2 text-sm">
-              <span className="text-muted">Remove the saved key?</span>
-              <button type="button" className="font-medium text-bad" onClick={remove} disabled={busy === "remove"}>
-                {busy === "remove" ? "Removing…" : "Yes"}
+              <span className="text-muted">Remove the saved {label} credential?</span>
+              <button
+                type="button"
+                className="font-medium text-bad"
+                disabled={busy === "remove"}
+                onClick={async () => {
+                  await run("remove", onRemove, "Removed.");
+                  setConfirmRemove(false);
+                }}
+              >
+                {busy === "remove" ? "Removing…" : "Remove"}
               </button>
               <button type="button" className="text-muted" onClick={() => setConfirmRemove(false)}>
-                No
+                Keep
               </button>
             </span>
           )}
-        </span>
+        </div>
       </div>
 
+      <dl className="mt-2 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+        <div className="flex items-center gap-2">
+          <dt className="text-muted">Storage</dt>
+          <dd className="flex items-center gap-1.5 font-medium">
+            <Dot color={saved ? "var(--good)" : server ? "var(--warning, #b7791f)" : "var(--bad)"} />
+            {saved ? (
+              <>
+                Saved <span className="font-normal text-muted">· {fields.length > 1 ? status.hint : `••••${status.hint ?? ""}`}{status.updatedAt ? ` · updated ${fmt(status.updatedAt)}` : ""}</span>
+              </>
+            ) : server ? (
+              <>Using the server key (legacy, allowed for this account)</>
+            ) : (
+              "Not configured"
+            )}
+          </dd>
+        </div>
+        <div className="flex items-center gap-2">
+          <dt className="text-muted">Connection</dt>
+          <dd className="flex items-center gap-1.5 font-medium">
+            {!saved ? (
+              <span className="font-normal text-muted">—</span>
+            ) : status.verifyStatus === "ok" ? (
+              <>
+                <Dot color="var(--good)" /> Verified <span className="font-normal text-muted">{status.verifiedAt ? `· ${fmt(status.verifiedAt)}` : ""}</span>
+              </>
+            ) : status.verifyStatus === "failed" ? (
+              <>
+                <Dot color="var(--bad)" /> Check failed <span className="font-normal text-muted">{status.verifiedAt ? `· ${fmt(status.verifiedAt)}` : ""}</span>
+              </>
+            ) : (
+              <>
+                <Dot color="var(--muted, #888)" /> Untested
+              </>
+            )}
+          </dd>
+        </div>
+      </dl>
+      {saved && status.verifyMessage && <p className="mt-1 text-xs text-muted">{status.verifyMessage}</p>}
+
       {editing && (
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type={inputType}
-            autoComplete="off"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder}
-            aria-label={`${label} — new value`}
-            className="min-w-0 flex-1 rounded-md border bg-background px-3 py-1.5 text-sm"
-          />
-          <button type="button" className={primaryButtonClass} onClick={save} disabled={busy === "save"}>
-            {busy === "save" ? "Saving…" : "Save"}
+        <form
+          className="mt-3 flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          {fields.map((f) => (
+            <label key={f.name} className="min-w-[14rem] flex-1 text-xs">
+              <span className="font-medium">{f.label}</span>
+              <input
+                type={f.secret ? "password" : "text"}
+                autoComplete="off"
+                spellCheck={false}
+                value={values[f.name] ?? ""}
+                onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                placeholder={f.placeholder}
+                className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm"
+              />
+            </label>
+          ))}
+          <button type="submit" className={primaryButtonClass} disabled={busy === "save"}>
+            {busy === "save" ? "Saving…" : saved ? "Save replacement" : "Save"}
           </button>
-          <button type="button" className={buttonClass} onClick={() => { setEditing(false); setValue(""); setError(null); }}>
+          <button type="button" className={buttonClass} onClick={() => { setEditing(false); setValues({}); setError(null); }}>
             Cancel
           </button>
-        </div>
+          <p className="w-full text-xs text-muted">Saving stores the credential encrypted; it doesn&apos;t call {label} or run anything billable.</p>
+        </form>
       )}
 
-      {hint && !editing && <p className="text-xs text-muted">{hint}{docsHref ? <> · <a href={docsHref} target="_blank" rel="noreferrer" className="text-accent hover:underline">docs</a></> : null}</p>}
-      {error && <p role="alert" className="text-xs" style={{ color: "var(--bad)" }}>{error}</p>}
-      {check && (
-        <p className="text-xs" style={{ color: check.ok ? "var(--good)" : "var(--bad)" }}>
-          {check.ok ? "Verified: " : "Check failed: "}
-          {check.message}
+      {error && (
+        <p role="alert" className="mt-2 text-xs" style={{ color: "var(--bad)" }}>
+          {error}
         </p>
       )}
-    </div>
+      {notice && !error && (
+        <p role="status" className="mt-2 text-xs text-muted">
+          {notice}
+        </p>
+      )}
+    </section>
   );
 }

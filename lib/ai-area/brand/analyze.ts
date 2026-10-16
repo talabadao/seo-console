@@ -28,8 +28,8 @@ async function chat(
   expected: { input: number; output: number },
   params: Omit<OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, "model">,
 ): Promise<{ completion: OpenAI.Chat.ChatCompletion; costUsd: number }> {
-  const out = await meteredCall(meter, "openai", operation, ANALYSIS_MODEL, expected, async () => {
-    const completion = await openaiClient().chat.completions.create({ ...params, model: ANALYSIS_MODEL, stream: false });
+  const out = await meteredCall(meter, "openai", operation, ANALYSIS_MODEL, expected, async (key) => {
+    const completion = await openaiClient(key).chat.completions.create({ ...params, model: ANALYSIS_MODEL, stream: false });
     return {
       result: completion,
       model: completion.model,

@@ -86,7 +86,7 @@ export async function costReport(
       : { allowed: false, scope: serp.reason, used: null, max: null },
     recent,
     runsLeftToday: limit !== null && total > 0 ? Math.max(0, (limit - llmUsed) / total) : null,
-    unavailable: Object.fromEntries(PLATFORMS.map((p) => [p, platformUnavailable(p, ctx)])) as Record<Platform, string | null>,
+    unavailable: Object.fromEntries(await Promise.all(PLATFORMS.map(async (p) => [p, await platformUnavailable(p, ctx)]))) as Record<Platform, string | null>,
     pricingVersion: PRICING_VERSION,
   };
 }

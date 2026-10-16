@@ -27,6 +27,8 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { migration as aiArea } from "@/db/migrations/0003_ai_area";
+import { migration as accountCredentials } from "@/db/migrations/0005_account_credentials";
+import { saveCredential } from "@/lib/credentials/store";
 import { allowanceState, takeAllowance, CapReached } from "@/lib/providers/ledger";
 import { llmDecision, serpDecision } from "@/lib/providers/policy";
 import { SerpRefused, serpSearch, type SerpKey } from "@/lib/providers/serpapi";
@@ -37,7 +39,7 @@ import { trackKeyword } from "@/lib/ai-area/tracking/run";
 import { estimateTracking } from "@/lib/ai-area/tracking/job";
 import { defaultConfig } from "@/lib/ai-area/tracking/store";
 
-const KEY: SerpKey = { key: "test-key-not-real", source: "server", fingerprint: "fp-test" };
+const KEY: SerpKey = { key: "test-key-not-real", source: "account", fingerprint: "fp-test" };
 const ctx = (projectId: number) => ({ userId: 1, projectId, runId: "run-1", key: KEY });
 
 async function usageRows(projectId?: number) {
@@ -51,9 +53,10 @@ async function usageRows(projectId?: number) {
 const fetchMock = vi.fn();
 
 beforeAll(async () => {
-  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, serpapi_key TEXT);
-    INSERT INTO users DEFAULT VALUES; INSERT INTO projects DEFAULT VALUES; INSERT INTO projects DEFAULT VALUES;`);
+  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, user_id BIGINT, serpapi_key TEXT, serpapi_key_updated_at BIGINT);
+    INSERT INTO users (email) VALUES ('owner@example.com'); INSERT INTO projects (user_id) VALUES (1), (1);`);
   for (const s of aiArea.statements) await pg.exec(s);
+  for (const s of accountCredentials.statements) await pg.exec(s);
 });
 
 beforeEach(async () => {
@@ -138,9 +141,12 @@ describe("Preview model calls", () => {
 });
 
 describe("metered model calls (outside Preview)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.stubEnv("VERCEL_ENV", "");
-    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    // The account's own OpenAI key, stored encrypted; the resolver hands it to the call.
+    vi.stubEnv("CREDENTIALS_ENCRYPTION_KEY", Buffer.alloc(32, 7).toString("base64"));
+    await pg.exec("DELETE FROM account_credentials;");
+    await saveCredential(1, "openai", { apiKey: "sk-test-not-real" });
     vi.stubEnv("AI_AREA_DAILY_USD_LIMIT", "0.01");
   });
 
@@ -178,7 +184,6 @@ describe("metered model calls (outside Preview)", () => {
   });
 
   it("refuses when the provider key isn't configured", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
     await expect(meteredCall({ userId: 1, projectId: 1 }, "anthropic", "t", "claude-haiku-5-5", { input: 1, output: 1 }, vi.fn())).rejects.toMatchObject({ reason: "not-configured" });
   });
 });
