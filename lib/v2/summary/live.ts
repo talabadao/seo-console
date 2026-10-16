@@ -236,13 +236,16 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
     const { timeZone } = await gaContext(user, token, propertyId);
     const w = reportWindows(propertyNow(timeZone));
     const config = await configFor(user.id, propertyId, w.yearMonth);
+    // Targets from KPI Planning (the same source as the Weekly report): null = blank, so the KPI isn't shown;
+    // an explicit 0 is a real target.
+    const t = config.targets;
     const all = [
-      { id: "traffic-organic", label: "Organic sessions", target: config.trafficOrganicTarget, kind: "traffic" as const, channel: "organic" as const },
-      { id: "traffic-ai", label: "AI search sessions", target: config.trafficAiTarget, kind: "traffic" as const, channel: "ai" as const },
-      { id: "lead-organic", label: "Organic leads", target: config.leadOrganicTarget, kind: "leads" as const, channel: "organic" as const },
-      { id: "lead-ai", label: "AI search leads", target: config.leadAiTarget, kind: "leads" as const, channel: "ai" as const },
+      { id: "traffic-organic", label: "Organic sessions", target: t ? t.traffic_organic : config.trafficOrganicTarget || null, kind: "traffic" as const, channel: "organic" as const },
+      { id: "traffic-ai", label: "AI search sessions", target: t ? t.traffic_ai : config.trafficAiTarget || null, kind: "traffic" as const, channel: "ai" as const },
+      { id: "lead-organic", label: "Organic leads", target: t ? t.lead_organic : config.leadOrganicTarget || null, kind: "leads" as const, channel: "organic" as const },
+      { id: "lead-ai", label: "AI search leads", target: t ? t.lead_ai : config.leadAiTarget || null, kind: "leads" as const, channel: "ai" as const },
     ];
-    const withTarget = all.filter((k) => k.target > 0);
+    const withTarget = all.filter((k) => k.target != null);
     // Lead KPIs need the project's lead events; without them the KPI is "data unavailable", not zero.
     const wanted = withTarget.filter((k) => k.kind === "traffic" || config.leadEvents.length);
     const notes = withTarget.length > wanted.length ? ["Lead targets are set, but no lead events are chosen. Choose them in Project settings → Analytics."] : [];
@@ -252,7 +255,7 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
       return {
         state: "unavailable",
         source: KPI,
-        message: notes[0] ?? `No KPI targets are set for ${monthLabel}. Add them in Project settings → KPI targets.`,
+        message: notes[0] ?? `No KPI targets are set for ${monthLabel}. Add them in Project settings → KPI planning.`,
       };
     }
     // One query per kind covering both month-to-date and the last 30 days.
@@ -267,7 +270,7 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
       series.filter((d) => d.bucket >= r.start && d.bucket <= r.end).reduce((a, d) => a + d[ch], 0);
     const items: KpiItem[] = wanted.map((k) => {
       const series = k.kind === "traffic" ? traffic.series : (leads?.series ?? []);
-      const card = buildKpiCard(sum(series, k.channel, w.mtd), sum(series, k.channel, w.last30), k.target, w);
+      const card = buildKpiCard(sum(series, k.channel, w.mtd), sum(series, k.channel, w.last30), k.target ?? 0, w);
       // The current month is still running, so attainment is "in progress" until the target is reached.
       return evaluateKpi({ id: k.id, label: k.label, direction: "higher", actual: card.actualMtd, target: card.target, projected: card.projected, monthComplete: false });
     });

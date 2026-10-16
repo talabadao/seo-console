@@ -45,10 +45,12 @@ export function WeeklyReport({
   sub: subSlug,
   onSub,
   leadEventsHref,
+  kpiPlanningHref,
 }: {
   fixedPropertyId?: string;
   /** Where to edit a project's lead events (v2 Project settings); without it they're edited in place. */
   leadEventsHref?: (projectId: number) => string;
+  kpiPlanningHref?: (projectId: number) => string;
   /** Sub-tab segment from the page address, and a callback to update it. */
   sub?: string;
   onSub?: (slug: string) => void;
@@ -198,6 +200,7 @@ export function WeeklyReport({
       {showConfig && data && (
         <ConfigModal
           leadEventsHref={leadEventsHref}
+          kpiPlanningHref={kpiPlanningHref}
           propertyId={propertyId}
           config={data.config}
           onClose={() => setShowConfig(false)}
@@ -760,27 +763,33 @@ function PostToAsanaModal({
 
 // ---------- Config modal ----------
 
+/** A target as text for the form: blank for no target, and an explicit 0 kept visible (KPI Planning keeps them apart). */
+function targetStr(c: KpiConfig, legacy: number, id: "traffic_organic" | "traffic_ai" | "lead_organic" | "lead_ai"): string {
+  if (c.targets) return c.targets[id] == null ? "" : String(c.targets[id]);
+  return legacy ? String(legacy) : "";
+}
+
 function ConfigModal({
   leadEventsHref,
+  kpiPlanningHref,
   propertyId,
   config,
   onClose,
   onSaved,
 }: {
   leadEventsHref?: (projectId: number) => string;
+  kpiPlanningHref?: (projectId: number) => string;
   propertyId: string;
   config: KpiConfig;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  // Targets are kept as strings so the fields can be genuinely empty — a numeric
-  // 0 default rendered a stubborn "0" you couldn't clear before typing.
-  const numStr = (n: number) => (n ? String(n) : "");
+  // Targets are kept as strings so the fields can be genuinely empty (see targetStr).
   const [yearMonth, setYearMonth] = useState(config.yearMonth);
-  const [trafficOrganicTarget, setTrafficOrganicTarget] = useState(numStr(config.trafficOrganicTarget));
-  const [trafficAiTarget, setTrafficAiTarget] = useState(numStr(config.trafficAiTarget));
-  const [leadOrganicTarget, setLeadOrganicTarget] = useState(numStr(config.leadOrganicTarget));
-  const [leadAiTarget, setLeadAiTarget] = useState(numStr(config.leadAiTarget));
+  const [trafficOrganicTarget, setTrafficOrganicTarget] = useState(targetStr(config, config.trafficOrganicTarget, "traffic_organic"));
+  const [trafficAiTarget, setTrafficAiTarget] = useState(targetStr(config, config.trafficAiTarget, "traffic_ai"));
+  const [leadOrganicTarget, setLeadOrganicTarget] = useState(targetStr(config, config.leadOrganicTarget, "lead_organic"));
+  const [leadAiTarget, setLeadAiTarget] = useState(targetStr(config, config.leadAiTarget, "lead_ai"));
   // Lead events are a project setting (Project settings → Analytics); they're posted back unchanged.
   const [leadEvents, setLeadEvents] = useState<string[]>(config.leadEvents);
   const [editLeads, setEditLeads] = useState(false);
@@ -801,10 +810,10 @@ function ConfigModal({
       .then((r) => r.json())
       .then((c: KpiConfig) => {
         if (ignore || !c || !c.yearMonth) return;
-        setTrafficOrganicTarget(numStr(c.trafficOrganicTarget));
-        setTrafficAiTarget(numStr(c.trafficAiTarget));
-        setLeadOrganicTarget(numStr(c.leadOrganicTarget));
-        setLeadAiTarget(numStr(c.leadAiTarget));
+        setTrafficOrganicTarget(targetStr(c, c.trafficOrganicTarget, "traffic_organic"));
+        setTrafficAiTarget(targetStr(c, c.trafficAiTarget, "traffic_ai"));
+        setLeadOrganicTarget(targetStr(c, c.leadOrganicTarget, "lead_organic"));
+        setLeadAiTarget(targetStr(c, c.leadAiTarget, "lead_ai"));
         setLeadEvents(c.leadEvents ?? []);
         setAsanaProjectGid(c.asanaProjectGid ?? "");
         setAsanaStatusTitle(c.asanaStatusTitle ?? "");
@@ -826,10 +835,16 @@ function ConfigModal({
         body: JSON.stringify({
           propertyId,
           yearMonth,
-          trafficOrganicTarget: Number(trafficOrganicTarget) || 0,
-          trafficAiTarget: Number(trafficAiTarget) || 0,
-          leadOrganicTarget: Number(leadOrganicTarget) || 0,
-          leadAiTarget: Number(leadAiTarget) || 0,
+          // Targets of a property that belongs to a project are edited only in KPI Planning; the server ignores
+          // target fields for it. A property with no project still keeps its own targets here.
+          ...(config.projectId
+            ? {}
+            : {
+                trafficOrganicTarget: Number(trafficOrganicTarget) || 0,
+                trafficAiTarget: Number(trafficAiTarget) || 0,
+                leadOrganicTarget: Number(leadOrganicTarget) || 0,
+                leadAiTarget: Number(leadAiTarget) || 0,
+              }),
           leadEvents,
           asanaProjectGid,
           asanaStatusTitle,
@@ -865,15 +880,42 @@ function ConfigModal({
           className="mt-1 rounded-md border bg-background px-2 py-1.5 text-sm"
         />
 
-        <div className="mt-4 grid grid-cols-2 gap-4">
-          <NumberField label="Organic Traffic target (sessions)" value={trafficOrganicTarget} onChange={setTrafficOrganicTarget} />
-          <NumberField label="AI Traffic target (sessions)" value={trafficAiTarget} onChange={setTrafficAiTarget} />
-          <NumberField label="Organic Leads target" value={leadOrganicTarget} onChange={setLeadOrganicTarget} />
-          <NumberField label="AI Leads target" value={leadAiTarget} onChange={setLeadAiTarget} />
-        </div>
-        <p className="mt-1 text-xs text-muted">
-          Pick a month above (including upcoming ones) to set its targets — leave a field blank for no target.
-        </p>
+        {config.projectId ? (
+          <div className="mt-4 rounded-md border p-3">
+            <p className="text-xs font-medium text-muted">Targets for this month (from KPI planning)</p>
+            <dl className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              <dt className="text-muted">Organic sessions</dt>
+              <dd className="tabular-nums">{trafficOrganicTarget || "No target"}</dd>
+              <dt className="text-muted">AI search sessions</dt>
+              <dd className="tabular-nums">{trafficAiTarget || "No target"}</dd>
+              <dt className="text-muted">Organic leads</dt>
+              <dd className="tabular-nums">{leadOrganicTarget || "No target"}</dd>
+              <dt className="text-muted">AI search leads</dt>
+              <dd className="tabular-nums">{leadAiTarget || "No target"}</dd>
+            </dl>
+            <p className="mt-2 text-xs text-muted">
+              Targets are planned for many months at once in Project settings → KPI planning, and the dashboard, All projects and this report all read
+              them from there.{" "}
+              {kpiPlanningHref ? (
+                <a className="text-accent hover:underline" href={kpiPlanningHref(config.projectId)}>
+                  Open KPI planning
+                </a>
+              ) : null}
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <NumberField label="Organic Traffic target (sessions)" value={trafficOrganicTarget} onChange={setTrafficOrganicTarget} />
+              <NumberField label="AI Traffic target (sessions)" value={trafficAiTarget} onChange={setTrafficAiTarget} />
+              <NumberField label="Organic Leads target" value={leadOrganicTarget} onChange={setLeadOrganicTarget} />
+              <NumberField label="AI Leads target" value={leadAiTarget} onChange={setLeadAiTarget} />
+            </div>
+            <p className="mt-1 text-xs text-muted">
+              This GA4 property isn&apos;t linked to a project, so its targets are kept here. Link it to a project to plan targets in KPI planning.
+            </p>
+          </>
+        )}
 
         <div className="mt-5 rounded-md border p-3">
           <p className="text-xs font-medium text-muted">Lead events (project setting)</p>

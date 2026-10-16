@@ -830,6 +830,7 @@ function ProjectPage({
           sub={loc.sub}
           onSub={subNav}
           leadEventsHref={(id) => buildShellPath({ kind: "project", projectId: id, group: "settings", item: "project", sub: "analytics" })}
+          kpiPlanningHref={(id) => buildShellPath({ kind: "project", projectId: id, group: "settings", item: "project", sub: "kpi" })}
         />
       );
     case "local-seo/reviews":

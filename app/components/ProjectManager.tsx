@@ -13,15 +13,6 @@ interface GaProperty {
   accountName: string | null;
 }
 
-interface KpiConfig {
-  yearMonth: string;
-  trafficOrganicTarget: number;
-  trafficAiTarget: number;
-  leadOrganicTarget: number;
-  leadAiTarget: number;
-  leadEvents: string[];
-}
-
 /** What the manager opens on: the project list, a blank form, or one project's form. */
 export type ProjectView = "list" | "new" | number;
 
@@ -306,8 +297,6 @@ export function ProjectManager({
   );
 }
 
-const numStr = (n: number) => (n ? String(n) : "");
-
 function ProjectForm({
   project,
   gscProperties,
@@ -337,8 +326,6 @@ function ProjectForm({
     ga: Boolean(project?.gaPropertyId),
   });
 
-  const [kpi, setKpi] = useState<KpiConfig | null>(null);
-  const [targets, setTargets] = useState({ to: "", ta: "", lo: "", la: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -362,29 +349,6 @@ function ProjectForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gaProps]);
 
-  // This month's KPI targets for the linked GA4 property.
-  useEffect(() => {
-    setKpi(null);
-    if (!gaPropertyId) return;
-    let ignore = false;
-    fetch(`/api/weekly-report/config?propertyId=${encodeURIComponent(gaPropertyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((c: KpiConfig | null) => {
-        if (ignore || !c) return;
-        setKpi(c);
-        setTargets({
-          to: numStr(c.trafficOrganicTarget),
-          ta: numStr(c.trafficAiTarget),
-          lo: numStr(c.leadOrganicTarget),
-          la: numStr(c.leadAiTarget),
-        });
-      })
-      .catch(() => {});
-    return () => {
-      ignore = true;
-    };
-  }, [gaPropertyId]);
-
   async function save() {
     setBusy(true);
     setErr(null);
@@ -407,27 +371,6 @@ function ProjectForm({
       if (!res.ok) {
         setErr(j.error ?? "Couldn't save the project.");
         return;
-      }
-      if (gaPropertyId && kpi) {
-        const kres = await fetch("/api/weekly-report/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            propertyId: gaPropertyId,
-            yearMonth: kpi.yearMonth,
-            trafficOrganicTarget: Number(targets.to) || 0,
-            trafficAiTarget: Number(targets.ta) || 0,
-            leadOrganicTarget: Number(targets.lo) || 0,
-            leadAiTarget: Number(targets.la) || 0,
-            leadEvents: kpi.leadEvents,
-            asanaProjectGid,
-            asanaStatusTitle: asanaProjectName,
-          }),
-        });
-        if (!kres.ok) {
-          setErr("Project saved, but the KPI targets couldn't be saved.");
-          return;
-        }
       }
       await onSaved(j.project.id);
     } finally {
@@ -580,36 +523,10 @@ function ProjectForm({
         </div>
       </section>
 
-      {gaPropertyId && kpi && (
-        <section>
-          <h3 className="text-sm font-medium">KPI targets · {kpi.yearMonth}</h3>
-          <div className="mt-2 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {(
-              [
-                ["to", "Organic traffic"],
-                ["ta", "AI traffic"],
-                ["lo", "Organic leads"],
-                ["la", "AI leads"],
-              ] as const
-            ).map(([k, text]) => (
-              <label key={k}>
-                <span className={label}>{text}</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={targets[k]}
-                  onChange={(e) => setTargets((t) => ({ ...t, [k]: e.target.value }))}
-                  placeholder="0"
-                  className={field}
-                />
-              </label>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            Other months and the events that count as leads are set in Weekly Report → Configure
-            KPIs.
-          </p>
-        </section>
+      {gaPropertyId && (
+        <p className="text-xs text-muted">
+          Monthly KPI targets are planned for many months at once in Project settings → KPI planning.
+        </p>
       )}
 
       {err && <p className="text-sm text-bad">{err}</p>}

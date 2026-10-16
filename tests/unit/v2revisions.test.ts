@@ -30,7 +30,9 @@ describe("KPI attainment wording", () => {
   });
 
   it("reports a missing target as no target, and uses no delivery-status words", () => {
-    expect(evaluateKpi({ ...base, target: 0, actual: 50, projected: 100, monthComplete: false }).attainment).toBe("no-target");
+    expect(evaluateKpi({ ...base, target: null, actual: 50, projected: 100, monthComplete: false }).attainment).toBe("no-target");
+    // An explicit zero target is a real target (KPI Planning keeps blank and 0 apart).
+    expect(evaluateKpi({ ...base, target: 0, actual: 50, projected: 100, monthComplete: false }).attainment).toBe("achieved");
     expect(Object.values(ATTAINMENT_LABEL).join(" ")).not.toMatch(/off track|on track|at risk/i);
   });
 
