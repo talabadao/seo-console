@@ -164,19 +164,27 @@ describe("Preview smoke-test allowance", () => {
   });
 });
 
-describe("old Usage & Costs addresses", () => {
-  it("open Settings → Account → Usage & Costs for the same project, never a fixed one", () => {
-    expect(parseShellPath(["p", "4", "ai-area", "usage"])).toEqual({ kind: "project", projectId: 4, group: "settings", item: "account", sub: "usage" });
-    expect(parseShellPath(["p", "17", "ai-area", "usage"])).toMatchObject({ projectId: 17, group: "settings", item: "account", sub: "usage" });
-    expect(buildShellPath(parseShellPath(["p", "17", "ai-area", "usage"])!)).toBe("/p/17/settings/account/usage");
-    expect(parseShellPath(["portfolio", "ai-area", "usage"])).toEqual({ kind: "pick", group: "settings", item: "account", sub: "usage" });
-    expect(buildShellPath(parseShellPath(["portfolio", "ai-area", "usage"])!)).toBe("/portfolio/settings/account/usage");
+describe("account settings addresses", () => {
+  it("live at /account, with an optional project filter", () => {
+    expect(parseShellPath(["account"])).toEqual({ kind: "account", section: "", projectId: null });
+    expect(parseShellPath(["account", "usage"], "?project=17")).toEqual({ kind: "account", section: "usage", projectId: 17 });
+    expect(parseShellPath(["account", "nonsense"])).toEqual({ kind: "account", section: "", projectId: null });
+    expect(buildShellPath({ kind: "account", section: "budgets", projectId: 4 })).toBe("/account/budgets?project=4");
   });
 
-  it("account settings stay open when switching projects or choosing All projects", () => {
-    const here = parseShellPath(["p", "4", "settings", "account", "budgets"])!;
-    expect(switchProject(here, 9)).toEqual({ kind: "project", projectId: 9, group: "settings", item: "account", sub: "budgets" });
-    expect(switchProject(here, null)).toEqual({ kind: "pick", group: "settings", item: "account", sub: "budgets" });
-    expect(switchProject({ kind: "pick", group: "settings", item: "account", sub: "usage" }, 2)).toEqual({ kind: "project", projectId: 2, group: "settings", item: "account", sub: "usage" });
+  it("older addresses land on the same page with the same project, never a fixed one", () => {
+    expect(parseShellPath(["p", "4", "ai-area", "usage"])).toEqual({ kind: "account", section: "usage", projectId: 4 });
+    expect(parseShellPath(["p", "17", "ai-area", "usage"])).toEqual({ kind: "account", section: "usage", projectId: 17 });
+    expect(parseShellPath(["p", "17", "settings", "account", "budgets"])).toEqual({ kind: "account", section: "budgets", projectId: 17 });
+    expect(parseShellPath(["p", "17", "settings", "account"])).toEqual({ kind: "account", section: "", projectId: 17 });
+    expect(parseShellPath(["portfolio", "ai-area", "usage"])).toEqual({ kind: "account", section: "usage", projectId: null });
+    expect(parseShellPath(["portfolio", "settings", "account", "usage"])).toEqual({ kind: "account", section: "usage", projectId: null });
+    expect(buildShellPath(parseShellPath(["p", "17", "ai-area", "usage"])!)).toBe("/account/usage?project=17");
+  });
+
+  it("stay open when switching projects or choosing All projects", () => {
+    const here = parseShellPath(["account", "budgets"], "?project=4")!;
+    expect(switchProject(here, 9)).toEqual({ kind: "account", section: "budgets", projectId: 9 });
+    expect(switchProject(here, null)).toEqual({ kind: "account", section: "budgets", projectId: null });
   });
 });

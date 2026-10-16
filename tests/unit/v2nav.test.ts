@@ -43,7 +43,6 @@ describe("navigation model", () => {
       ["Content", "content", "board"],
       ["AI Area: Google Search Tracking", "ai-area", "google-search-tracking"],
       ["AI Area: Brand Mentions", "ai-area", "brand-mentions"],
-      ["Settings: Account settings", "settings", "account"],
       ["Automation", "automation", "workflows"],
       ["Weekly Report", "reports", "weekly"],
       ["Monthly Report", "reports", "monthly"],
