@@ -7,7 +7,7 @@
 //   /account[/<section>][?project=<id>]  Account settings (API credentials, Usage & Costs, Budgets & limits,
 //                                    Sync & cache). Works without a project; ?project only pre-selects a filter.
 //   /p/<projectId>/<group>/<item>[/<sub>]
-//   /docs
+//   /docs[/<slug>]                    Docs articles and news (a slug opens one)
 // The project is identified by its id, never by its (editable) name.
 
 /** live = real data today; demo = fictional fixtures, labelled; planned = placeholder for a later milestone. */
@@ -223,11 +223,11 @@ export type ShellLocation =
   | { kind: "portfolio" }
   | { kind: "pick"; group: string; item: string; sub?: string }
   | { kind: "project"; projectId: number; group: string; item: string; sub: string }
-  | { kind: "docs" }
+  | { kind: "docs"; slug?: string }
   | { kind: "account"; section: string; projectId: number | null };
 
 /** Account settings sections, in menu order ("" = API credentials). */
-export const ACCOUNT_SECTIONS = ["", "usage", "budgets", "sync"] as const;
+export const ACCOUNT_SECTIONS = ["", "usage", "budgets", "notifications", "sync"] as const;
 const accountSection = (s: string | undefined) => (s && (ACCOUNT_SECTIONS as readonly string[]).includes(s) ? s : "");
 const projectParam = (search: string | undefined) => {
   const id = Number(new URLSearchParams(search ?? "").get("project"));
@@ -268,7 +268,7 @@ export function isShellPath(segments: string[]): boolean {
 /** Reads a shell address. Unknown pages fall back to the project overview; unknown roots give null. */
 export function parseShellPath(segments: string[], search?: string): ShellLocation | null {
   const [root, a, b, c, d] = segments;
-  if (root === "docs") return { kind: "docs" };
+  if (root === "docs") return a && /^[a-z0-9-]{1,100}$/.test(a) ? { kind: "docs", slug: a } : { kind: "docs" };
   if (root === "account") return { kind: "account", section: accountSection(a), projectId: projectParam(search) };
   if (root === "portfolio") {
     // Older account / usage addresses: Account settings without a project.
@@ -298,7 +298,7 @@ export function buildShellPath(loc: ShellLocation): string {
     case "portfolio":
       return "/portfolio";
     case "docs":
-      return "/docs";
+      return loc.slug ? `/docs/${loc.slug}` : "/docs";
     case "pick":
       return `/portfolio/${loc.group}/${loc.item}${loc.sub ? `/${loc.sub}` : ""}`;
     case "account":

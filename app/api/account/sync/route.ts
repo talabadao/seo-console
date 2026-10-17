@@ -3,6 +3,7 @@ import { currentUser } from "@/lib/session";
 import { runDueJobs, syncReady } from "@/lib/sync/cache";
 import { syncStatus } from "@/lib/sync/status";
 import "@/lib/sync/kinds";
+import { runRules } from "@/lib/notifications/store";
 
 export const maxDuration = 60;
 
@@ -25,5 +26,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { limit?: unknown };
   const limit = Math.max(1, Math.min(10, Math.round(Number(body.limit) || 10)));
   const result = await runDueJobs({ limit, budgetMs: 45_000, userId: user.id });
-  return NextResponse.json({ ...result, status: await syncStatus(user.id) });
+  // New results may meet a notification rule (saved results only; throttled per account).
+  const notified = (await runRules(user.id).catch(() => ({ created: 0 }))).created;
+  return NextResponse.json({ ...result, notified, status: await syncStatus(user.id) });
 }

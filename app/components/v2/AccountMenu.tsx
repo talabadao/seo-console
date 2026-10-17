@@ -12,6 +12,7 @@ export const ACCOUNT_SECTION_LABEL: Record<string, string> = {
   "": "API credentials",
   usage: "Usage & Costs",
   budgets: "Budgets & limits",
+  notifications: "Notifications",
   sync: "Sync & cache",
 };
 
@@ -19,6 +20,7 @@ const ITEMS: Array<{ section: string; label: string; icon: string }> = [
   { section: "", label: "Account settings · API credentials", icon: "key" },
   { section: "usage", label: "Usage & Costs", icon: "wallet" },
   { section: "budgets", label: "Budgets & limits", icon: "gauge" },
+  { section: "notifications", label: "Notifications", icon: "bell" },
   { section: "sync", label: "Sync & cache", icon: "gear" },
 ];
 

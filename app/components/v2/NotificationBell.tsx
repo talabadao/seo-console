@@ -30,6 +30,7 @@ const when = (ms: number) => new Date(ms).toLocaleString("en-GB", { day: "numeri
 export function NotificationBell({ projectId, onNavigate }: { projectId: number | null; onNavigate: (href: string) => void }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "project">("all");
+  const [severity, setSeverity] = useState<"all" | "warning" | "critical">("all");
   const [data, setData] = useState<{ unread: number; items: NotificationItem[] } | null>(null);
   const [state, setState] = useState<"ok" | "unavailable" | "error">("ok");
   const panel = useRef<HTMLDivElement>(null);
@@ -84,6 +85,7 @@ export function NotificationBell({ projectId, onNavigate }: { projectId: number 
   }
 
   const unread = data?.unread ?? 0;
+  const shown = (data?.items ?? []).filter((n) => severity === "all" || n.severity === "critical" || (severity === "warning" && n.severity === "warning"));
   return (
     <div className="relative">
       <button
@@ -110,6 +112,11 @@ export function NotificationBell({ projectId, onNavigate }: { projectId: number 
               <option value="all">All projects</option>
               {projectId && <option value="project">This project</option>}
             </select>
+            <select value={severity} onChange={(e) => setSeverity(e.target.value as typeof severity)} aria-label="Filter by severity" className="rounded-md border bg-background px-2 py-1 text-xs">
+              <option value="all">All severities</option>
+              <option value="warning">Warnings and critical</option>
+              <option value="critical">Critical only</option>
+            </select>
             {unread > 0 && (
               <button className="text-xs text-accent hover:underline" onClick={() => mark({ all: true, project: filter === "project" ? projectId : null })}>
                 Mark all read
@@ -125,11 +132,11 @@ export function NotificationBell({ projectId, onNavigate }: { projectId: number 
               </p>
             ) : !data ? (
               <p className="p-4 text-sm text-muted">Loading…</p>
-            ) : data.items.length === 0 ? (
+            ) : shown.length === 0 ? (
               <p className="p-4 text-sm text-muted">Nothing new. Alerts come from synced data — performance changes, Asana due dates, ranking changes, published Docs — and a weekly digest.</p>
             ) : (
               <ul>
-                {data.items.map((n) => (
+                {shown.map((n) => (
                   <li key={n.id} className={`border-b px-3 py-2.5 last:border-0 ${n.readAt ? "" : "bg-accent-soft/30"}`}>
                     <div className="flex items-start gap-2">
                       <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: SEVERITY[n.severity] }} aria-label={n.severity} />
@@ -170,6 +177,19 @@ export function NotificationBell({ projectId, onNavigate }: { projectId: number 
                 ))}
               </ul>
             )}
+          </div>
+          <div className="border-t px-3 py-2 text-right">
+            <a
+              href="/account/notifications"
+              onClick={(e) => {
+                e.preventDefault();
+                setOpen(false);
+                onNavigate("/account/notifications");
+              }}
+              className="text-xs text-accent hover:underline"
+            >
+              Notification settings
+            </a>
           </div>
         </div>
       )}
