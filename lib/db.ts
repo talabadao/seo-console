@@ -30,6 +30,8 @@ function open(): postgres.Sql {
     // the old SQLite assumption, so restore that behavior globally rather
     // than auditing every `?? null` by hand.
     transform: { undefined: null },
+    // Postgres NOTICEs ("relation ... already exists, skipping") are informational; keep them out of the logs.
+    onnotice: () => {},
     // postgres.js returns BIGINT (our ids + epoch-ms timestamps) as strings by
     // default to avoid precision loss. Every value we store in a bigint column
     // is well under Number.MAX_SAFE_INTEGER, and the whole app types ids and
@@ -59,9 +61,16 @@ function getSql(): postgres.Sql {
 // Migrations run once per process (module-level promise; awaited by every
 // query so nothing can run before the schema is ready, without every call
 // site needing to know about it).
+// A failed initialization (e.g. the database was briefly unreachable) isn't cached: the next query retries it
+// instead of every query in this instance failing until it's recycled.
 let migrated: Promise<void> | null = null;
 function ready(): Promise<void> {
-  if (!migrated) migrated = migrate();
+  if (!migrated) {
+    migrated = migrate().catch((e) => {
+      migrated = null;
+      throw e;
+    });
+  }
   return migrated;
 }
 
@@ -136,8 +145,12 @@ export async function rawSql(): Promise<postgres.Sql> {
 }
 
 // Schema statements live in lib/schema.ts, shared with the versioned migration
-// runner (scripts/migrate.mts). Until production is switched over to that
-// runner, every new server instance still applies the idempotent baseline here.
+// runner (scripts/migrate.mts). A database whose schema_migrations already records
+// 0001_baseline (Production since 17 Oct 2026; Preview and local once they have
+// started once) is managed by the runner, so a new server instance only checks
+// that one row instead of re-running the ~43 idempotent baseline statements
+// (each a round trip on every cold start, and a NOTICE line in the logs).
+// A database that has never been baselined still gets them, as before.
 //
 // Versioned migrations after the baseline (0002+) are applied automatically
 // only on Preview and in local development — databases that are isolated and
@@ -146,13 +159,76 @@ export async function rawSql(): Promise<postgres.Sql> {
 // the newer tables report themselves unavailable (see tableExists).
 async function migrate(): Promise<void> {
   const sql = getSql();
-  for (const statement of BASELINE_STATEMENTS) await sql.unsafe(statement);
-  if (deploymentOf() !== "production") await applyVersioned(sql);
+  const production = deploymentOf() === "production";
+  if (await baselined(sql)) {
+    // Managed by the runner: Production only reports what's missing (it never migrates itself); Preview and
+    // development apply pending versioned migrations, if any, one instance at a time.
+    if (production) await reportPending(sql);
+    else if (await hasPending(sql)) await withInitLock(sql, (conn) => applyVersioned(conn));
+    return;
+  }
+  // Never baselined (a fresh Preview or local database, or Production before the runner): run the idempotent
+  // baseline — and on Preview/development the versioned migrations — under one lock, so instances starting together
+  // don't race on the same DDL or migration rows.
+  await withInitLock(sql, async (conn) => {
+    if (!(await baselined(conn))) for (const statement of BASELINE_STATEMENTS) await conn.unsafe(statement);
+    if (!production) await applyVersioned(conn);
+  });
+}
+
+/** Arbitrary, fixed advisory-lock key for schema initialization. */
+const INIT_LOCK = 7316254001;
+
+/** Runs `fn` holding a session advisory lock on one reserved connection, released however `fn` ends. */
+async function withInitLock(sql: postgres.Sql, fn: (conn: postgres.Sql) => Promise<void>): Promise<void> {
+  const conn = await sql.reserve();
+  try {
+    await conn`SELECT pg_advisory_lock(${INIT_LOCK})`;
+    try {
+      await fn(conn);
+    } finally {
+      await conn`SELECT pg_advisory_unlock(${INIT_LOCK})`;
+    }
+  } finally {
+    conn.release();
+  }
+}
+
+async function appliedIds(sql: postgres.Sql): Promise<{ id: string; checksum: string }[]> {
+  return (await sql`SELECT id, checksum FROM schema_migrations ORDER BY id`) as unknown as { id: string; checksum: string }[];
+}
+
+async function hasPending(sql: postgres.Sql): Promise<boolean> {
+  return planMigrations(MIGRATIONS, await appliedIds(sql)).pending.length > 0;
+}
+
+/**
+ * Production never migrates itself; a deployment whose code expects migrations the database doesn't have says so
+ * in the logs once per instance (the affected features also report themselves unavailable via tableExists).
+ */
+async function reportPending(sql: postgres.Sql): Promise<void> {
+  const plan = planMigrations(MIGRATIONS, await appliedIds(sql));
+  if (plan.pending.length || plan.changed.length || plan.unknown.length) {
+    console.error(
+      `Database migrations need attention: pending ${plan.pending.map((m) => m.id).join(", ") || "none"}; ` +
+        `changed ${plan.changed.join(", ") || "none"}; unknown ${plan.unknown.join(", ") || "none"}. ` +
+        "Run the migration runner (npm run migrate) against this database.",
+    );
+  }
+}
+
+/** Whether this database's schema is managed by the versioned runner (0001_baseline recorded). */
+async function baselined(sql: postgres.Sql): Promise<boolean> {
+  const [t] = await sql`SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present`;
+  if (!t?.present) return false;
+  const rows = await sql`SELECT 1 FROM schema_migrations WHERE id = ${MIGRATIONS[0].id}`;
+  return rows.length > 0;
 }
 
 async function applyVersioned(sql: postgres.Sql): Promise<void> {
-  await sql.unsafe(MIGRATIONS_TABLE);
-  let applied = (await sql`SELECT id, checksum FROM schema_migrations ORDER BY id`) as unknown as { id: string; checksum: string }[];
+  const [t] = await sql`SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present`;
+  if (!t?.present) await sql.unsafe(MIGRATIONS_TABLE);
+  let applied = await appliedIds(sql);
   if (!applied.length) {
     // The baseline statements above have just run, so record 0001 as baselined.
     const baseline = MIGRATIONS[0];
@@ -165,11 +241,18 @@ async function applyVersioned(sql: postgres.Sql): Promise<void> {
     console.error("Migration history disagrees with the code; not applying versioned migrations.", plan.changed, plan.unknown);
     return;
   }
+  // Each migration in its own transaction. Explicit BEGIN/COMMIT: `sql` is a reserved single connection here
+  // (see withInitLock), which postgres.js doesn't give a begin() helper.
   for (const m of plan.pending) {
-    await sql.begin(async (tx) => {
-      for (const statement of m.statements) await tx.unsafe(statement);
-      await tx`INSERT INTO schema_migrations (id, checksum, applied_at, mode) VALUES (${m.id}, ${checksumOf(m)}, ${Date.now()}, 'auto')`;
-    });
+    await sql.unsafe("BEGIN");
+    try {
+      for (const statement of m.statements) await sql.unsafe(statement);
+      await sql`INSERT INTO schema_migrations (id, checksum, applied_at, mode) VALUES (${m.id}, ${checksumOf(m)}, ${Date.now()}, 'auto')`;
+      await sql.unsafe("COMMIT");
+    } catch (e) {
+      await sql.unsafe("ROLLBACK").catch(() => {});
+      throw e;
+    }
   }
 }
 
