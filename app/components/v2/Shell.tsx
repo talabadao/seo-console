@@ -47,6 +47,7 @@ import { AccountMenu, ACCOUNT_SECTION_LABEL } from "./AccountMenu";
 import { NotificationBell } from "./NotificationBell";
 import { LlmTrafficReport } from "./LlmTrafficReport";
 import { SeRankingPage } from "./SeRankingPage";
+import { OrganicSerpPage } from "./OrganicSerpPage";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
 import { AiUsageSummary } from "./UsageCosts";
@@ -804,15 +805,21 @@ function ProjectPage({
     case "search-console/opportunities":
       return gscReconnect || <Opportunities property={property} searchType={searchType} sub={loc.sub} onSub={subNav} />;
     case "ai-area/google-search-tracking":
-    case "organic-serp/google":
       return (
         <div className="ai-area">
           <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })} />
-          {loc.group === "organic-serp" && (
-            <p className="mb-3 text-xs text-muted">Same keywords, data and runs as AI Area → Google Search Tracking; nothing is tracked or charged twice.</p>
-          )}
-          <TrackingTab projectId={project.id} sub={loc.sub} onSub={subNav} defaultView={loc.group === "organic-serp" ? "rank" : "overview"} />
+          <TrackingTab projectId={project.id} sub={loc.sub} onSub={subNav} defaultView="overview" />
         </div>
+      );
+    case "organic-serp/organic":
+      return (
+        <OrganicSerpPage
+          projectId={project.id}
+          engine={loc.sub}
+          onEngine={subNav}
+          onOpenUsage={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })}
+          onOpenBudgets={() => onNavigate({ kind: "account", section: "budgets", projectId: project.id })}
+        />
       );
     case "ai-area/brand-mentions":
       return (
