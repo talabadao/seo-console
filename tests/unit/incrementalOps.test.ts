@@ -32,7 +32,7 @@ vi.mock("@/lib/db", () => ({
 
 import { BASELINE_STATEMENTS } from "@/lib/schema";
 import { MIGRATIONS } from "@/db/migrations";
-import { OVERLAP_DAYS, REVISE_AFTER_MS, foldDays, gscDailyTotals, plan, type DateWindow } from "@/lib/gscDaily";
+import { OVERLAP_DAYS, REVISE_AFTER_MS, foldDays, gscDailyTotals, mergeCoverage, plan, type DateWindow } from "@/lib/gscDaily";
 import { MAX_ROWS, RETAIN_DAYS, cronFinish, cronStart, recentCronRuns, recordCron, sanitizeError } from "@/lib/cronRuns";
 import type { SearchAnalyticsRow } from "@/lib/google/searchconsole";
 
@@ -137,6 +137,32 @@ describe("incremental Search Console daily totals", () => {
     expect(wider!.days).toHaveLength(107);
     const cov = await pg.query<{ covered_from: string; covered_to: string }>("SELECT covered_from, covered_to FROM gsc_daily_coverage WHERE site_id = 10");
     expect(cov.rows[0]).toEqual({ covered_from: "2026-07-01", covered_to: "2026-10-16" });
+  });
+
+  it("two concurrent first refreshes of distant periods don't claim the days between them", async () => {
+    const gsc = fakeGsc(days("2026-01-01", "2026-10-15"));
+    const now = at("2026-10-17");
+    await Promise.all([
+      gscDailyTotals(1, PROPERTY, { start: "2026-09-01", end: "2026-10-15" }, gsc.fetch, now),
+      gscDailyTotals(1, PROPERTY, { start: "2026-02-01", end: "2026-02-28" }, gsc.fetch, now),
+    ]);
+    const cov = (await pg.query<{ covered_from: string; covered_to: string }>("SELECT covered_from, covered_to FROM gsc_daily_coverage WHERE site_id = 10")).rows[0];
+    // One of the two ranges is recorded; never a range spanning March–August, which nobody fetched.
+    expect([
+      { covered_from: "2026-09-01", covered_to: "2026-10-15" },
+      { covered_from: "2026-02-01", covered_to: "2026-02-28" },
+    ]).toContainEqual(cov);
+    const calls = gsc.calls.length;
+    const summer = await gscDailyTotals(1, PROPERTY, { start: "2026-06-01", end: "2026-06-30" }, gsc.fetch, now + 60_000);
+    expect(gsc.calls.length).toBeGreaterThan(calls); // the gap is fetched, not served as empty
+    expect(summer!.days).toHaveLength(30);
+  });
+
+  it("merges coverage only when ranges touch", () => {
+    const cur = { from: "2026-09-01", to: "2026-09-30", refreshedAt: 5 };
+    expect(mergeCoverage(cur, { from: "2026-10-01", to: "2026-10-10" }, 9)).toEqual({ from: "2026-09-01", to: "2026-10-10", refreshedAt: 9 });
+    expect(mergeCoverage(cur, { from: "2026-08-01", to: "2026-08-31" }, null)).toEqual({ from: "2026-08-01", to: "2026-09-30", refreshedAt: 5 });
+    expect(mergeCoverage(cur, { from: "2026-11-01", to: "2026-11-05" }, 9)).toBeNull();
   });
 
   it("keeps each account's copy of the same property separate", async () => {

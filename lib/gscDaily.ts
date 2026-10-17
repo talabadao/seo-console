@@ -68,6 +68,25 @@ export function plan(want: DateWindow, cov: Coverage | null, now: number): { win
   return { windows, refreshesTail: false };
 }
 
+/** Advisory-lock namespace for coverage updates (second key: the site id). */
+const COVERAGE_LOCK = 73162542;
+
+/**
+ * The coverage after storing `fetched` (a contiguous range): the union when it overlaps or touches the current
+ * coverage, otherwise the current coverage unchanged (null: nothing to write). `tailAt` is set when the fetch
+ * included the revisable tail.
+ */
+export function mergeCoverage(current: Coverage | null, fetched: { from: string; to: string }, tailAt: number | null): Coverage | null {
+  if (!current) return { from: fetched.from, to: fetched.to, refreshedAt: tailAt ?? 0 };
+  const touches = fetched.from <= addDaysYmd(current.to, 1) && fetched.to >= addDaysYmd(current.from, -1);
+  if (!touches) return null;
+  return {
+    from: minYmd(current.from, fetched.from),
+    to: maxYmd(current.to, fetched.to),
+    refreshedAt: tailAt == null ? current.refreshedAt : Math.max(current.refreshedAt, tailAt),
+  };
+}
+
 /** Daily totals for `want`, fetching only missing and revisable days. Null: not available, query directly. */
 export async function gscDailyTotals(
   userId: number,
@@ -114,18 +133,26 @@ export async function gscDailyTotals(
           );
         }
       }
-      await q(
-        `INSERT INTO gsc_daily_coverage (site_id, covered_from, covered_to, refreshed_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT (site_id) DO UPDATE SET
-           covered_from = LEAST(gsc_daily_coverage.covered_from, EXCLUDED.covered_from),
-           covered_to = GREATEST(gsc_daily_coverage.covered_to, EXCLUDED.covered_to),
-           refreshed_at = CASE WHEN ? THEN GREATEST(gsc_daily_coverage.refreshed_at, EXCLUDED.refreshed_at) ELSE gsc_daily_coverage.refreshed_at END`,
-        siteId,
-        from,
-        to,
-        now,
-        refreshesTail,
-      );
+      // Coverage is one contiguous range. Another refresh of this site may have committed since we read it, so
+      // re-read it under a per-site lock and only merge ranges that touch: two first refreshes for distant periods
+      // must not claim the days between them.
+      await q("SELECT pg_advisory_xact_lock(?, ?)", COVERAGE_LOCK, siteId);
+      const [now2] = (await q("SELECT covered_from, covered_to, refreshed_at FROM gsc_daily_coverage WHERE site_id = ?", siteId)) as Array<{
+        covered_from: string;
+        covered_to: string;
+        refreshed_at: number | string;
+      }>;
+      const merged = mergeCoverage(now2 ? { from: now2.covered_from, to: now2.covered_to, refreshedAt: Number(now2.refreshed_at) } : null, { from, to }, refreshesTail ? now : null);
+      if (merged) {
+        await q(
+          `INSERT INTO gsc_daily_coverage (site_id, covered_from, covered_to, refreshed_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT (site_id) DO UPDATE SET covered_from = EXCLUDED.covered_from, covered_to = EXCLUDED.covered_to, refreshed_at = EXCLUDED.refreshed_at`,
+          siteId,
+          merged.from,
+          merged.to,
+          merged.refreshedAt,
+        );
+      }
     });
   }
 
