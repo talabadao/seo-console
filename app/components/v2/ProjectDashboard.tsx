@@ -4,6 +4,7 @@
 // lives in Project settings; this page only reads summaries.
 
 import { useMemo, useState } from "react";
+import { useThumbnails } from "./useThumbnails";
 import type { Project } from "../ProjectManager";
 import { Favicon } from "../ProjectManager";
 import { hostOf } from "@/lib/projectMatch";
@@ -121,7 +122,7 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
             </button>
           }
         >
-          {(d) => <GscInsights d={d} onMore={(sub) => go("search-console", "performance", sub)} />}
+          {(d) => <GscInsights d={d} projectId={project.id} onMore={(sub) => go("search-console", "performance", sub)} />}
         </SectionCard>
 
         <AttentionCard alerts={alerts} loading={loading} tasks={summary?.tasks?.data} tasksDemo={summary?.tasks?.state === "demo"} onGo={go} />
@@ -308,7 +309,7 @@ const INSIGHT_TABS = [
   ["down", "Trending down"],
 ] as const;
 
-function GscInsights({ d, onMore }: { d: GscData; onMore: (sub: string) => void }) {
+function GscInsights({ d, projectId, onMore }: { d: GscData; projectId: number; onMore: (sub: string) => void }) {
   const clicks = d.series?.map((p) => p.clicks) ?? [];
   const impressions = d.series?.map((p) => p.impressions) ?? [];
   return (
@@ -327,23 +328,43 @@ function GscInsights({ d, onMore }: { d: GscData; onMore: (sub: string) => void 
         CTR {fmtPct(d.ctr.current)} · Avg. position {fmtPos(d.position.current)} (Search Console)
       </p>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <InsightList title="Your content" lists={d.pages} kind="page" onMore={() => onMore("pages")} />
+        <InsightList title="Your content" lists={d.pages} kind="page" projectId={projectId} onMore={() => onMore("pages")} />
         <InsightList title="Queries leading to your site" lists={d.queries} kind="query" onMore={() => onMore("queries")} />
       </div>
     </>
   );
 }
 
-function InsightList({ title, lists, kind, onMore }: { title: string; lists: InsightLists | undefined; kind: "page" | "query"; onMore: () => void }) {
+function InsightList({
+  title,
+  lists,
+  kind,
+  projectId,
+  onMore,
+}: {
+  title: string;
+  lists: InsightLists | undefined;
+  kind: "page" | "query";
+  projectId?: number;
+  onMore: () => void;
+}) {
   const [tab, setTab] = useState<"top" | "up" | "down">("top");
   const rows = lists?.[tab] ?? [];
+  const { setNode: thumbRef, images: thumbImages, busy: thumbBusy, broken: thumbBroken, refresh: thumbRefresh } = useThumbnails(kind === "page" ? projectId : undefined, rows.map((r) => r.key));
   return (
-    <div className="min-w-0 rounded-lg border">
+    <div className="min-w-0 rounded-lg border" ref={thumbRef}>
       <div className="flex items-center justify-between gap-2 px-3 pt-3">
         <h3 className="text-sm font-semibold">{title}</h3>
-        <button className="text-xs text-accent hover:underline" onClick={onMore}>
-          View more ›
-        </button>
+        <span className="flex items-center gap-3">
+          {kind === "page" && projectId && (
+            <button className="text-xs text-muted hover:text-foreground hover:underline" onClick={thumbRefresh} disabled={thumbBusy} title="Reads these pages again for their og:image or article image (saved for 7 days)">
+              {thumbBusy ? "Refreshing…" : "Refresh thumbnails"}
+            </button>
+          )}
+          <button className="text-xs text-accent hover:underline" onClick={onMore}>
+            View more ›
+          </button>
+        </span>
       </div>
       <div role="tablist" aria-label={title} className="mt-2 flex gap-1 border-b px-2 text-xs">
         {INSIGHT_TABS.map(([id, label]) => (
@@ -365,9 +386,24 @@ function InsightList({ title, lists, kind, onMore }: { title: string; lists: Ins
             const url = kind === "page" ? readableUrl(r.key) : null;
             return (
               <li key={r.key} className="flex items-center gap-2.5 px-3 py-2 text-sm">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent" aria-hidden="true">
-                  <Icon name={kind === "page" ? "doc" : "search"} className="h-3.5 w-3.5" />
-                </span>
+                {kind === "page" && thumbImages[r.key] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={thumbImages[r.key]!}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                    width={40}
+                    height={28}
+                    className="h-7 w-10 shrink-0 rounded-md border object-cover"
+                    onError={() => thumbBroken(r.key)}
+                  />
+                ) : (
+                  <span className={`flex h-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent ${kind === "page" && projectId ? "w-10" : "w-7"}`} aria-hidden="true">
+                    <Icon name={kind === "page" ? "doc" : "search"} className="h-3.5 w-3.5" />
+                  </span>
+                )}
                 <span className="min-w-0 flex-1">
                   {url ? (
                     <a href={r.key} target="_blank" rel="noreferrer" className="block truncate hover:underline" title={r.key}>
