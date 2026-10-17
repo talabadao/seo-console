@@ -29,6 +29,8 @@ import type { TrackingEstimate } from "@/lib/ai-area/tracking/job";
 import type { UsageReport } from "@/lib/providers/usageReport";
 import { isGoogleHost } from "@/lib/ai-area/tracking/visibility";
 import { SerpUsageBadge } from "./SerpUsageBadge";
+import { SerpReadinessPanel } from "./SerpReadinessPanel";
+import type { SerpReadiness } from "@/lib/providers/serpReadiness";
 import { Favicon } from "./Favicon";
 import { MentionsView } from "./MentionsView";
 import { OverviewView } from "./OverviewView";
@@ -101,11 +103,15 @@ export function TrackingTab({
   sub,
   onSub,
   defaultView = "overview",
+  onOpenCredentials,
+  onOpenBudgets,
 }: {
   projectId: number;
   sub?: string;
   onSub?: (sub: string) => void;
   defaultView?: View;
+  onOpenCredentials?: () => void;
+  onOpenBudgets?: () => void;
 }) {
   const view: View = VIEW_BY_SLUG[sub ?? ""] ?? defaultView;
   const setView = (v: View) => onSub?.(v === defaultView ? "" : VIEW_SLUG[v]);
@@ -115,6 +121,7 @@ export function TrackingTab({
   const [data, setData] = useState<{ key: string; value: Loaded } | null>(null);
   const [draft, setDraft] = useState<TrackingConfig | null>(null);
   const [usage, setUsage] = useState<UsageReport | null>(null);
+  const [readiness, setReadiness] = useState<SerpReadiness | null>(null);
   const [running, setRunning] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -134,12 +141,17 @@ export function TrackingTab({
       fetch(`/api/account/usage?days=30&project=${projectId}`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      // Whether this project may search right now, and why not (per project: Preview policy, limits, key).
+      fetch(`/api/ai-area/${projectId}/serp-status`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
     ])
-      .then(([value, u]) => {
+      .then(([value, u, ready]) => {
         if (cancelled) return;
         setData({ key: loadKey, value });
         setDraft(null);
         setUsage(u?.report ?? null);
+        setReadiness((ready as SerpReadiness | null) ?? null);
         setError(null);
       })
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
@@ -243,9 +255,10 @@ export function TrackingTab({
   const needsSetup = config.keywords.length === 0 || !config.brand.name.trim();
   const account = usage?.serpapi.account.data ?? null;
   const searchesLeft = account?.totalSearchesLeft ?? account?.planSearchesLeft ?? null;
-  const policy = usage?.serpapi.policy ?? null;
-  // The tightest of the limits that apply (Preview smoke test, project per month, account per month).
-  const allowanceLeft = policy && policy.limits.length ? Math.min(...policy.limits.map((l) => l.left)) : null;
+  // Per-project permission (Preview smoke test, project and account limits, key), not the account-wide summary.
+  const canRun = readiness?.execution.allowed ?? false;
+  const limitLines = readiness?.limits ?? [];
+  const allowanceLeft = limitLines.length ? Math.min(...limitLines.map((l) => l.left)) : null;
   const est = loaded.estimate;
   const lastRun = loaded.runs[0];
 
@@ -268,8 +281,8 @@ export function TrackingTab({
     <button
       type="button"
       onClick={() => setConfirming(true)}
-      disabled={running || !policy?.allowed}
-      title={policy && !policy.allowed ? policy.scope : undefined}
+      disabled={running || !canRun}
+      title={readiness && !readiness.execution.allowed ? (readiness.execution.reason ?? undefined) : undefined}
       className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
       style={{ background: "var(--series-1)" }}
     >
@@ -299,9 +312,9 @@ export function TrackingTab({
             Estimated SerpApi requests: {est.total.min}–{est.total.max} (usually about {est.total.typical}): per keyword {est.perKeyword.min}–{est.perKeyword.max} (
             {est.depth / 10} result page{est.depth === 10 ? "" : "s"}, AI Mode, the AI Overview when Google shows one, and a retry when page 1 looks unrelated).
           </p>
-          {policy && (
+          {limitLines.length > 0 && (
             <p className="mt-1" style={{ color: allowanceLeft != null && allowanceLeft < est.total.max ? "var(--status-critical)" : "var(--text-secondary)" }}>
-              {policy.scope}. {allowanceLeft != null ? `${allowanceLeft} left.` : ""}
+              {limitLines.map((l) => `${l.label}: ${l.left} left`).join("; ")}.
               {allowanceLeft != null && allowanceLeft < est.total.max ? " The run stops when the allowance runs out; what's fetched by then is kept." : ""}
             </p>
           )}
@@ -321,11 +334,7 @@ export function TrackingTab({
         </div>
       )}
 
-      {policy && !policy.allowed ? (
-        <div className="rounded-lg border px-4 py-2.5 text-sm" style={{ borderColor: "var(--border-hairline)", color: "var(--text-secondary)" }} role="note">
-          {policy.scope} Stored results stay available below.
-        </div>
-      ) : null}
+      <SerpReadinessPanel readiness={readiness} onOpenCredentials={onOpenCredentials} onOpenBudgets={onOpenBudgets} />
       {error ? (
         <div className="rounded-lg border px-4 py-2.5 text-sm" style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }} role="alert">
           {error}

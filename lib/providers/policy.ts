@@ -48,7 +48,9 @@ export interface Allowance {
   syncMax: boolean;
 }
 
-export type Decision = { allowed: true; allowances: Allowance[]; scope: string } | { allowed: false; reason: string };
+/** Why a request is refused before anything is sent (shown with a remedy in the UI). */
+export type RefusalCode = "preview-no-test-project" | "preview-other-project" | "preview-no-allowance" | "preview-model-blocked";
+export type Decision = { allowed: true; allowances: Allowance[]; scope: string } | { allowed: false; reason: string; code?: RefusalCode };
 
 const month = (now: Date) => now.toISOString().slice(0, 7);
 const day = (now: Date) => now.toISOString().slice(0, 10);
@@ -65,10 +67,21 @@ export async function serpDecision(userId: number, projectId: number, env: Env =
   const allowances: Allowance[] = [];
   if (deploymentOf(env) === "preview") {
     const test = previewSerpTest(env);
-    if (test.projectId !== projectId) {
-      return { allowed: false, reason: "SerpApi calls are switched off on Preview, except for the one project set up for the SerpApi smoke test." };
+    if (test.projectId == null) {
+      return {
+        allowed: false,
+        code: "preview-no-test-project",
+        reason: "SerpApi calls are switched off on Preview: no smoke-test project is configured (PREVIEW_SERPAPI_TEST_PROJECT_ID is unset).",
+      };
     }
-    if (test.max <= 0) return { allowed: false, reason: "The Preview SerpApi smoke test has no requests allowed." };
+    if (test.projectId !== projectId) {
+      return {
+        allowed: false,
+        code: "preview-other-project",
+        reason: "SerpApi calls are switched off on Preview, except for the one project set up for the SerpApi smoke test.",
+      };
+    }
+    if (test.max <= 0) return { allowed: false, code: "preview-no-allowance", reason: "The Preview SerpApi smoke test has no requests allowed." };
     allowances.push({
       key: allowanceKeys.previewSerp(projectId),
       max: test.max,
@@ -126,7 +139,7 @@ export async function accountSerpDecision(userId: number, env: Env = process.env
 
 export async function llmDecision(userId: number, projectId: number | null = null, env: Env = process.env, now = new Date()): Promise<Decision> {
   if (deploymentOf(env) === "preview") {
-    return { allowed: false, reason: "Paid model calls (OpenAI, Anthropic) are switched off on Preview." };
+    return { allowed: false, code: "preview-model-blocked", reason: "Paid model calls (OpenAI, Anthropic) are switched off on Preview." };
   }
   const limits = await effectiveLimits(userId, projectId, env);
   const allowances: Allowance[] = [];

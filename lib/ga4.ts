@@ -236,7 +236,6 @@ export function andFilter(...filters: unknown[]) {
 // ---------- AI-source classification (lib/ga4Traffic.ts, safe for client components) ----------
 
 export { DEFAULT_AI_DOMAINS, classifyTraffic, type TrafficKind } from "./ga4Traffic";
-import { classifyTraffic } from "./ga4Traffic";
 
 // ---------- higher-level: trend breakdown ----------
 

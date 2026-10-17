@@ -7,8 +7,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { SeKeywordView, SeReportView } from "@/lib/seranking/metrics";
-import { Delta, Sparkline, StateBadge, Stat, fmtInt, fmtPos, fmtTime } from "./summaryUi";
+import { AVG_POSITION_DEFINITION, type SeKeywordView, type SeReportView } from "@/lib/seranking/metrics";
+import { Delta, StateBadge, Stat, fmtInt, fmtPos, fmtTime } from "./summaryUi";
+import { ProviderIcon } from "./ProviderIcon";
+import { Move, PositionSpark } from "../seranking/shared";
+import { HostOverview, type OverviewData } from "../seranking/HostOverview";
+import { ModuleStates, useModule } from "../seranking/Modules";
+import type { SeAudit, SeCompetition } from "@/lib/seranking/donor/types";
 import { Card, ErrorState, EmptyState, LoadingState, buttonClass, primaryButtonClass } from "./ui";
 
 type CacheInfo = { state: "fresh" | "stale"; fetchedAt: number | null; dataThrough: string | null; refreshing: boolean; lastError: string | null; cooldown?: boolean };
@@ -31,14 +36,139 @@ const COMPARES = [
   [90, "90 days earlier"],
 ] as const;
 
-export const AVG_POSITION_DEFINITION =
-  "SE Ranking's average position: the mean over every keyword checked on that date, with keywords outside the top 100 counted as 100. Keywords without a check that day are left out. Not the Search Console average position.";
 
 type SortKey = "name" | "volume" | "current" | "change" | "best";
 type Filter = "all" | "top3" | "top10" | "ranked" | "unranked" | "up" | "down";
 const PAGE = 50;
 
-export function SeRankingPage({ projectId, onOpenIntegrations }: { projectId: number; onOpenIntegrations: () => void }) {
+/** SE Ranking SERP feature codes (labels from the donor app). */
+const FEATURE_LABEL: Record<string, string> = {
+  sge: "AI Overview",
+  ai_overview: "AI Overview",
+  local_pack: "Local pack",
+  people_also_ask: "People also ask",
+  reviews: "Reviews",
+  images: "Images",
+  video: "Video",
+  tads: "Top ads",
+  bads: "Bottom ads",
+  knowledge_graph: "Knowledge panel",
+  sitelinks: "Sitelinks",
+  gmb: "Business profile",
+  featured_snippet: "Featured snippet",
+};
+
+type Tab = "overview" | "rankings";
+type ModuleTarget = "audit" | "competitors" | "backlinks";
+
+/**
+ * Rank tracking → SE Ranking, with the donor app's Overview and Rankings tabs (the tab is the sub-path: "" or
+ * "rankings"). Competitors, backlinks and the site audit live in their own modules; the overview links to them.
+ */
+export function SeRankingPage({
+  projectId,
+  sub,
+  onSub,
+  onOpenIntegrations,
+  onOpenModule,
+}: {
+  projectId: number;
+  sub: string;
+  onSub: (sub: string) => void;
+  onOpenIntegrations: () => void;
+  onOpenModule: (target: ModuleTarget) => void;
+}) {
+  const tab: Tab = sub === "rankings" ? "rankings" : "overview";
+  return (
+    <div className="ai-area space-y-4">
+      <div role="tablist" aria-label="SE Ranking" className="flex flex-wrap items-center gap-1 border-b">
+        <ProviderIcon id="se-ranking" size={20} />
+        {(
+          [
+            ["overview", "Overview"],
+            ["rankings", "Rankings"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === id ? "border-accent font-medium text-foreground" : "border-transparent text-muted hover:text-foreground"}`}
+            onClick={() => onSub(id === "overview" ? "" : id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "overview" ? (
+        <OverviewTab projectId={projectId} onOpenIntegrations={onOpenIntegrations} onOpen={(t) => (t === "rankings" ? onSub("rankings") : onOpenModule(t))} />
+      ) : (
+        <RankingsTab projectId={projectId} onOpenIntegrations={onOpenIntegrations} />
+      )}
+    </div>
+  );
+}
+
+function OverviewTab({ projectId, onOpenIntegrations, onOpen }: { projectId: number; onOpenIntegrations: () => void; onOpen: (t: "rankings" | ModuleTarget) => void }) {
+  const [nonce, setNonce] = useState(0);
+  const { res, error } = useModule<OverviewData>(`/api/v2/seranking/${projectId}/overview`, nonce);
+  // Same scope as the dashboard card: last 28 days vs 28 days earlier, main engine, all groups.
+  const view = useJson<Res>(`/api/v2/seranking/${projectId}?days=28&compare=28`);
+  const audit = useJson<{ state: string; data?: { audit: SeAudit | null } }>(`/api/v2/seranking/${projectId}/audit?peek=1`);
+  const competition = useJson<{ state: string; data?: { competition: SeCompetition | null } }>(`/api/v2/seranking/${projectId}/competition?peek=1`);
+  const v = view && "view" in view ? view.view : null;
+  const demo = (
+    <div className="space-y-3">
+      <p className="rounded-lg border px-3 py-2 text-xs text-muted">
+        Demo project: invented rankings, not a measurement. Audit, competitors and backlinks aren&apos;t queried for demo projects.
+      </p>
+      <HostOverview data={{ summary: null, engines: [], history: {}, backlinks: null, errors: {} }} view={v} audit={null} competition={null} onOpen={onOpen} />
+    </div>
+  );
+  const other = ModuleStates({ res, error, what: "the SE Ranking overview", demo, onOpenIntegrations, onRetry: () => setNonce((n) => n + 1) });
+  if (other || !res || res.state !== "live") return other;
+  const peeked = <T,>(r: { state: string; data?: T } | null): T | "not-fetched" | null => (!r ? null : r.state === "live" && r.data ? r.data : r.state === "not-fetched" ? "not-fetched" : null);
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+        <span>
+          Source: SE Ranking · {res.data.site.title !== res.data.site.url ? `${res.data.site.title} · ` : ""}
+          {res.data.site.url}
+          {res.cache.fetchedAt ? ` · saved ${fmtTime(res.cache.fetchedAt)}` : ""}
+        </span>
+        {res.cache.state === "stale" && <span className="rounded-full border px-1.5 text-[11px]">Stale{res.cache.refreshing ? ", refreshing" : ""}</span>}
+        {res.cache.lastError && <span style={{ color: "var(--bad)" }}>Last refresh failed: {res.cache.lastError}</span>}
+        <button
+          className={`${buttonClass} ml-auto`}
+          onClick={() => setNonce((n) => n + 1)}
+          disabled={res.cache.refreshing}
+          title="Re-reads SE Ranking's summary and history (about 6 Project API requests). Skipped within 5 minutes of the last refresh."
+        >
+          {res.cache.refreshing ? "Refreshing…" : "Refresh from SE Ranking"}
+        </button>
+      </div>
+      <HostOverview data={res.data} view={v} audit={peeked(audit)} competition={peeked(competition)} onOpen={onOpen} />
+    </div>
+  );
+}
+
+/** A small GET hook for read-only side requests. */
+function useJson<T>(url: string): T | null {
+  const [state, setState] = useState<{ url: string; value: T | null }>({ url: "", value: null });
+  useEffect(() => {
+    let live = true;
+    fetch(url, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((b) => live && setState({ url, value: b as T }))
+      .catch(() => live && setState({ url, value: null }));
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  return state.url === url ? state.value : null;
+}
+
+function RankingsTab({ projectId, onOpenIntegrations }: { projectId: number; onOpenIntegrations: () => void }) {
   const [days, setDays] = useState<number>(28);
   const [compare, setCompare] = useState<number>(28);
   const [engine, setEngine] = useState<number | null>(null);
@@ -353,7 +483,7 @@ function KeywordTable({ view }: { view: SeReportView }) {
       }
     >
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[1080px] text-sm">
           <thead>
             <tr className="text-left text-xs text-muted">
               {header("Keyword", "name", "text-left")}
@@ -362,7 +492,10 @@ function KeywordTable({ view }: { view: SeReportView }) {
               {header("Position", "current")}
               {header(`Change${view.comparisonDate ? ` since ${view.comparisonDate.slice(5)}` : ""}`, "change")}
               {header("Best", "best")}
-              <th className="px-2 py-1.5 font-medium">Trend</th>
+              <th className="px-2 py-1.5 font-medium">30 days</th>
+              <th className="px-2 py-1.5 text-right font-medium">1d</th>
+              <th className="px-2 py-1.5 text-right font-medium">7d</th>
+              <th className="px-2 py-1.5 text-right font-medium">30d</th>
               <th className="px-2 py-1.5 font-medium">Landing page</th>
               <th className="px-2 py-1.5 font-medium">SERP features</th>
             </tr>
@@ -391,8 +524,16 @@ function KeywordTable({ view }: { view: SeReportView }) {
                 </td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{k.best ?? "—"}</td>
                 <td className="px-2 py-1.5">
-                  {/* Plotted as 101 − position so higher is better; gaps (not ranking) drop to the floor. */}
-                  <Sparkline values={k.trend.map((t) => (t == null ? 0 : 101 - t))} color="var(--position)" width={72} height={22} />
+                  <PositionSpark positions={k.recent} />
+                </td>
+                <td className="px-2 py-1.5 text-right text-xs">
+                  <Move value={k.change1} />
+                </td>
+                <td className="px-2 py-1.5 text-right text-xs">
+                  <Move value={k.change7} />
+                </td>
+                <td className="px-2 py-1.5 text-right text-xs">
+                  <Move value={k.change30} />
                 </td>
                 <td className="max-w-[16rem] truncate px-2 py-1.5 text-xs">
                   {k.landing ? (
@@ -404,7 +545,7 @@ function KeywordTable({ view }: { view: SeReportView }) {
                   )}
                 </td>
                 <td className="px-2 py-1.5 text-xs text-muted">
-                  {k.features.length ? k.features.map((f) => (k.ownFeatures.includes(f) ? `${f.replace(/_/g, " ")} (yours)` : f.replace(/_/g, " "))).join(", ") : "—"}
+                  {k.features.length ? k.features.map((f) => `${FEATURE_LABEL[f] ?? f.replace(/_/g, " ")}${k.ownFeatures.includes(f) ? " (yours)" : ""}`).join(", ") : "—"}
                 </td>
               </tr>
             ))}

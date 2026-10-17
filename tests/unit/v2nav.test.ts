@@ -28,8 +28,8 @@ describe("navigation model", () => {
       ["Competitive Research", "competitive-research", "overview"],
       ["Link Building", "link-building", "backlinks"],
       ["SE Ranking", "organic-serp", "se-ranking"],
-      // Google, Bing, Yandex and Naver are engines of one page (the engine is the sub-path).
-      ["Organic SERP: Google, Bing, Yandex, Naver", "organic-serp", "organic"],
+      // Organic SERP is Google Search Tracking (owner decision 2026-10-17); its view is the sub-path.
+      ["Organic SERP (Google Search Tracking)", "organic-serp", "organic"],
       ["Google Search Console", "search-console", "performance"],
       ["Google Analytics 4", "analytics", "overview"],
       ["Google Business Profile", "local-seo", "business-profile"],
@@ -39,7 +39,6 @@ describe("navigation model", () => {
       ["Indexing", "technical-seo", "indexing"],
       ["Structured Data / Schema", "technical-seo", "structured-data"],
       ["Content", "content", "board"],
-      ["AI Area: Google Search Tracking", "ai-area", "google-search-tracking"],
       ["AI Area: Brand Mentions", "ai-area", "brand-mentions"],
       ["Automation", "automation", "workflows"],
       ["Weekly Report", "reports", "weekly"],
@@ -146,16 +145,35 @@ describe("feature flag and local mock mode", () => {
 });
 
 describe("rank tracking addresses", () => {
-  it("old per-engine Rank tracking pages open Organic SERP with that engine, same project", () => {
-    for (const engine of ["google", "bing", "yandex", "naver"]) {
-      expect(parseShellPath(["p", "3", "organic-serp", engine])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: engine });
-      // An old sub-tab (the Google item used to open AI Area's tracker views) is dropped.
-      expect(parseShellPath(["p", "3", "organic-serp", engine, "settings"])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: engine });
-      expect(parseShellPath(["portfolio", "organic-serp", engine])).toEqual({ kind: "pick", group: "organic-serp", item: "organic", sub: engine });
+  it("AI Area → Google Search Tracking opens Organic SERP on the same view, same project", () => {
+    expect(findItem("ai-area", "google-search-tracking")).toBeNull();
+    expect(parseShellPath(["p", "3", "ai-area", "google-search-tracking"])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "" });
+    expect(parseShellPath(["p", "3", "ai-area", "google-search-tracking", "mentions"])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "mentions" });
+    expect(parseShellPath(["portfolio", "ai-area", "google-search-tracking", "rank-tracker"])).toEqual({ kind: "pick", group: "organic-serp", item: "organic", sub: "rank-tracker" });
+    expect(findItem("ai-area", "brand-mentions")?.item.status).toBe("live");
+  });
+
+  it("the retired per-engine pages open the rank tracker (Google) or the read-only archive (others)", () => {
+    expect(parseShellPath(["p", "3", "organic-serp", "google"])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "rank-tracker" });
+    for (const engine of ["bing", "yandex", "naver"]) {
+      expect(parseShellPath(["p", "3", "organic-serp", engine, "settings"])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "archive" });
+      // Addresses from the 16 Oct multi-engine page (engine as sub-path).
+      expect(parseShellPath(["p", "3", "organic-serp", "organic", engine])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "archive" });
     }
-    expect(buildShellPath({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "bing" })).toBe("/p/3/organic-serp/organic/bing");
-    // AI Area's Google Search Tracking stays where it is.
-    expect(parseShellPath(["p", "3", "ai-area", "google-search-tracking"])).toMatchObject({ group: "ai-area", item: "google-search-tracking" });
-    expect(findItem("organic-serp", "se-ranking")?.item.status).toBe("live");
+    expect(parseShellPath(["p", "3", "organic-serp", "organic", "google"])).toMatchObject({ sub: "rank-tracker" });
+    expect(parseShellPath(["portfolio", "organic-serp", "bing"])).toEqual({ kind: "pick", group: "organic-serp", item: "organic", sub: "archive" });
+    expect(buildShellPath({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "mentions" })).toBe("/p/3/organic-serp/organic/mentions");
+  });
+
+  it("SE Ranking sections live in their host modules", () => {
+    for (const [g, i] of [
+      ["organic-serp", "se-ranking"],
+      ["competitive-research", "overview"],
+      ["link-building", "backlinks"],
+      ["technical-seo", "site-audit"],
+    ]) {
+      expect(findItem(g, i)?.item.status, `${g}/${i}`).toBe("live");
+    }
+    expect(parseShellPath(["p", "3", "organic-serp", "se-ranking", "rankings"])).toMatchObject({ item: "se-ranking", sub: "rankings" });
   });
 });

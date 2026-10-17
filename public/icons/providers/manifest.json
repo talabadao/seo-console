@@ -1,0 +1,110 @@
+[
+  {
+    "id": "asana",
+    "label": "Asana",
+    "file": "icons/asana.ico",
+    "sourcePage": "https://asana.com/",
+    "sourceUrl": "https://asana.com/assets/img/brand/asana-logo-favicon.ico",
+    "fetchedAt": "2026-10-17T03:40:05.822Z",
+    "mime": "image/vnd.microsoft.icon",
+    "bytes": 41662,
+    "sha256": "a42ae227f92cc034bed8015af2bb5664327c3ef4c207e3dc6cd06e8642845e77",
+    "sourceKind": "official-provider-asset"
+  },
+  {
+    "id": "se-ranking",
+    "label": "SE Ranking",
+    "file": "icons/se-ranking.svg",
+    "sourcePage": "https://seranking.com/",
+    "sourceUrl": "https://seranking.com/wp-content/themes/se_theme/images/favicons/favicon_48x48.svg?v=2",
+    "fetchedAt": "2026-10-17T03:40:05.820Z",
+    "mime": "image/svg+xml",
+    "bytes": 863,
+    "sha256": "4ce2e9818fe86d8e0a704c04cc75b3ccfb503bcd6105acd7fd48210909bd2700",
+    "sourceKind": "official-provider-asset"
+  },
+  {
+    "id": "google-analytics",
+    "label": "Google Analytics 4",
+    "file": "icons/google-analytics.svg",
+    "sourcePage": "https://github.com/google/site-kit-wp",
+    "sourceUrl": "https://raw.githubusercontent.com/google/site-kit-wp/develop/assets/svg/graphics/analytics.svg",
+    "fetchedAt": "2026-10-17T03:40:05.822Z",
+    "mime": "image/svg+xml",
+    "bytes": 2182,
+    "sha256": "400c1d5e4066da6229d5f827a9e315b2dcd841de719f106c9ecd213966c06494",
+    "sourceKind": "official-google-repository"
+  },
+  {
+    "id": "google-search-console",
+    "label": "Google Search Console",
+    "file": "icons/google-search-console.png",
+    "sourcePage": "https://search.google.com/search-console/about",
+    "sourceUrl": "https://www.gstatic.com/search-console/scfe/favicon.png",
+    "fetchedAt": "2026-10-17T03:40:06.076Z",
+    "mime": "image/png",
+    "bytes": 599,
+    "sha256": "07d2941182aa30ebf71476edda87b1db006a9b988d5cc874bbc32ff008883684",
+    "sourceKind": "official-provider-asset"
+  },
+  {
+    "id": "claude",
+    "label": "Claude",
+    "file": "icons/claude.png",
+    "sourcePage": "https://claude.com/",
+    "sourceUrl": "https://assets.claude.com/95a868946ac8a31e5ff832e2899f294aa368b836.png?w=32&h=32",
+    "fetchedAt": "2026-10-17T03:40:06.085Z",
+    "mime": "image/png",
+    "bytes": 1198,
+    "sha256": "4004381309500f25e49a1ae639912ce307ea81da74cc383954a1ac8b9d343fe6",
+    "sourceKind": "official-provider-asset"
+  },
+  {
+    "id": "chatgpt",
+    "label": "ChatGPT / OpenAI",
+    "file": "icons/chatgpt.png",
+    "sourcePage": "https://chatgpt.com/",
+    "sourceUrl": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://chatgpt.com&size=128",
+    "fetchedAt": "2026-10-17T03:40:06.427Z",
+    "mime": "image/png",
+    "bytes": 2232,
+    "sha256": "91b60e952ab099892cebe83697957ece0f9a0f3e8a96533b412b48fca987ed89",
+    "sourceKind": "google-favicon-service-for-official-domain"
+  },
+  {
+    "id": "copilot",
+    "label": "Microsoft Copilot",
+    "file": "icons/copilot.svg",
+    "sourcePage": "https://copilot.microsoft.com/",
+    "sourceUrl": "https://copilot.microsoft.com/static/cmc/favicon.svg",
+    "fetchedAt": "2026-10-17T03:40:06.736Z",
+    "mime": "image/svg+xml",
+    "bytes": 3436,
+    "sha256": "c5b0ad0fc0c6fd9c49131a972635e1aba4e65a0d0385c01d5be8735921d7ef8b",
+    "sourceKind": "official-provider-asset"
+  },
+  {
+    "id": "gemini",
+    "label": "Google Gemini",
+    "file": "icons/gemini.png",
+    "sourcePage": "https://gemini.google.com/",
+    "sourceUrl": "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://gemini.google.com&size=128",
+    "fetchedAt": "2026-10-17T03:40:06.851Z",
+    "mime": "image/png",
+    "bytes": 2774,
+    "sha256": "4a6b4a2df0102d1cf592fcac6dc502c954324474f2cbb01e694260c273ec4a12",
+    "sourceKind": "google-favicon-service-for-official-domain"
+  },
+  {
+    "id": "perplexity",
+    "label": "Perplexity",
+    "file": "icons/perplexity.svg",
+    "sourcePage": "https://www.perplexity.ai/",
+    "sourceUrl": "https://www.perplexity.ai/favicon.svg",
+    "fetchedAt": "2026-10-17T03:40:06.741Z",
+    "mime": "image/svg+xml",
+    "bytes": 2438,
+    "sha256": "00180a688c194d684a69b247769cdf24a7720712256dbe0f334f97e8a15821e4",
+    "sourceKind": "official-provider-asset"
+  }
+]

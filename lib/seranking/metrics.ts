@@ -145,6 +145,15 @@ export interface SeKeywordView extends Omit<SeKeywordRow, "positions"> {
   best: number | null;
   /** Last up-to-30 checks for a sparkline: rank or null. */
   trend: Array<number | null>;
+  /** The same last checks as {date, pos} (0 = not ranking), for the donor's position sparkline. */
+  recent: Array<{ date: string; pos: number }>;
+  /**
+   * Positions gained since the previous check and since 7 and 30 days before the latest check (as in SE Ranking and
+   * the donor app); null when either side isn't ranking or wasn't checked.
+   */
+  change1: number | null;
+  change7: number | null;
+  change30: number | null;
 }
 
 export interface SeReportView {
@@ -218,9 +227,23 @@ export function viewReport(raw: SeRawReport, opts: { engineId?: number | null; g
         change: current != null && previous != null ? previous - current : null,
         best: ranks.length ? Math.min(...ranks) : null,
         trend: k.positions.slice(-30).map((p) => rankOf(p.pos)),
+        recent: k.positions.slice(-30),
+        change1: movedSince(k.positions, current, k.positions.filter((p) => p.date < latestDate).at(-1)?.date ?? null),
+        change7: movedSince(k.positions, current, shiftDays(latestDate, -7)),
+        change30: movedSince(k.positions, current, shiftDays(latestDate, -30)),
       };
     }),
   };
+}
+
+const shiftDays = (ymd: string, days: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/** Positions gained between the check on or before `date` and the current rank; null when either isn't ranking. */
+function movedSince(positions: Array<{ date: string; pos: number }>, current: number | null | undefined, date: string | null): number | null {
+  if (current == null || !date) return null;
+  const then = positionOnOrBefore(positions, date);
+  const rank = then === undefined ? null : rankOf(then);
+  return rank == null ? null : rank - current;
 }
 
 /** Date range for a page view: the last `days` days through `to` (UTC), plus a week so a comparison check exists. */
@@ -249,3 +272,7 @@ export function rankingsFromView(view: SeReportView): RankingsData {
     previous: view.previous,
   };
 }
+
+/** Shown next to every SE Ranking average position (page, overview and dashboard card). */
+export const AVG_POSITION_DEFINITION =
+  "SE Ranking's average position: the mean over every keyword checked on that date, with keywords outside the top 100 counted as 100. Keywords without a check that day are left out. Not the Search Console average position.";
