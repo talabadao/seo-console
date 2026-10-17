@@ -31,3 +31,19 @@ The `schema_migrations` table stores each migration's id, a SHA-256 checksum of 
 
 ## Transition
 For now `lib/db.ts` still applies `BASELINE_STATEMENTS` when a server instance starts, exactly as before (the statements were moved, not changed). Once production is baselined, new schema changes ship as migrations `0002_…` onwards, and the startup step is replaced by the runner in the deploy process.
+
+## Migration notes (v2)
+| Id | Adds | Backfill | Rollback note |
+|---|---|---|---|
+| 0002_project_settings | project_settings | none | additive |
+| 0003_ai_area | AI Area tables | none | additive |
+| 0004_project_serpapi_meta | SerpApi key metadata columns | none | additive |
+| 0005_account_credentials | account_credentials (AES-256-GCM, key id per row) | none; project keys stay where they are | keep the encryption key while any row exists |
+| 0006_budget_limits | budget_limits, provider_allowances | none | additive |
+| 0007_kpi_targets | kpi_targets | copies weekly_kpi_config targets above 0 to linked projects (idempotent) | weekly_kpi_config untouched |
+| 0008_sync_cache | report_cache, sync_jobs, provider_rate, provider_cooldown | none (cache fills on read) | safe to truncate; results refetch |
+| 0009_organic_serp | serp_configs, serp_snapshots | none | additive |
+| 0010_notifications_docs | notifications, notification_settings, doc_articles | none (Preview/dev seed two demo docs at runtime, never Production) | additive |
+| 0011_page_meta | page_meta | none (fills on view) | safe to truncate |
+
+Preview and local development apply pending migrations automatically on first database access (`lib/db.ts`). Production never does: use the runner (`npm run migrate`), as listed in `docs/seo-console-v2/PRODUCTION-PILOT.md`.
