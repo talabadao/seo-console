@@ -54,12 +54,15 @@ import { AuditModule, BacklinksModule, CompetitorsModule } from "../seranking/Mo
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
 import { AiUsageSummary } from "./UsageCosts";
+import { CanManageProvider, TeamPage, ViewOnlyBanner, useTeam } from "./Workspace";
 import { useStored, writeStored } from "./summaryClient";
 
 interface SiteMeta {
   id: number;
   source: string;
   property: string;
+  connectionId: number;
+  connectionEmail: string;
   lastSync: { status: string; finished_at: number | null } | null;
 }
 
@@ -244,6 +247,19 @@ export function Shell({
             <Icon name="book" className="h-4 w-4" />
             <span className="hidden sm:inline">Docs</span>
           </a>
+          <a
+            href="/team"
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey) return;
+              e.preventDefault();
+              navigate({ kind: "team" });
+            }}
+            aria-current={loc.kind === "team" ? "page" : undefined}
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-accent-soft ${loc.kind === "team" ? "text-accent" : "text-muted hover:text-foreground"}`}
+          >
+            <Icon name="user" className="h-4 w-4" />
+            <span className="hidden sm:inline">Team</span>
+          </a>
           <NotificationBell projectId={project?.id ?? null} onNavigate={navigate} />
         </div>
       </header>
@@ -294,7 +310,7 @@ export function Shell({
       {projectView != null && (
         <ProjectManager
           projects={projects}
-          gscProperties={sites.filter((s) => s.source === "google").map((s) => s.property)}
+          sites={sites.filter((s) => s.source === "google")}
           initialView={projectView}
           onClose={() => setProjectView(null)}
           onChanged={async (selectId) => {
@@ -612,6 +628,15 @@ function Page(props: PageProps) {
 
   if (loc.kind === "portfolio") return <PortfolioPage {...props} />;
 
+  if (loc.kind === "team") {
+    return (
+      <>
+        <PageHeader crumbs={[{ label: "Workspace" }, { label: "Team" }]} title="Team" onNavigate={nav} />
+        <TeamPage onOpenProject={(id) => onNavigate({ kind: "project", projectId: id, ...DEFAULT_ITEM, sub: "" })} />
+      </>
+    );
+  }
+
   if (loc.kind === "docs") {
     return (
       <>
@@ -628,7 +653,7 @@ function Page(props: PageProps) {
         <PageHeader
           crumbs={[{ label: "All projects", href: "/portfolio" }, { label: "Account" }, { label }]}
           title="Account settings"
-          description={`Signed in as ${props.userEmail}. These settings belong to this account, not to a project.`}
+          description={`Signed in as ${props.userEmail}. These settings are yours, not a project's; teammates can't see them.`}
           onNavigate={nav}
         />
         <AccountSettings
@@ -681,13 +706,13 @@ function Page(props: PageProps) {
     );
   }
 
-  // Project pages. The project must be one of this account's own; the server
-  // enforces the same rule on every API call.
+  // Project pages: any live project of the workspace. The server enforces the same rule (and management rights for
+  // changes) on every API call.
   if (!project) {
     return (
       <ErrorState
         title="Project not found."
-        body="It doesn't exist or isn't one of your projects."
+        body="It doesn't exist, was deleted, or isn't in your workspace."
         action={
           <button className={buttonClass} onClick={() => onNavigate({ kind: "portfolio" })}>
             Go to All projects
@@ -725,21 +750,24 @@ function Page(props: PageProps) {
       </label>
     ) : undefined;
 
+  const banner = <ViewOnlyBanner project={project} onOpenSharing={() => onNavigate({ kind: "project", projectId: project.id, group: "settings", item: "project", sub: "sharing" })} />;
   if (loc.group === "dashboard") {
     return (
-      <>
+      <CanManageProvider value={project.canManage}>
         <div className="mb-3">
           <Breadcrumbs crumbs={crumbs} onNavigate={nav} />
         </div>
+        {banner}
         <ProjectPage {...props} project={project} item={item} connected={connected} />
-      </>
+      </CanManageProvider>
     );
   }
   return (
-    <>
+    <CanManageProvider value={project.canManage}>
       <PageHeader crumbs={crumbs} title={item.label} status={status === "live" ? undefined : status} description={item.status !== "live" ? item.description : undefined} actions={actions} onNavigate={nav} />
+      {banner}
       <ProjectPage {...props} project={project} item={item} connected={connected} />
-    </>
+    </CanManageProvider>
   );
 }
 
@@ -781,11 +809,13 @@ function ProjectPage({
     return (
       <EmptyState
         title={`${project.name} has no ${REQUIREMENT_LABEL[item.requires]} linked.`}
-        body="Link it in the project settings to use this page."
+        body={project.canManage ? "Link it in the project settings to use this page." : "One of the project's managers can link it in the project settings."}
         action={
-          <button className={primaryButtonClass} onClick={() => onEditProject(project.id)}>
-            Edit project
-          </button>
+          project.canManage ? (
+            <button className={primaryButtonClass} onClick={() => onEditProject(project.id)}>
+              Edit project
+            </button>
+          ) : undefined
         }
       />
     );
@@ -939,10 +969,19 @@ function NoProjects({ onNew }: { onNew: () => void }) {
   );
 }
 
+const SCOPE_KEY = "seo-v2-portfolio-scope";
+const BRAND_KEY = "seo-v2-portfolio-brand";
+
 function PortfolioPage({ projects, onNavigate, onEditProject, onRetryProjects }: PageProps) {
-  // On a Preview deployment (where /api/preview-status exists), an approved
-  // user can add synthetic demo projects to their own, otherwise empty, account.
+  // On a Preview deployment (where /api/preview-status exists), a team member can add synthetic demo projects to an
+  // otherwise empty workspace.
   const [preview, setPreview] = useState(false);
+  const scope = useStored(SCOPE_KEY, "all", (v) => (v === "mine" ? "mine" : "all"));
+  const brand = useStored(BRAND_KEY, "all", (v) => (typeof v === "string" ? v : "all"));
+  const team = useTeam();
+  const brands = team.data?.brands ?? [];
+  const shown = projects.filter((p) => (scope === "mine" ? p.canManage : true) && (brand === "all" ? true : brand === "none" ? p.brandId == null : String(p.brandId) === brand));
+  const mine = projects.filter((p) => p.canManage).length;
   const [adding, setAdding] = useState<"idle" | "busy" | "error">("idle");
   useEffect(() => {
     if (projects.length) return;
@@ -958,7 +997,7 @@ function PortfolioPage({ projects, onNavigate, onEditProject, onRetryProjects }:
     onRetryProjects();
   }
   const demoButton = preview ? (
-    <button className={buttonClass} onClick={addDemo} disabled={adding === "busy"} title="Adds three invented projects to your own account on this Preview">
+    <button className={buttonClass} onClick={addDemo} disabled={adding === "busy"} title="Adds three invented projects to the team workspace on this Preview">
       {adding === "busy" ? "Adding…" : adding === "error" ? "Couldn't add demo projects. Try again" : "Add demo projects"}
     </button>
   ) : null;
@@ -968,7 +1007,7 @@ function PortfolioPage({ projects, onNavigate, onEditProject, onRetryProjects }:
       <PageHeader
         crumbs={[{ label: "Workspace" }, { label: "All projects" }]}
         title="All projects"
-        description="Performance and work across the projects your account owns."
+        description="Every project of the team, both brands. You manage the ones marked Manager; you can view all of them."
         actions={
           <button className={primaryButtonClass} onClick={() => onEditProject()}>
             New project
@@ -976,14 +1015,52 @@ function PortfolioPage({ projects, onNavigate, onEditProject, onRetryProjects }:
         }
         onNavigate={(h) => onNavigate(h)}
       />
-      {projects.length ? (
-        <PortfolioDashboard projects={projects} onNavigate={onNavigate} onNewProject={() => onEditProject()} />
+      {projects.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Filter projects">
+          <div className="inline-flex rounded-md border p-0.5">
+            {(["all", "mine"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => writeStored(SCOPE_KEY, s)}
+                aria-pressed={scope === s}
+                className={`rounded px-3 py-1 ${scope === s ? "bg-accent-soft font-medium text-accent" : "text-muted hover:text-foreground"}`}
+              >
+                {s === "all" ? `All projects (${projects.length})` : `My projects (${mine})`}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-muted">
+            Brand
+            <select value={brand} onChange={(e) => writeStored(BRAND_KEY, e.target.value)} className="rounded-md border bg-background px-2 py-1 text-foreground">
+              <option value="all">All brands</option>
+              {brands.map((b) => (
+                <option key={b.id} value={String(b.id)}>
+                  {b.name}
+                </option>
+              ))}
+              <option value="none">No brand</option>
+            </select>
+          </label>
+        </div>
+      )}
+      {projects.length && shown.length ? (
+        <PortfolioDashboard projects={shown} onNavigate={onNavigate} onNewProject={() => onEditProject()} />
+      ) : projects.length ? (
+        <EmptyState
+          title={scope === "mine" ? "You don't manage any project with these filters." : "No project matches these filters."}
+          body="Everyone can view every project; managers are listed in each project's settings."
+          action={
+            <button className={buttonClass} onClick={() => { writeStored(SCOPE_KEY, "all"); writeStored(BRAND_KEY, "all"); }}>
+              Show all projects
+            </button>
+          }
+        />
       ) : (
         <EmptyState
           title="No projects yet."
           body={
             preview
-              ? "Create a project, or add a few demo projects to explore the dashboards. Demo projects are invented, labelled as demo, and visible only to your account."
+              ? "Create a project, or add a few demo projects to explore the dashboards. Demo projects are invented, labelled as demo, and visible to the team on this Preview."
               : "A project groups one brand's website with its Search Console, Analytics and review sources."
           }
           action={

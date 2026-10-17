@@ -2,10 +2,12 @@
 // Pure data and functions, shared by the shell UI and its tests.
 //
 // Addresses:
-//   /portfolio                       All projects (only the signed-in account's)
+//   /portfolio                       All projects of the team workspace (filter: all / mine, brand)
 //   /portfolio/<group>/<item>[/<sub>] A project-only page opened from All projects: pick a project first
-//   /account[/<section>][?project=<id>]  Account settings (API credentials, Usage & Costs, Budgets & limits,
-//                                    Sync & cache). Works without a project; ?project only pre-selects a filter.
+//   /account[/<section>][?project=<id>]  The signed-in person's own settings (Profile, Linked logins, API
+//                                    credentials, Usage & Costs, Budgets & limits, Scheduled spending, Notification
+//                                    preferences, Data connections, Sync & cache). ?project only pre-selects a filter.
+//   /team                            Team directory
 //   /p/<projectId>/<group>/<item>[/<sub>]
 //   /docs[/<slug>]                    Docs articles and news (a slug opens one)
 // The project is identified by its id, never by its (editable) name.
@@ -209,10 +211,11 @@ export type ShellLocation =
   | { kind: "pick"; group: string; item: string; sub?: string }
   | { kind: "project"; projectId: number; group: string; item: string; sub: string }
   | { kind: "docs"; slug?: string }
+  | { kind: "team" }
   | { kind: "account"; section: string; projectId: number | null };
 
-/** Account settings sections, in menu order ("" = API credentials). */
-export const ACCOUNT_SECTIONS = ["", "usage", "budgets", "notifications", "sync"] as const;
+/** Account settings sections ("" = API credentials, kept as the default for old links). */
+export const ACCOUNT_SECTIONS = ["profile", "logins", "", "usage", "budgets", "spending", "notifications", "connections", "sync"] as const;
 const accountSection = (s: string | undefined) => (s && (ACCOUNT_SECTIONS as readonly string[]).includes(s) ? s : "");
 const projectParam = (search: string | undefined) => {
   const id = Number(new URLSearchParams(search ?? "").get("project"));
@@ -253,7 +256,7 @@ const organicSub = (group: string, item: string, sub: string) => (group === "org
 
 /** True for paths the v2 shell owns; everything else stays with the legacy dashboard. */
 export function isShellPath(segments: string[]): boolean {
-  return segments[0] === "portfolio" || segments[0] === "p" || segments[0] === "docs" || segments[0] === "account";
+  return segments[0] === "portfolio" || segments[0] === "p" || segments[0] === "docs" || segments[0] === "account" || segments[0] === "team";
 }
 
 /** Reads a shell address. Unknown pages fall back to the project overview; unknown roots give null. */
@@ -261,6 +264,7 @@ export function parseShellPath(segments: string[], search?: string): ShellLocati
   const [root, a, b, c, d] = segments;
   if (root === "docs") return a && /^[a-z0-9-]{1,100}$/.test(a) ? { kind: "docs", slug: a } : { kind: "docs" };
   if (root === "account") return { kind: "account", section: accountSection(a), projectId: projectParam(search) };
+  if (root === "team") return { kind: "team" };
   if (root === "portfolio") {
     // Older account / usage addresses: Account settings without a project.
     const moved = a && b ? LEGACY_ITEMS[`${a}/${b}`] : undefined;
@@ -293,6 +297,8 @@ export function buildShellPath(loc: ShellLocation): string {
       return "/portfolio";
     case "docs":
       return loc.slug ? `/docs/${loc.slug}` : "/docs";
+    case "team":
+      return "/team";
     case "pick":
       return `/portfolio/${loc.group}/${loc.item}${loc.sub ? `/${loc.sub}` : ""}`;
     case "account":

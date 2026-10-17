@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { getProject } from "@/lib/projects";
+import { managementRequired } from "@/lib/access";
 import { listSites, matchSite, seRankingConfigured } from "@/lib/seranking/rankings";
 import { saveSeRankingSite, seRankingSiteFor } from "@/lib/projectSettings";
 
@@ -29,10 +30,11 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   }
 }
 
-/** Chooses the SE Ranking project for this project; null goes back to matching by website. */
+/** Chooses the SE Ranking project for this project; null goes back to matching by website. Managers only. */
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const r = await load(ctx);
   if ("error" in r) return r.error;
+  if (!r.project.canManage) return managementRequired(r.project);
   const body = (await req.json().catch(() => ({}))) as { siteId?: unknown };
   const siteId = body.siteId == null ? null : Number(body.siteId);
   if (siteId !== null && !Number.isSafeInteger(siteId)) return NextResponse.json({ error: "bad siteId" }, { status: 400 });

@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
-import { GoogleReauthRequiredError, accessTokenFor, hasIndexingScope } from "@/lib/google/oauth";
+import { INDEXING_SCOPE } from "@/lib/google/oauth";
+import { connectionHasScope, gscForProperty, managementRequired } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
 import { submitUrls, submitQuotaLeft, type SiteRow } from "@/lib/indexer";
 
 export const maxDuration = 120;
 
 const RECONNECT_MSG =
-  "Your Google sign-in doesn't include the Indexing API permission yet. " +
-  "Sign out and sign back in (approve the new permission), then retry.";
+  "The project's Google connection doesn't include the Indexing API permission yet. " +
+  "Reconnect it in Account → Data connections (approve the new permission), then retry.";
 
 const OWNER_MSG =
   "The Indexing API only accepts a verified Owner of the property. Your role in " +
@@ -34,12 +36,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "max 100 URLs per request" }, { status: 400 });
   }
 
+  const gsc = await gscForProperty(user, body.property, (body as { projectId?: number }).projectId);
+  if (!gsc || gsc.siteId == null) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+  if (!gsc.project.canManage) return managementRequired(gsc.project);
   const site = (await db
-    .prepare(
-      "SELECT id, user_id, source, property, permission_level FROM sites WHERE user_id = ? AND property = ? AND source = 'google'",
-    )
-    .get(user.id, body.property)) as (SiteRow & { permission_level: string | null }) | undefined;
-  if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+    .prepare("SELECT id, user_id, source, property, permission_level FROM sites WHERE id = ?")
+    .get(gsc.siteId)) as unknown as SiteRow & { permission_level: string | null };
 
   const fail = async (message: string, extra: Record<string, unknown> = {}) =>
     NextResponse.json({
@@ -58,17 +60,13 @@ export async function POST(req: NextRequest) {
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await gsc.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true, message: e instanceof Error ? e.message : "" });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 
-  const scopes =
-    ((await db.prepare("SELECT google_scopes FROM users WHERE id = ?").get(user.id)) as
-      | { google_scopes: string | null }
-      | undefined)?.google_scopes ?? user.google_scopes;
-  if (!hasIndexingScope(scopes)) return fail(RECONNECT_MSG, { needsReconnect: true });
+  if (!(await connectionHasScope(gsc.connectionId, INDEXING_SCOPE))) return fail(RECONNECT_MSG, { needsReconnect: true });
 
   const { results, skipped, ineligible, quotaLeft } = await submitUrls(site, urls, token);
   const failed = results.filter((r) => !r.ok && !r.ineligible);

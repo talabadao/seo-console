@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
-import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
+import { gaForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
+import { aiDomainsForProject } from "@/lib/gaConfig";
 import { cleanGaError, type DateRange } from "@/lib/ga4";
 import { keyEventDrill } from "@/lib/gaChannels";
 import {
@@ -23,15 +24,14 @@ const DIM: Record<string, string> = {
 export async function GET(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!hasAnalyticsScope(user.google_scopes)) {
-    return NextResponse.json({ needsReconnect: true }, { status: 200 });
-  }
 
   const p = req.nextUrl.searchParams;
   const propertyId = p.get("propertyId");
+  // Any team member may read a property mapped by a project they can see, through that project's connection.
+  const ga = await gaForProperty(user, propertyId);
   const eventName = p.get("eventName");
   const by = DIM[p.get("by") || ""] ? (p.get("by") as string) : "pagePath";
-  if (!propertyId || !(await ownsGaProperty(user.id, propertyId)) || !eventName) {
+  if (!propertyId || !ga || !eventName) {
     return NextResponse.json({ error: "propertyId, eventName required" }, { status: 400 });
   }
 
@@ -48,13 +48,13 @@ export async function GET(req: NextRequest) {
     ? { startDate: prevR.start, endDate: prevR.end }
     : null;
   const channel = p.get("channel") || "";
-  const aiDomains = aiDomainsFor(user);
+  const aiDomains = await aiDomainsForProject(ga.project.id);
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await ga.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

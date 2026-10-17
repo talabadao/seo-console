@@ -1,7 +1,7 @@
 "use client";
 
-// The signed-in account, bottom-left of the sidebar: avatar, name and email, opening a menu with the account
-// settings pages and Sign out. Collapsed sidebar: the avatar alone opens the same menu; the mobile drawer shows
+// The signed-in person, bottom-left of the sidebar: avatar, name and email, opening a menu with their own settings
+// pages and Sign out. Collapsed sidebar: the avatar alone opens the same menu; the mobile drawer shows
 // the full row. Keyboard: Enter/Space opens, arrow keys move, Escape closes and returns focus.
 
 import { useEffect, useRef, useState } from "react";
@@ -9,19 +9,24 @@ import type { ShellLocation } from "@/lib/v2/nav";
 import { Icon } from "./icons";
 
 export const ACCOUNT_SECTION_LABEL: Record<string, string> = {
+  profile: "Profile",
+  logins: "Linked logins",
   "": "API credentials",
   usage: "Usage & Costs",
   budgets: "Budgets & limits",
-  notifications: "Notifications",
+  spending: "Scheduled spending",
+  notifications: "Notification preferences",
+  connections: "Data connections",
   sync: "Sync & cache",
 };
 
 const ITEMS: Array<{ section: string; label: string; icon: string }> = [
-  { section: "", label: "Account settings · API credentials", icon: "key" },
+  { section: "profile", label: "Profile", icon: "user" },
+  { section: "logins", label: "Linked logins", icon: "link" },
+  { section: "", label: "API credentials", icon: "key" },
   { section: "usage", label: "Usage & Costs", icon: "wallet" },
-  { section: "budgets", label: "Budgets & limits", icon: "gauge" },
-  { section: "notifications", label: "Notifications", icon: "bell" },
-  { section: "sync", label: "Sync & cache", icon: "gear" },
+  { section: "notifications", label: "Notification preferences", icon: "bell" },
+  { section: "connections", label: "Data connections", icon: "gear" },
 ];
 
 function Avatar({ user, size = 28 }: { user: { email: string; name: string | null; picture: string | null }; size?: number }) {

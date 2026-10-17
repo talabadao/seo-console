@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 /** Removes a finished cycle (its answers). A running cycle can't be deleted. */
 export async function DELETE(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   try {
     const id = req.nextUrl.searchParams.get("id");

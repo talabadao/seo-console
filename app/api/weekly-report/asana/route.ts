@@ -1,24 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment";
-import { currentUser } from "@/lib/session";
-import { ownsGaProperty } from "@/lib/gaConfig";
+import { gaForProperty, isDenied, managementRequired, viewer } from "@/lib/access";
 import { configFor, reportWindows } from "@/lib/weeklyReport";
 import { createStatusUpdate, type AsanaStatusType } from "@/lib/asana";
+import { AsanaUnavailableError, asanaToken } from "@/lib/asanaConnections";
+import { audit } from "@/lib/auth/identities";
 
 const VALID_STATUS: AsanaStatusType[] = ["on_track", "at_risk", "off_track", "on_hold", "complete", "achieved"];
 
+/**
+ * Posts the Weekly report as an Asana status update (an explicit write): a management member of the property's
+ * project, through the project's Asana reporting connection (whose owner's Asana access applies; it never acts as
+ * a task assignee). The acting team member is recorded. Blocked on Preview.
+ */
 export async function POST(req: NextRequest) {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const user = await viewer();
+  if (isDenied(user)) return user;
   if (!externalWritesAllowed()) return NextResponse.json({ error: PREVIEW_WRITES_BLOCKED }, { status: 403 });
-  if (!user.asana_api_token) {
-    return NextResponse.json({ error: "Asana isn't connected — add a token in Settings." }, { status: 400 });
-  }
 
   const body = await req.json().catch(() => ({}));
   const propertyId = String(body.propertyId ?? "");
-  if (!propertyId || !(await ownsGaProperty(user.id, propertyId))) {
-    return NextResponse.json({ error: "unknown or unlinked GA property" }, { status: 404 });
+  const ga = propertyId ? await gaForProperty(user, propertyId) : null;
+  if (!ga) return NextResponse.json({ error: "unknown or unlinked GA property" }, { status: 404 });
+  if (!ga.project.canManage) return managementRequired(ga.project);
+  if (ga.project.asanaConnectionId == null) {
+    return NextResponse.json({ error: "No Asana connection is mapped for this project. Choose one in Project settings → Integrations." }, { status: 400 });
   }
 
   const config = await configFor(user.id, propertyId, reportWindows().yearMonth);
@@ -38,14 +44,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await createStatusUpdate(user.asana_api_token, {
-      parent: projectGid,
-      title,
-      text,
-      statusType,
-    });
+    const token = await asanaToken(ga.project.asanaConnectionId);
+    const result = await createStatusUpdate(token, { parent: projectGid, title, text, statusType });
+    await audit("asana-status-update", { userId: user.id, detail: { projectId: ga.project.id, asanaProject: projectGid, connectionId: ga.project.asanaConnectionId } });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    const status = e instanceof AsanaUnavailableError ? 400 : 502;
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status });
   }
 }

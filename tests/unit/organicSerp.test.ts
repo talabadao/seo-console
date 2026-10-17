@@ -175,12 +175,13 @@ describe("runs", () => {
 });
 
 describe("history, saved searches and comparison", () => {
-  it("snapshots are per account and project and open without searching", async () => {
+  it("snapshots belong to their project (readable by everyone who can view it) and open without searching", async () => {
     const f = fakeSerp({ sitePos: 3 });
     const { snapshot } = await runSearch({ userId: 1, project, input: input(), search: f.search });
     const calls = f.calls.length;
     expect((await getSnapshot(1, 1, snapshot.id))?.results).toHaveLength(30);
-    expect(await getSnapshot(2, 1, snapshot.id)).toBeNull();
+    // A completed result is project data: another team member viewing the project reads the same snapshot.
+    expect((await getSnapshot(2, 1, snapshot.id))?.id).toBe(snapshot.id);
     expect(await getSnapshot(1, 2, snapshot.id)).toBeNull();
     expect(f.calls.length).toBe(calls);
   });

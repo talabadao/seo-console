@@ -10,9 +10,12 @@
 // died; only the current lease holder can complete it; a result from an older job never replaces a newer one
 // (generation = job id). Failures keep the previous result; an access error (401/403) hides it.
 //
-// Identity: (scope, cache_key). scope is the account ("user:<id>") — data produced with one account's credentials
-// and project ownership is only ever served to that account. cache_key hashes the kind and the canonical query
-// (ids, dates, filters, metrics, time zone and config versions). Credentials are never part of a query.
+// Identity: (scope, cache_key). scope is the team workspace ("ws:<id>"): every result is project reporting data that
+// every member of the workspace may view, produced through the project's shared connections, so one refresh serves
+// all viewers. Routes authorize the viewer BEFORE reading (lib/access.ts), and a job rechecks that its project is
+// still live in that workspace when it runs. cache_key hashes the kind and the canonical query (project, connection
+// or resource ids, dates, filters, metrics, time zone and config versions). Credentials are never part of a query.
+// The user id stored with a job is only the actor who caused it (null for scheduled work), for attribution.
 
 import { createHash, randomUUID } from "node:crypto";
 import { db, tableExists, withTransaction } from "@/lib/db";
@@ -25,7 +28,7 @@ export interface JobKind<Q = unknown, P = unknown> {
   /** How long a result counts as fresh. */
   freshMs: number;
   /** Fetches from the provider for this query. Throw to fail; the previous result is kept. */
-  run(ctx: { userId: number; projectId: number | null; query: Q }): Promise<{ payload: P; dataThrough?: string | null }>;
+  run(ctx: { userId: number | null; workspaceId: number; projectId: number | null; query: Q }): Promise<{ payload: P; dataThrough?: string | null }>;
   /** True when the error means the account no longer has access: cached data must not be served. */
   isAccessError?(e: unknown): boolean;
   /** Refreshed only by an explicit (e.g. chargeable) action: never by stale reads or the scheduler. */
@@ -73,7 +76,8 @@ export function stableStringify(v: unknown): string {
 }
 
 export const cacheKey = (kind: string, query: unknown) => createHash("sha256").update(`${kind}|${stableStringify(query)}`).digest("hex");
-export const scopeOf = (userId: number) => `user:${userId}`;
+export const scopeOf = (workspaceId: number) => `ws:${workspaceId}`;
+const workspaceOfScope = (scope: string) => (/^ws:(\d+)$/.exec(scope) ? Number(scope.slice(3)) : null);
 
 export async function syncReady(): Promise<boolean> {
   return tableExists("report_cache");
@@ -114,7 +118,9 @@ async function readRow(scope: string, key: string): Promise<CacheRow | undefined
 /** Creates the one open job for this query, or returns the one already queued or running. */
 export async function enqueue(opts: {
   kind: string;
-  userId: number;
+  workspaceId: number;
+  /** Who caused it (attribution only); null for scheduled work. */
+  actorUserId?: number | null;
   projectId: number | null;
   query: unknown;
   reason: "cold" | "stale" | "manual" | "schedule";
@@ -122,16 +128,17 @@ export async function enqueue(opts: {
 }): Promise<number> {
   const k = kindOf(opts.kind);
   if (!k) throw new Error(`Unknown sync kind ${opts.kind}`);
-  const scope = scopeOf(opts.userId);
+  const scope = scopeOf(opts.workspaceId);
   const key = cacheKey(opts.kind, opts.query);
   const now = Date.now();
   const q = JSON.stringify(opts.query);
+  const actor = opts.actorUserId ?? null;
   await db
     .prepare(
       `INSERT INTO report_cache (scope, cache_key, kind, provider, user_id, project_id, query) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)
        ON CONFLICT (scope, cache_key) DO NOTHING`,
     )
-    .run(scope, key, opts.kind, k.provider, opts.userId, opts.projectId, q);
+    .run(scope, key, opts.kind, k.provider, actor, opts.projectId, q);
   for (let i = 0; i < 3; i++) {
     const created = (await db
       .prepare(
@@ -139,7 +146,7 @@ export async function enqueue(opts: {
          VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, 'queued', ?, ?)
          ON CONFLICT (scope, cache_key) WHERE status IN ('queued', 'running') DO NOTHING RETURNING id`,
       )
-      .get(scope, key, opts.kind, k.provider, opts.userId, opts.projectId, q, opts.reason, opts.runAfter ?? now, now)) as { id: number } | undefined;
+      .get(scope, key, opts.kind, k.provider, actor, opts.projectId, q, opts.reason, opts.runAfter ?? now, now)) as { id: number } | undefined;
     if (created) return Number(created.id);
     const open = (await db
       .prepare("SELECT id FROM sync_jobs WHERE scope = ? AND cache_key = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1")
@@ -164,7 +171,7 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
         RETURNING id, scope, cache_key, kind, user_id, project_id, query, attempts, max_attempts, reason`,
     )
     .get(token, now + leaseMs, now, id, now, now)) as
-    | { id: number; scope: string; cache_key: string; kind: string; user_id: number; project_id: number | null; query: unknown; attempts: number; max_attempts: number; reason: string }
+    | { id: number; scope: string; cache_key: string; kind: string; user_id: number | null; project_id: number | null; query: unknown; attempts: number; max_attempts: number; reason: string }
     | undefined;
   if (!job) return "not-claimed";
   const k = kindOf(job.kind);
@@ -189,11 +196,17 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
     await finish("failed", `Unknown sync kind ${job.kind}`, null, counters);
     return "failed";
   }
-  // Authorization is rechecked when the job runs, not only when it was queued.
+  // Authorization is rechecked when the job runs, not only when it was queued: the project must still be live in
+  // the workspace the result belongs to.
+  const workspaceId = workspaceOfScope(job.scope);
+  if (workspaceId == null) {
+    await finish("failed", "This result belongs to an earlier, per-account cache.", null, counters);
+    return "failed";
+  }
   if (job.project_id != null) {
-    const owns = await db.prepare("SELECT 1 FROM projects WHERE id = ? AND user_id = ?").get(job.project_id, job.user_id);
-    if (!owns) {
-      await finish("failed", "The project is no longer this account's.", null, counters);
+    const live = await db.prepare("SELECT 1 FROM projects WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL").get(job.project_id, workspaceId);
+    if (!live) {
+      await finish("failed", "The project was deleted or is no longer in this workspace.", null, counters);
       await db.prepare("UPDATE report_cache SET payload = NULL, access_error = ? WHERE scope = ? AND cache_key = ?").run("Project no longer accessible", job.scope, job.cache_key);
       return "failed";
     }
@@ -212,7 +225,9 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
   }
   let result: { payload: unknown; dataThrough?: string | null };
   try {
-    result = await runWithJobContext(counters, () => k.run({ userId: Number(job.user_id), projectId: job.project_id == null ? null : Number(job.project_id), query: parse(job.query) }));
+    result = await runWithJobContext(counters, () =>
+      k.run({ userId: job.user_id == null ? null : Number(job.user_id), workspaceId, projectId: job.project_id == null ? null : Number(job.project_id), query: parse(job.query) }),
+    );
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     if (e instanceof ProviderBusyError) {
@@ -267,7 +282,7 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
  * up to `concurrency` at once (default 4; provider rate windows still apply). Safe alongside other runners:
  * each job is claimed atomically, so two runners never run the same job.
  */
-export async function runDueJobs(opts: { limit: number; budgetMs: number; userId?: number; concurrency?: number }): Promise<{ ran: number; outcomes: Record<string, number> }> {
+export async function runDueJobs(opts: { limit: number; budgetMs: number; workspaceId?: number; concurrency?: number }): Promise<{ ran: number; outcomes: Record<string, number> }> {
   const deadline = Date.now() + opts.budgetMs;
   const outcomes: Record<string, number> = {};
   const inFlight = new Set<number>();
@@ -281,9 +296,9 @@ export async function runDueJobs(opts: { limit: number; budgetMs: number; userId
       const rows = (await db
         .prepare(
           `SELECT id FROM sync_jobs WHERE ((status = 'queued' AND run_after <= ?) OR (status = 'running' AND lease_until < ?))
-             AND (?::bigint IS NULL OR user_id = ?) ORDER BY run_after, id LIMIT ?`,
+             AND (?::text IS NULL OR scope = ?) ORDER BY run_after, id LIMIT ?`,
         )
-        .all(now, now, opts.userId ?? null, opts.userId ?? null, inFlight.size + lanes)) as Array<{ id: number }>;
+        .all(now, now, opts.workspaceId == null ? null : scopeOf(opts.workspaceId), opts.workspaceId == null ? null : scopeOf(opts.workspaceId), inFlight.size + lanes)) as Array<{ id: number }>;
       if (!rows.length) return null;
       const id = rows.map((r) => Number(r.id)).find((x) => !inFlight.has(x));
       if (id != null) return id;
@@ -318,17 +333,19 @@ export async function enqueueDueRefreshes(opts: { activeSinceMs: number; limit: 
   const now = Date.now();
   const due = (await db
     .prepare(
-      `SELECT c.kind, c.user_id, c.project_id, c.query FROM report_cache c
+      `SELECT c.kind, c.scope, c.project_id, c.query FROM report_cache c
         WHERE c.fresh_until IS NOT NULL AND c.fresh_until < ? AND c.last_read_at >= ? AND c.access_error IS NULL
           AND NOT EXISTS (SELECT 1 FROM sync_jobs j WHERE j.scope = c.scope AND j.cache_key = c.cache_key AND j.status IN ('queued', 'running'))
         ORDER BY c.fresh_until LIMIT ?`,
     )
-    .all(now, now - opts.activeSinceMs, opts.limit)) as Array<{ kind: string; user_id: number; project_id: number | null; query: unknown }>;
+    .all(now, now - opts.activeSinceMs, opts.limit)) as Array<{ kind: string; scope: string; project_id: number | null; query: unknown }>;
   let n = 0;
   for (const r of due) {
     const k = kindOf(r.kind);
     if (!k || k.manualOnly || k.noSchedule) continue;
-    await enqueue({ kind: r.kind, userId: Number(r.user_id), projectId: r.project_id == null ? null : Number(r.project_id), query: parse(r.query), reason: "schedule" });
+    const workspaceId = workspaceOfScope(r.scope);
+    if (workspaceId == null) continue; // results of the earlier per-account cache are never refreshed
+    await enqueue({ kind: r.kind, workspaceId, actorUserId: null, projectId: r.project_id == null ? null : Number(r.project_id), query: parse(r.query), reason: "schedule" });
     n++;
   }
   return n;
@@ -340,8 +357,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Reads a result through the cache (see the header). The caller has already checked that the user may see this
  * project. `force` is a manual refresh: it joins any open job and respects a cooldown on recent results.
  */
-export async function readThrough<Q, P>(opts: { kind: string; userId: number; projectId: number | null; query: Q; waitMs?: number; force?: boolean }): Promise<ReadResult<P>> {
-  const scope = scopeOf(opts.userId);
+export async function readThrough<Q, P>(opts: {
+  kind: string;
+  workspaceId: number;
+  /** The viewer reading (attribution of a refresh they cause). The caller has authorized them for the project. */
+  actorUserId: number | null;
+  projectId: number | null;
+  query: Q;
+  waitMs?: number;
+  /** A manual refresh: callers allow it only to project managers. */
+  force?: boolean;
+}): Promise<ReadResult<P>> {
+  const scope = scopeOf(opts.workspaceId);
   const key = cacheKey(opts.kind, opts.query);
   const now = Date.now();
   const row = await readRow(scope, key);
@@ -355,7 +382,7 @@ export async function readThrough<Q, P>(opts: { kind: string; userId: number; pr
     // Never serve it. Try again — once, joined by every reader — on a manual refresh or after ACCESS_RETRY_MS, so
     // reconnecting an account or fixing a mapping recovers without anyone clearing the cache.
     if (opts.force || Number(row.last_error_at ?? 0) < now - ACCESS_RETRY_MS) {
-      const jobId = await enqueue({ kind: opts.kind, userId: opts.userId, projectId: opts.projectId, query: opts.query, reason: opts.force ? "manual" : "stale" });
+      const jobId = await enqueue({ kind: opts.kind, workspaceId: opts.workspaceId, actorUserId: opts.actorUserId, projectId: opts.projectId, query: opts.query, reason: opts.force ? "manual" : "stale" });
       background(async () => {
         await runJob(jobId);
       });
@@ -369,7 +396,7 @@ export async function readThrough<Q, P>(opts: { kind: string; userId: number; pr
   if (!opts.force && kindOf(opts.kind)?.manualOnly) return usable ? { state: "stale", ...base, refreshing: false, error: row!.last_error } : { state: "pending", refreshing: false };
   if (fresh && opts.force && Number(row!.fetched_at ?? 0) > now - MANUAL_COOLDOWN_MS) return { state: "fresh", ...base, cooldown: true };
 
-  const jobId = await enqueue({ kind: opts.kind, userId: opts.userId, projectId: opts.projectId, query: opts.query, reason: opts.force ? "manual" : usable ? "stale" : "cold" });
+  const jobId = await enqueue({ kind: opts.kind, workspaceId: opts.workspaceId, actorUserId: opts.actorUserId, projectId: opts.projectId, query: opts.query, reason: opts.force ? "manual" : usable ? "stale" : "cold" });
   if (usable) {
     background(async () => {
       await runJob(jobId);
@@ -413,8 +440,8 @@ export async function invalidateProject(projectId: number, kinds?: string[]): Pr
  * refresh on an explicit, possibly chargeable action (SE Ranking backlink profile), and for summary panels that
  * show a module's data only when it has already been fetched.
  */
-export async function peek<P>(opts: { kind: string; userId: number; query: unknown }): Promise<{ payload: P | null; fetchedAt: number | null; lastError: string | null; accessError: string | null; refreshing: boolean }> {
-  const scope = scopeOf(opts.userId);
+export async function peek<P>(opts: { kind: string; workspaceId: number; query: unknown }): Promise<{ payload: P | null; fetchedAt: number | null; lastError: string | null; accessError: string | null; refreshing: boolean }> {
+  const scope = scopeOf(opts.workspaceId);
   const key = cacheKey(opts.kind, opts.query);
   const row = await readRow(scope, key);
   const open = (await db.prepare("SELECT 1 FROM sync_jobs WHERE scope = ? AND cache_key = ? AND status IN ('queued', 'running')").get(scope, key)) as unknown;

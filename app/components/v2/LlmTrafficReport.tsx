@@ -12,6 +12,7 @@ import { Delta, PeriodPicker, StateBadge, fmtInt, fmtTime } from "./summaryUi";
 import { Card, buttonClass } from "./ui";
 import { ProviderIcon } from "./ProviderIcon";
 import { iconForPlatform } from "@/lib/providerIcons";
+import { useCanManage } from "./Workspace";
 
 type Response =
   | { state: "live" | "demo"; report: LlmReport; cached?: boolean }
@@ -42,6 +43,7 @@ const fmtDuration = (s: number | null) => {
 const fmtRate = (r: number | null) => (r == null ? "—" : `${Math.round(r * 100)}%`);
 
 export function LlmTrafficReport({ projectId }: { projectId: number }) {
+  const canManage = useCanManage();
   const [period, setPeriod] = usePeriodChoice();
   const [metric, setMetric] = useState<LlmMetric>("sessions");
   const [granularity, setGranularity] = useState<Granularity>("day");
@@ -102,9 +104,11 @@ export function LlmTrafficReport({ projectId }: { projectId: number }) {
           </button>
         ))}
       </div>
-      <button className={buttonClass} onClick={() => setNonce((n) => n + 1)}>
-        Refresh
-      </button>
+      {canManage && (
+        <button className={buttonClass} onClick={() => setNonce((n) => n + 1)}>
+          Refresh
+        </button>
+      )}
     </div>
   );
 

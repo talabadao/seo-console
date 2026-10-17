@@ -12,6 +12,7 @@ import { Delta, PeriodPicker, Stat, fmtInt } from "./summaryUi";
 import { Card, DataTable, EmptyState, ErrorState, LoadingState, buttonClass, type Column } from "./ui";
 import { Ga4ReportBuilder } from "./Ga4ReportBuilder";
 import { ReportFooter, TrendChart, fmtMetric, useGaJson, type CacheMeta } from "./ga4Shared";
+import { useCanManage } from "./Workspace";
 
 const TABS: { id: TemplateId | "custom"; label: string }[] = [
   { id: "leads", label: "Generate leads" },
@@ -53,6 +54,7 @@ type TemplateResponse =
 type Row = TemplateResult["table"]["rows"][number];
 
 function TemplateReport({ projectId, template, onOpenLeadSettings }: { projectId: number; template: TemplateId; onOpenLeadSettings: () => void }) {
+  const canManage = useCanManage();
   const def = TEMPLATES[template];
   const [period, setPeriod] = usePeriodChoice();
   const [view, setView] = useState(def.views[0].id);
@@ -73,9 +75,11 @@ function TemplateReport({ projectId, template, onOpenLeadSettings }: { projectId
           ))}
         </select>
       )}
-      <button className={buttonClass} onClick={() => setRefresh((n) => n + 1)} disabled={loading}>
-        Refresh
-      </button>
+      {canManage && (
+        <button className={buttonClass} onClick={() => setRefresh((n) => n + 1)} disabled={loading}>
+          Refresh
+        </button>
+      )}
     </div>
   );
 

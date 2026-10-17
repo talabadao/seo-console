@@ -34,13 +34,25 @@ export function oauthClient() {
   });
 }
 
-export function authUrl(state: string) {
+/** Personal sign-in and linking: identity only. A personal login never carries data scopes. */
+export const LOGIN_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"];
+
+export type OAuthPurpose = "login" | "link" | "connect-google";
+
+/**
+ * The Google authorization URL for one purpose. Login and link ask for identity only (no offline access); a data
+ * connection asks for the read-only Search Console and Analytics scopes plus indexing, offline, with consent so
+ * Google returns a refresh token. The nonce is checked against the ID token at the callback.
+ */
+export function authUrl(state: string, purpose: OAuthPurpose = "login", nonce?: string) {
+  const data = purpose === "connect-google";
   return oauthClient().generateAuthUrl({
-    access_type: "offline",
-    prompt: "consent", // force refresh_token on every connect
-    scope: SCOPES,
-    include_granted_scopes: true,
+    access_type: data ? "offline" : "online",
+    prompt: data ? "consent select_account" : "select_account",
+    scope: data ? SCOPES : LOGIN_SCOPES,
+    include_granted_scopes: false,
     state,
+    ...(nonce ? { nonce } : {}),
   });
 }
 

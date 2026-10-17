@@ -2,11 +2,9 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { currentUser } from "@/lib/session";
 import { getProject } from "@/lib/projects";
 import { isDemoWebsite, demoSeRawReport } from "@/lib/v2/summary/demo";
-import { SeRankingError } from "@/lib/seranking/client";
 import { seRankingConfigured } from "@/lib/seranking/rankings";
 import { viewReport, type SeRawReport } from "@/lib/seranking/report";
-import { readThrough, setBackgroundRunner, syncReady } from "@/lib/sync/cache";
-import { kindOf } from "@/lib/sync/cache";
+import { readThrough, setBackgroundRunner } from "@/lib/sync/cache";
 import { projectConfigVersion, type SeReportPayload, type SeReportQuery } from "@/lib/sync/kinds";
 
 export const maxDuration = 60;
@@ -67,10 +65,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     }
   };
 
-  if (await syncReady()) {
+  {
     setBackgroundRunner((fn) => after(fn));
-    const query: SeReportQuery = { projectId: id, days, config: await projectConfigVersion(user, project) };
-    const r = await readThrough<SeReportQuery, SeReportPayload>({ kind: "seranking:report", userId: user.id, projectId: id, query, waitMs: 20_000, force: q.get("refresh") === "1" });
+    const query: SeReportQuery = { projectId: id, days, config: await projectConfigVersion(project) };
+    // A manual refresh is a management action; viewers read through the normal refresh policy.
+    const force = q.get("refresh") === "1" && project.canManage;
+    const r = await readThrough<SeReportQuery, SeReportPayload>({ kind: "seranking:report", workspaceId: project.workspaceId, actorUserId: user.id, projectId: id, query, waitMs: 20_000, force });
     if (r.payload) {
       return settle(r.payload, {
         state: r.state === "stale" ? "stale" : "fresh",
@@ -88,14 +88,4 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ state: "error", source: SOURCE, message: r.error ?? "The refresh failed." });
   }
 
-  // Before migration 0008: one direct read.
-  try {
-    const kind = kindOf("seranking:report")!;
-    const { payload } = (await kind.run({ userId: user.id, projectId: id, query: { projectId: id, days, config: "" } })) as { payload: SeReportPayload };
-    return settle(payload);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    if (e instanceof SeRankingError && (e.status === 401 || e.status === 403)) return NextResponse.json({ state: "unauthorized", source: SOURCE, message });
-    return NextResponse.json({ state: "error", source: SOURCE, message });
-  }
 }

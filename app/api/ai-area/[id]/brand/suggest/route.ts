@@ -13,7 +13,7 @@ export const maxDuration = 60;
  * reviews say. One metered OpenAI call; refused (with the reason) where paid model calls are off, e.g. Preview.
  */
 export async function POST(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => null)) as { count?: unknown; brandMode?: unknown } | null;
   try {

@@ -406,7 +406,7 @@ export function Dashboard({
       {projectView != null && (
         <ProjectManager
           projects={projects}
-          gscProperties={sites.filter((s) => s.source === "google").map((s) => s.property)}
+          sites={sites.filter((s) => s.source === "google")}
           initialView={projectView}
           onClose={() => setProjectView(null)}
           onChanged={loadProjects}

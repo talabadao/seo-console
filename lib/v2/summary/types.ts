@@ -136,6 +136,8 @@ export interface TaskRef {
   gid: string;
   name: string;
   assignee: string | null;
+  /** The assignee's stable Asana user gid (task alerts follow it; names can repeat). */
+  assigneeGid?: string | null;
   dueOn: string | null;
   completedAt: string | null;
   status: "completed" | "overdue" | "open";

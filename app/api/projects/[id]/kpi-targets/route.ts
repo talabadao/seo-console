@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { getProject } from "@/lib/projects";
+import { managementRequired } from "@/lib/access";
 import {
   KPI_METRICS,
   KpiConflictError,
@@ -18,12 +19,14 @@ import {
 
 type Ctx = { params: Promise<{ id: string }> };
 
-async function context(ctx: Ctx) {
+/** Viewer access for reading; { manage: true } for saving (management members only). */
+async function context(ctx: Ctx, opts: { manage?: boolean } = {}) {
   const user = await currentUser();
   if (!user) return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) } as const;
   const id = Number((await ctx.params).id);
   const project = Number.isSafeInteger(id) ? await getProject(user.id, id) : null;
   if (!project) return { error: NextResponse.json({ error: "unknown project" }, { status: 404 }) } as const;
+  if (opts.manage && !project.canManage) return { error: await managementRequired(project) } as const;
   if (!(await kpiTargetsReady())) {
     return { error: NextResponse.json({ error: "This database hasn't run migration 0007 (KPI planning) yet.", state: "unavailable" }, { status: 503 }) } as const;
   }
@@ -37,7 +40,7 @@ async function context(ctx: Ctx) {
 export async function GET(req: NextRequest, ctx: Ctx) {
   const c = await context(ctx);
   if ("error" in c) return c.error;
-  const timeZone = await projectTimeZone(c.user.id, c.project.gaPropertyId);
+  const timeZone = await projectTimeZone(c.project);
   const now = currentPeriod(timeZone);
   const p = req.nextUrl.searchParams;
   const from = isPeriod(p.get("from")) ? p.get("from")! : now;
@@ -54,7 +57,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
  * All or nothing: invalid cells → 400 listing them; cells changed elsewhere since loading → 409 listing them.
  */
 export async function PUT(req: NextRequest, ctx: Ctx) {
-  const c = await context(ctx);
+  const c = await context(ctx, { manage: true });
   if ("error" in c) return c.error;
   const body = (await req.json().catch(() => ({}))) as { changes?: unknown };
   try {

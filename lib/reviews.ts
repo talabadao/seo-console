@@ -409,13 +409,13 @@ export async function classifyPending(
 }
 
 /** Everything the Reviews tab shows, read from storage. Costs no SerpApi credits. */
-export async function reviewsData(project: ReviewProject, key: string, classifier: boolean): Promise<ReviewsData> {
+export async function reviewsData(project: ReviewProject, key: string | null, classifier: boolean): Promise<ReviewsData> {
   const location = await ensurePlaceRef(project);
 
   let creditsLeft: number | null = null;
   let keyError: string | null = null;
   try {
-    creditsLeft = await searchesLeft(key);
+    if (key) creditsLeft = await searchesLeft(key);
   } catch (e) {
     keyError = e instanceof Error ? e.message : String(e);
   }

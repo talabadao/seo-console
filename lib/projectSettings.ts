@@ -32,14 +32,18 @@ function parseList(raw: unknown): string[] | null {
   }
 }
 
-/** The newest non-empty Weekly Report selection for a GA4 property, if any. */
+/**
+ * The newest non-empty Weekly Report selection for a GA4 property, if any. Those selections were saved per login;
+ * the property's project now owns its lead events, so any team member's older selection is the fallback (the
+ * viewer's own first).
+ */
 async function legacyLeadEvents(userId: number, propertyId: string): Promise<{ events: string[]; month: string } | null> {
   const rows = (await db
     .prepare(
       `SELECT year_month, lead_events FROM weekly_kpi_config
-        WHERE user_id = ? AND property_id = ? ORDER BY year_month DESC`,
+        WHERE property_id = ? ORDER BY year_month DESC, (user_id = ?) DESC, updated_at DESC`,
     )
-    .all(userId, propertyId)) as { year_month: string; lead_events: string }[];
+    .all(propertyId, userId)) as { year_month: string; lead_events: string }[];
   for (const r of rows) {
     const list = parseList(r.lead_events);
     if (list && list.length) return { events: list, month: r.year_month };

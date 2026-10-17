@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { db } from "@/lib/db";
+import { gscForProperty, managementRequired } from "@/lib/access";
 import { inspectUrlsLive, type SiteRow } from "@/lib/indexer";
 
 export const maxDuration = 300;
@@ -21,14 +21,13 @@ export async function POST(req: NextRequest) {
   const urls = (Array.isArray(body.urls) ? body.urls : []).map(String).filter((u) => u.trim());
   if (!urls.length) return NextResponse.json({ error: "no URLs provided" }, { status: 400 });
 
-  const site = (await db
-    .prepare(
-      "SELECT id, user_id, source, property FROM sites WHERE user_id = ? AND property = ? AND source = 'google'",
-    )
-    .get(user.id, body.property)) as SiteRow | undefined;
-  if (!site) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+  // An explicit run on the shared connection's quota: managers of a project that maps this property.
+  const gsc = await gscForProperty(user, body.property, (body as { projectId?: number }).projectId);
+  if (!gsc || gsc.siteId == null) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+  if (!gsc.project.canManage) return managementRequired(gsc.project);
+  const site: SiteRow = { id: gsc.siteId, user_id: 0, source: "google", property: gsc.property };
 
   const batch = urls.slice(0, MAX_PER_REQUEST);
-  const result = await inspectUrlsLive(user, site, batch);
+  const result = await inspectUrlsLive(gsc, site, batch);
   return NextResponse.json({ ...result, truncated: urls.length > MAX_PER_REQUEST });
 }

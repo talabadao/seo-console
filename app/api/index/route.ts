@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { siteConfigFor } from "@/lib/siteConfig";
 import { indexDashboard } from "@/lib/indexer";
-import { hasIndexingScope } from "@/lib/google/oauth";
+import { INDEXING_SCOPE } from "@/lib/google/oauth";
+import { connectionHasScope, gscForProperty } from "@/lib/access";
 
 export async function GET(req: NextRequest) {
   const user = await currentUser();
@@ -10,12 +11,14 @@ export async function GET(req: NextRequest) {
 
   const property = req.nextUrl.searchParams.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
-  const sc = await siteConfigFor(user.id, property);
-  if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+  const gsc = await gscForProperty(user, property, req.nextUrl.searchParams.get("projectId"));
+  const sc = gsc?.siteId != null ? await siteConfigFor(gsc.siteId) : null;
+  if (!gsc || !sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   const data = await indexDashboard(sc.siteId);
   return NextResponse.json({
     ...data,
-    indexing: { ...data.indexing, hasScope: hasIndexingScope(user.google_scopes) },
+    canManage: gsc.project.canManage,
+    indexing: { ...data.indexing, hasScope: await connectionHasScope(gsc.connectionId, INDEXING_SCOPE) },
   });
 }

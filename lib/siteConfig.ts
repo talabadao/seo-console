@@ -19,17 +19,16 @@ function seedBrandTerms(property: string): string[] {
   return [...new Set([joined, spaced, ...core].filter((t) => t.length > 2))];
 }
 
-export async function siteConfigFor(
-  userId: number,
-  property: string,
-): Promise<{ siteId: number; config: SiteFilterConfig } | null> {
+/** Filter settings of a shared Search Console site (one per connection and property). */
+export async function siteConfigFor(siteId: number): Promise<{ siteId: number; config: SiteFilterConfig } | null> {
   const row = (await db
     .prepare(
       `SELECT id, property, brand_terms, longtail_min_words, ai_pos_op, ai_pos_value, ai_impr_max
-         FROM sites WHERE user_id = ? AND property = ? AND source = 'google'`,
+         FROM sites WHERE id = ? AND source = 'google'`,
     )
-    .get(userId, property)) as SiteConfigRow | undefined;
+    .get(siteId)) as SiteConfigRow | undefined;
   if (!row) return null;
+  const property = row.property;
 
   let brandTerms: string[];
   try {
@@ -50,12 +49,8 @@ export async function siteConfigFor(
   };
 }
 
-export async function saveSiteConfig(
-  userId: number,
-  property: string,
-  patch: Partial<SiteFilterConfig>,
-) {
-  const cur = await siteConfigFor(userId, property);
+export async function saveSiteConfig(siteId: number, patch: Partial<SiteFilterConfig>) {
+  const cur = await siteConfigFor(siteId);
   if (!cur) return null;
   const merged = { ...cur.config, ...patch };
   await db
@@ -81,16 +76,13 @@ export interface AutoIndexConfig {
   autoIndexHour: number;
 }
 
-export async function autoIndexConfigFor(
-  userId: number,
-  property: string,
-): Promise<{ siteId: number; config: AutoIndexConfig } | null> {
+export async function autoIndexConfigFor(siteId: number): Promise<{ siteId: number; config: AutoIndexConfig } | null> {
   const row = (await db
     .prepare(
       `SELECT id, auto_index_enabled, auto_index_cap, auto_index_hour
-         FROM sites WHERE user_id = ? AND property = ? AND source = 'google'`,
+         FROM sites WHERE id = ? AND source = 'google'`,
     )
-    .get(userId, property)) as
+    .get(siteId)) as
     | { id: number; auto_index_enabled: boolean; auto_index_cap: number; auto_index_hour: number }
     | undefined;
   if (!row) return null;
@@ -104,12 +96,8 @@ export async function autoIndexConfigFor(
   };
 }
 
-export async function saveAutoIndexConfig(
-  userId: number,
-  property: string,
-  patch: Partial<AutoIndexConfig>,
-): Promise<AutoIndexConfig | null> {
-  const cur = await autoIndexConfigFor(userId, property);
+export async function saveAutoIndexConfig(siteId: number, patch: Partial<AutoIndexConfig>): Promise<AutoIndexConfig | null> {
+  const cur = await autoIndexConfigFor(siteId);
   if (!cur) return null;
   const merged = { ...cur.config, ...patch };
   await db

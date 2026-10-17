@@ -1,14 +1,11 @@
 // The one server-side place that decides which provider credential a request uses. Every consumer — Google
 // Search Tracking, Brand Mentions, Maps reviews, review classification, usage reporting — goes through here.
 //
-// Order (owner decision, 2026-10-17):
-// 1. The signed-in account's own encrypted credential (Account → API credentials).
-// 2. SerpApi only: a legacy key still stored on the project (from before account credentials), until the owner
-//    consolidates or resolves it. The project must belong to the user. It no longer overrides a newer account key:
-//    an old, exhausted or invalid project key used to win silently over the key the owner had just saved.
-// 3. A server environment key (SERPAPI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, DATAFORSEO_LOGIN/PASSWORD)
-//    only for accounts listed in LEGACY_SERVER_CREDENTIAL_ACCOUNTS — an explicit, auditable scope. Empty by
-//    default: there is no silent global fallback for every account.
+// Team workspace rule (docs/seo-console-v2/WORKSPACE-MEMBERS.md, section 5): a paid request uses the acting User's
+// OWN encrypted credential (Account → API credentials) and nothing else — never the project manager's, an analytics
+// account's, another User's, a legacy key left on a project, or a shared server key. With no key of their own the
+// person gets a setup message. Legacy per-project keys are only reachable through the protected consolidation
+// path below (their legacy owner) or the operator script (scripts/workspace/claimLegacyKey.mts).
 
 import { db } from "@/lib/db";
 import { fingerprintOf, credentialFingerprint, readCredential, saveCredential } from "./store";
@@ -25,30 +22,6 @@ export interface ResolvedSecret {
 
 type Env = Record<string, string | undefined>;
 
-async function emailOf(userId: number): Promise<string | null> {
-  const r = (await db.prepare("SELECT email FROM users WHERE id = ?").get(userId)) as { email: string } | undefined;
-  return r?.email?.trim().toLowerCase() ?? null;
-}
-
-/** Whether this account may use the server's own provider keys (explicit list; empty by default). */
-export async function serverKeysAllowed(userId: number, env: Env = process.env): Promise<boolean> {
-  const list = (env.LEGACY_SERVER_CREDENTIAL_ACCOUNTS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  if (!list.length) return false;
-  const email = await emailOf(userId);
-  return Boolean(email && list.includes(email));
-}
-
-function serverValues(provider: CredentialProvider, env: Env): Record<string, string> | null {
-  const v = (name: string) => env[name]?.trim() || "";
-  if (provider === "serpapi") return v("SERPAPI_API_KEY") ? { apiKey: v("SERPAPI_API_KEY") } : null;
-  if (provider === "openai") return v("OPENAI_API_KEY") ? { apiKey: v("OPENAI_API_KEY") } : null;
-  if (provider === "anthropic") return v("ANTHROPIC_API_KEY") ? { apiKey: v("ANTHROPIC_API_KEY") } : null;
-  return v("DATAFORSEO_LOGIN") && v("DATAFORSEO_PASSWORD") ? { login: v("DATAFORSEO_LOGIN"), password: v("DATAFORSEO_PASSWORD") } : null;
-}
-
 async function projectLegacyKey(userId: number, projectId: number): Promise<string | null> {
   const r = (await db.prepare("SELECT serpapi_key FROM projects WHERE id = ? AND user_id = ?").get(projectId, userId)) as
     | { serpapi_key: string | null }
@@ -56,29 +29,20 @@ async function projectLegacyKey(userId: number, projectId: number): Promise<stri
   return r?.serpapi_key?.trim() || null;
 }
 
-/** Resolves a provider credential for the signed-in account (and project, for SerpApi). Null when none applies. */
+/**
+ * The acting User's own credential for a provider, or null when they have none. The project is accepted for the
+ * callers' symmetry and deliberately ignored: no project, manager or server key ever substitutes for the person's own.
+ */
 export async function resolveCredential(
   userId: number,
   provider: CredentialProvider,
   projectId: number | null = null,
   env: Env = process.env,
 ): Promise<ResolvedSecret | null> {
-  if (storageConfigured(env)) {
-    const own = await readCredential(userId, provider);
-    if (own) return { values: own.values, source: "account", fingerprint: own.fingerprint };
-  }
-  if (provider === "serpapi" && projectId != null) {
-    const legacy = await projectLegacyKey(userId, projectId);
-    if (legacy) return { values: { apiKey: legacy }, source: "project-legacy", fingerprint: fingerprintOf(legacy) };
-  }
-  if (await serverKeysAllowed(userId, env)) {
-    const server = serverValues(provider, env);
-    if (server) {
-      const main = provider === "dataforseo" ? `${server.login}:${server.password}` : server.apiKey;
-      return { values: server, source: "server-legacy", fingerprint: fingerprintOf(main) };
-    }
-  }
-  return null;
+  void projectId;
+  if (!storageConfigured(env)) return null;
+  const own = await readCredential(userId, provider);
+  return own ? { values: own.values, source: "account", fingerprint: own.fingerprint } : null;
 }
 
 // --- Legacy project SerpApi keys -----------------------------------------------------------------------------

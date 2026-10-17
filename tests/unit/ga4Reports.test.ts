@@ -2,8 +2,9 @@
 // fake GA4 Data API: runReport and getMetadata are replaced; checkCompatibility runs the REAL adapter
 // (lib/ga4.ts validateReportCompatibility) against stubbed HTTP responses shaped like Google's. Covers the report-definition rules, the number
 // rules (totals from GA4's own query, never summed rows; comparison queried separately; lead events kept apart
-// from key events), the shared cache (an identical run makes no new GA4 request), saved-report ownership between
-// two accounts that both have GA4 properties, and an explicit GA4 property change.
+// from key events), the shared cache (an identical run makes no new GA4 request, also for a teammate), saved reports
+// private to their author although teammates view the same project, and an explicit GA4 property change. GA4 is read
+// through each project's shared Google connection.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pg } = await vi.hoisted(async () => {
@@ -39,9 +40,9 @@ vi.mock("next/server", async () => {
   const actual = await vi.importActual<typeof import("next/server")>("next/server");
   return { ...actual, after: () => {} };
 });
-vi.mock("@/lib/google/oauth", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/google/oauth")>("@/lib/google/oauth");
-  return { ...actual, accessTokenFor: async () => "test-token" };
+vi.mock("@/lib/google/connections", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/google/connections")>("@/lib/google/connections");
+  return { ...actual, connectionAccessToken: async () => "test-token" };
 });
 
 /** The fake Data API: records every report request; `answer` decides the rows. */
@@ -133,11 +134,17 @@ beforeAll(async () => {
   for (const s of BASELINE_STATEMENTS) await pg.exec(s);
   for (const m of MIGRATIONS.slice(1)) for (const s of m.statements) await pg.exec(s);
   await pg.exec(`
-    INSERT INTO users (id, email, google_scopes, created_at, updated_at) VALUES (1, 'tinledoihoa@gmail.com', '${SCOPES}', 0, 0), (2, 'analytics@artemisdigital.com', '${SCOPES}', 0, 0);
-    INSERT INTO ga_properties (user_id, property_id, display_name, time_zone, currency_code, created_at)
-      VALUES (1, '111', 'A GA4', 'Asia/Ho_Chi_Minh', 'VND', 0), (1, '112', 'A second GA4', 'Asia/Ho_Chi_Minh', 'VND', 0), (2, '222', 'B GA4', 'UTC', 'USD', 0);
-    INSERT INTO projects (id, user_id, name, website_url, ga_property_id, created_at, updated_at)
-      VALUES (1, 1, 'A project', 'https://a.test/', '111', 0, 0), (2, 2, 'B project', 'https://b.test/', '222', 0, 0);
+    INSERT INTO users (id, email, kind, status, workspace_id, created_at, updated_at) VALUES
+      (1, 'tinledoihoa@gmail.com', 'person', 'active', 1, 0, 0), (2, 'colleague@headsonpillows.com', 'person', 'active', 1, 0, 0);
+    INSERT INTO google_connections (id, workspace_id, issuer, subject, email, scopes, status, created_at, updated_at) VALUES
+      (1, 1, 'https://accounts.google.com', 'c1', 'analytics@artemisdigital.com', '${SCOPES}', 'ok', 0, 0),
+      (2, 1, 'https://accounts.google.com', 'c2', 'analytics@headsonpillows.com', '${SCOPES}', 'ok', 0, 0);
+    INSERT INTO ga_properties (user_id, connection_id, property_id, display_name, time_zone, currency_code, created_at)
+      VALUES (NULL, 1, '111', 'A GA4', 'Asia/Ho_Chi_Minh', 'VND', 0), (NULL, 1, '112', 'A second GA4', 'Asia/Ho_Chi_Minh', 'VND', 0), (NULL, 2, '222', 'B GA4', 'UTC', 'USD', 0);
+    -- One workspace: 1 manages project 1, 2 manages project 2; both view both.
+    INSERT INTO projects (id, user_id, name, website_url, ga_property_id, ga_connection_id, workspace_id, created_by, primary_manager_id, created_at, updated_at)
+      VALUES (1, 1, 'A project', 'https://a.test/', '111', 1, 1, 1, 1, 0, 0), (2, 2, 'B project', 'https://b.test/', '222', 2, 1, 2, 2, 0, 0);
+    INSERT INTO project_members (project_id, user_id, added_at) VALUES (1, 1, 0), (2, 2, 0);
   `);
 });
 beforeEach(() => {
@@ -272,9 +279,14 @@ describe("saved reports through the routes", { timeout: 30_000 }, () => {
     const again = await call(RUN, "POST", "/api/v2/ga4/1/run", { id: "1" }, { spec, reportId: aReport });
     expect(again.json.state).toBe("live");
     expect(gaCalls.length).toBe(requests);
+    // A teammate viewing the same project with the same definition is served the same result: no new GA4 request.
+    await as(2);
+    const teammate = await call(RUN, "POST", "/api/v2/ga4/1/run", { id: "1" }, { spec });
+    expect(teammate.json.state).toBe("live");
+    expect(gaCalls.length).toBe(requests);
   });
 
-  it("another account can't read, edit, duplicate, run or delete it, even through its own project", async () => {
+  it("a teammate can't read, edit, duplicate, run or delete it, through their own project or this one", async () => {
     await as(2);
     expect((await call(REPORT, "GET", `/api/v2/ga4/2/reports/${aReport}`, { id: "2", reportId: String(aReport) })).status).toBe(404);
     expect((await call(REPORT, "PUT", `/api/v2/ga4/2/reports/${aReport}`, { id: "2", reportId: String(aReport) }, { name: "taken", spec })).status).toBe(404);
@@ -282,8 +294,11 @@ describe("saved reports through the routes", { timeout: 30_000 }, () => {
     expect((await call(RUN, "POST", "/api/v2/ga4/2/run", { id: "2" }, { spec, reportId: aReport })).status).toBe(404);
     expect((await call(REPORT, "DELETE", `/api/v2/ga4/2/reports/${aReport}`, { id: "2", reportId: String(aReport) })).status).toBe(404);
     expect((await call(REPORTS, "GET", "/api/v2/ga4/2/reports", { id: "2" })).json.reports).toEqual([]);
-    // ...and A's own project id is not B's to use.
+    // Viewing A's project doesn't expose A's private saved report either.
     expect((await call(REPORT, "GET", `/api/v2/ga4/1/reports/${aReport}`, { id: "1", reportId: String(aReport) })).status).toBe(404);
+    expect((await call(REPORT, "PUT", `/api/v2/ga4/1/reports/${aReport}`, { id: "1", reportId: String(aReport) }, { name: "taken", spec })).status).toBe(404);
+    expect((await call(REPORT, "DELETE", `/api/v2/ga4/1/reports/${aReport}`, { id: "1", reportId: String(aReport) })).status).toBe(404);
+    expect((await call(REPORTS, "GET", "/api/v2/ga4/1/reports", { id: "1" })).json.reports).toEqual([]);
     const row = (await pg.query("SELECT name, user_id FROM ga4_saved_reports WHERE id = $1", [aReport])).rows[0];
     expect(row).toEqual({ name: "Channels", user_id: 1 });
   });
@@ -333,8 +348,8 @@ describe("charts and scheduling", () => {
     const now = Date.now();
     await pg.query(
       `INSERT INTO report_cache (scope, cache_key, kind, provider, user_id, project_id, query, payload, fetched_at, fresh_until, last_read_at)
-       VALUES ('user:1', 'stale-ga4-custom', 'ga4:custom', 'ga4', 1, 1, '{"projectId":1}', '{}', 1, 1, $1),
-              ('user:1', 'stale-ga4-template', 'ga4:template', 'ga4', 1, 1, '{"projectId":1}', '{}', 1, 1, $1)`,
+       VALUES ('ws:1', 'stale-ga4-custom', 'ga4:custom', 'ga4', NULL, 1, '{"projectId":1}', '{}', 1, 1, $1),
+              ('ws:1', 'stale-ga4-template', 'ga4:template', 'ga4', NULL, 1, '{"projectId":1}', '{}', 1, 1, $1)`,
       [now],
     );
     expect(await enqueueDueRefreshes({ activeSinceMs: 3600_000, limit: 50 })).toBe(0);

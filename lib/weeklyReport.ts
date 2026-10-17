@@ -9,7 +9,7 @@ import {
   subDays,
 } from "date-fns";
 import { db } from "@/lib/db";
-import { projectForGa } from "@/lib/projects";
+import { projectForGa, type Project } from "@/lib/projects";
 import { leadEventsFor, type LeadEventsSource } from "@/lib/projectSettings";
 import { resolveComparison, enumerateBuckets, type Range } from "@/lib/dateRanges";
 import {
@@ -349,13 +349,20 @@ function defaultConfig(yearMonth: string): KpiConfig {
 }
 
 export async function configFor(userId: number, propertyId: string, yearMonth: string): Promise<KpiConfig> {
+  return configForProject(await projectForGa(userId, propertyId), propertyId, yearMonth, userId);
+}
+
+/** The KPI config of a GA4 property's project (KPI Planning, project lead events and Asana target). */
+export async function configForProject(project: Project | null, propertyId: string, yearMonth: string, preferUserId = 0): Promise<KpiConfig> {
+  const userId = preferUserId;
   const row = (await db
     .prepare(
       `SELECT traffic_organic_target, traffic_ai_target, lead_organic_target, lead_ai_target,
               lead_events, asana_project_gid, asana_status_title
-       FROM weekly_kpi_config WHERE user_id = ? AND property_id = ? AND year_month = ?`,
+       FROM weekly_kpi_config WHERE property_id = ? AND year_month = ?
+       ORDER BY (user_id = ?) DESC, updated_at DESC LIMIT 1`,
     )
-    .get(userId, propertyId, yearMonth)) as
+    .get(propertyId, yearMonth, userId)) as
     | {
         traffic_organic_target: number;
         traffic_ai_target: number;
@@ -368,7 +375,6 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
     | undefined;
   // The Asana target lives on the project this GA4 property belongs to; the
   // per-month columns are only the fallback for a property with no project.
-  const project = await projectForGa(userId, propertyId);
   const asana = (gid: string, title: string) => ({
     asanaProjectGid: project?.asanaProjectGid || gid,
     asanaStatusTitle: project?.asanaProjectName || title,
@@ -452,11 +458,11 @@ export async function saveConfig(userId: number, propertyId: string, cfg: KpiCon
       cfg.asanaStatusTitle.trim(),
       Date.now(),
     );
-  // Keep the owning project's Asana target in step with what was just saved.
+  // Keep the Asana target of the projects this User manages for this property in step with what was just saved.
   await db
     .prepare(
       `UPDATE projects SET asana_project_gid = ?, asana_project_name = ?, updated_at = ?
-        WHERE user_id = ? AND ga_property_id = ?`,
+        WHERE ga_property_id = ? AND deleted_at IS NULL AND id IN (SELECT project_id FROM project_members WHERE user_id = ?)`,
     )
-    .run(cfg.asanaProjectGid.trim(), cfg.asanaStatusTitle.trim(), Date.now(), userId, propertyId);
+    .run(cfg.asanaProjectGid.trim(), cfg.asanaStatusTitle.trim(), Date.now(), propertyId, userId);
 }

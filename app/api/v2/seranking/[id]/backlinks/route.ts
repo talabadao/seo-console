@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadProject, peekModule, preconditions, readModule, respond, type Ctx } from "@/lib/seranking/moduleApi";
+import { loadManagedProject, loadProject, peekModule, preconditions, readModule, respond, type Ctx } from "@/lib/seranking/moduleApi";
 import { dataApiEntitlement, linkProfileDecision } from "@/lib/seranking/dataApi";
 import { LINK_PROFILE_CREDITS } from "@/lib/seranking/donor/types";
 
@@ -24,9 +24,12 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   });
 }
 
-/** Explicit, budgeted refresh of the backlink profile (Data API credits). Joins a refresh already running. */
+/**
+ * Explicit, budgeted refresh of the backlink profile (Data API credits): project managers only, paid by the person
+ * who asks for it (never another User or a shared key). Disabled while no credit budget is configured.
+ */
 export async function POST(_req: NextRequest, ctx: Ctx) {
-  const l = await loadProject(ctx);
+  const l = await loadManagedProject(ctx);
   if ("error" in l) return l.error;
   const blocked = await preconditions(l.project);
   if (blocked) return blocked;

@@ -106,8 +106,8 @@ describe("account and project limits together", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(await allowanceState(`serpapi-month:user:1:${month}`)).toEqual({ used: 4, max: 4 });
     // B's own monthly allowance was refunded for the refused request: 1 used, not 2.
-    expect((await allowanceState(`serpapi-month:project:2:${month}`))!.used).toBe(1);
-    expect((await allowanceState(`serpapi-month:project:1:${month}`))!.used).toBe(3);
+    expect((await allowanceState(`serpapi-month:user:1:project:2:${month}`))!.used).toBe(1);
+    expect((await allowanceState(`serpapi-month:user:1:project:1:${month}`))!.used).toBe(3);
   });
 
   it("holds under concurrent requests", async () => {
@@ -124,7 +124,7 @@ describe("account and project limits together", () => {
     expect(await send(1, 4)).toEqual(["ok", "ok", "ok", "refused"]);
     await setLimit(1, "project", 1, "serpapi_requests_month", 5);
     expect(await send(1, 3)).toEqual(["ok", "ok", "refused"]);
-    expect(await allowanceState(`serpapi-month:project:1:${month}`)).toEqual({ used: 5, max: 5 });
+    expect(await allowanceState(`serpapi-month:user:1:project:1:${month}`)).toEqual({ used: 5, max: 5 });
     // Usage history is the ledger, untouched by limit changes.
     expect((await pg.query("SELECT 1 FROM provider_usage")).rows).toHaveLength(5);
   });

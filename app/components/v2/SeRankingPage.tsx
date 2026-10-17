@@ -15,6 +15,7 @@ import { HostOverview, type OverviewData } from "../seranking/HostOverview";
 import { ModuleStates, useModule } from "../seranking/Modules";
 import type { SeAudit, SeCompetition } from "@/lib/seranking/donor/types";
 import { Card, ErrorState, EmptyState, LoadingState, buttonClass, primaryButtonClass } from "./ui";
+import { useCanManage } from "./Workspace";
 
 type CacheInfo = { state: "fresh" | "stale"; fetchedAt: number | null; dataThrough: string | null; refreshing: boolean; lastError: string | null; cooldown?: boolean };
 type Res =
@@ -110,6 +111,7 @@ export function SeRankingPage({
 }
 
 function OverviewTab({ projectId, onOpenIntegrations, onOpen }: { projectId: number; onOpenIntegrations: () => void; onOpen: (t: "rankings" | ModuleTarget) => void }) {
+  const canManage = useCanManage();
   const [nonce, setNonce] = useState(0);
   const { res, error } = useModule<OverviewData>(`/api/v2/seranking/${projectId}/overview`, nonce);
   // Same scope as the dashboard card: last 28 days vs 28 days earlier, main engine, all groups.
@@ -138,14 +140,14 @@ function OverviewTab({ projectId, onOpenIntegrations, onOpen }: { projectId: num
         </span>
         {res.cache.state === "stale" && <span className="rounded-full border px-1.5 text-[11px]">Stale{res.cache.refreshing ? ", refreshing" : ""}</span>}
         {res.cache.lastError && <span style={{ color: "var(--bad)" }}>Last refresh failed: {res.cache.lastError}</span>}
-        <button
+        {canManage && <button
           className={`${buttonClass} ml-auto`}
           onClick={() => setNonce((n) => n + 1)}
           disabled={res.cache.refreshing}
           title="Re-reads SE Ranking's summary and history (about 6 Project API requests). Skipped within 5 minutes of the last refresh."
         >
           {res.cache.refreshing ? "Refreshing…" : "Refresh from SE Ranking"}
-        </button>
+        </button>}
       </div>
       <HostOverview data={res.data} view={v} audit={peeked(audit)} competition={peeked(competition)} onOpen={onOpen} />
     </div>
@@ -169,6 +171,7 @@ function useJson<T>(url: string): T | null {
 }
 
 function RankingsTab({ projectId, onOpenIntegrations }: { projectId: number; onOpenIntegrations: () => void }) {
+  const canManage = useCanManage();
   const [days, setDays] = useState<number>(28);
   const [compare, setCompare] = useState<number>(28);
   const [engine, setEngine] = useState<number | null>(null);
@@ -260,7 +263,7 @@ function RankingsTab({ projectId, onOpenIntegrations }: { projectId: number; onO
           )}
         </>
       )}
-      {current?.state !== "demo" && current?.state !== "unconfigured" && current?.state !== "not-mapped" && (
+      {canManage && current?.state !== "demo" && current?.state !== "unconfigured" && current?.state !== "not-mapped" && (
         <button
           className={`${buttonClass} ml-auto`}
           onClick={() => setNonce((n) => n + 1)}

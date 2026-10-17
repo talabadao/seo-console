@@ -1,9 +1,9 @@
 "use client";
 
-// Settings → Account: everything that belongs to the signed-in account rather than one project, addressed as
-// /p/<id>/settings/account/<section> (keeping the open project as context) or /portfolio/settings/account/<section>.
-// Sections: API credentials (encrypted, shared by this account's projects; other accounts have their own),
-// Usage & Costs (account-wide with a project filter), Budgets & limits (account-wide and per project).
+// Account settings: everything that belongs to the signed-in person rather than one project, addressed as
+// /account/<section> (?project=<id> keeps the open project as a filter). Personal: Profile, Linked logins, API
+// credentials (encrypted, used only for this person's runs), Usage & Costs, Budgets & limits, Scheduled spending,
+// Notification preferences. Workspace-level: Data connections (shared Google accounts, Asana) and Sync & cache.
 
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "../ProjectManager";
@@ -15,12 +15,17 @@ import { UsageCostsPage } from "./UsageCosts";
 import { BudgetLimits } from "./BudgetLimits";
 import { SyncStatusPage } from "./SyncStatus";
 import { NotificationSettingsPage } from "./NotificationSettings";
+import { DataConnections, LinkedLogins, NotificationMutes, ProfileSection, ScheduledSpending } from "./AccountWorkspace";
 
 export const ACCOUNT_SECTIONS = [
+  { id: "profile", label: "Profile" },
+  { id: "logins", label: "Linked logins" },
   { id: "credentials", label: "API credentials" },
   { id: "usage", label: "Usage & Costs" },
   { id: "budgets", label: "Budgets & limits" },
-  { id: "notifications", label: "Notifications" },
+  { id: "spending", label: "Scheduled spending" },
+  { id: "notifications", label: "Notification preferences" },
+  { id: "connections", label: "Data connections" },
   { id: "sync", label: "Sync & cache" },
 ] as const;
 type SectionId = (typeof ACCOUNT_SECTIONS)[number]["id"];
@@ -41,7 +46,7 @@ export function AccountSettings({
   onSub: (sub: string) => void;
   onProjectsChanged: () => void | Promise<void>;
   bingConnected: boolean;
-  /** Opens the editor for the Asana token and Bing Webmaster key (Tracking & connections). */
+  /** Opens the editor for the Bing Webmaster key (Tracking & connections). */
   onOpenConnections: () => void;
 }) {
   const section: SectionId = ACCOUNT_SECTIONS.some((s) => s.id === sub) ? (sub as SectionId) : "credentials";
@@ -60,15 +65,24 @@ export function AccountSettings({
         ))}
       </nav>
       <div className="min-w-0 space-y-4">
-        {section === "credentials" && (
+        {section === "profile" && <ProfileSection />}
+        {section === "logins" && <LinkedLogins />}
+        {section === "credentials" && <Credentials projects={projects} projectId={projectId} onProjectsChanged={onProjectsChanged} />}
+        {section === "spending" && <ScheduledSpending onOpenCredentials={() => onSub("")} />}
+        {section === "connections" && (
           <>
-            <Credentials projects={projects} projectId={projectId} onProjectsChanged={onProjectsChanged} />
+            <DataConnections />
             <OtherConnections bingConnected={bingConnected} onOpen={onOpenConnections} />
           </>
         )}
         {section === "usage" && <UsageCostsPage projectId={projectId} projects={projects} onOpenBudgets={() => onSub("budgets")} />}
         {section === "budgets" && <BudgetLimits projectId={null} />}
-        {section === "notifications" && <NotificationSettingsPage />}
+        {section === "notifications" && (
+          <>
+            <NotificationMutes projects={projects} />
+            <NotificationSettingsPage />
+          </>
+        )}
         {section === "sync" && <SyncStatusPage projectId={projectId} onOpenUsage={() => onSub("usage")} />}
       </div>
     </div>
@@ -82,7 +96,7 @@ interface CredentialsPayload {
   legacySerp: LegacySerpState;
 }
 
-function Credentials({ projects, onProjectsChanged }: { projects: Project[]; projectId: number | null; onProjectsChanged: () => void | Promise<void> }) {
+function Credentials({ onProjectsChanged }: { projects: Project[]; projectId: number | null; onProjectsChanged: () => void | Promise<void> }) {
   const [data, setData] = useState<CredentialsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -139,9 +153,9 @@ function Credentials({ projects, onProjectsChanged }: { projects: Project[]; pro
     <>
       <Card title="API credentials">
         <p className="text-sm text-muted">
-          Signed in as <strong className="text-foreground">{data.account.email}</strong>. These credentials belong to this account and are used by all
-          {projects.length ? ` ${projects.length}` : ""} of its projects. Other accounts — including other approved Google accounts — keep their own and can&apos;t see these.
-          Saved values are encrypted on the server and never shown again.
+          These keys are yours: they pay for the paid runs you start in any project you manage, and for scheduled work on projects where you are the
+          primary manager (only if you allow it under Scheduled spending). Teammates never see or use them, and you never use theirs. Saved values are
+          encrypted on the server and never shown again.
         </p>
         <p className="mt-2 text-xs text-muted">
           Saving a credential never starts a search, generation or tracking run, and doesn&apos;t lift spending limits. On Preview, paid provider calls stay switched off
@@ -203,8 +217,8 @@ function LegacySerpKeys({ state, onAction }: { state: LegacySerpState; onAction:
         <>
           <p className="text-sm">
             {state.pending.length === 1
-              ? "One project still has its own SerpApi key, different from your account's. It keeps working for that project until you decide."
-              : `Your projects use ${state.pending.length} different SerpApi keys. Nothing was chosen automatically; each keeps working for its projects until you decide.`}
+              ? "A project you owned before the team workspace still stores its own SerpApi key, different from yours. It isn't used for any run; decide whether it becomes your key or is removed."
+              : `Projects you owned before the team workspace still store ${state.pending.length} different SerpApi keys. None is used for runs and nothing was chosen automatically; decide for each.`}
           </p>
           <ul className="mt-3 divide-y">
             {state.pending.map((k) => (
@@ -223,8 +237,8 @@ function LegacySerpKeys({ state, onAction }: { state: LegacySerpState; onAction:
             ))}
           </ul>
           <p className="mt-2 text-xs text-muted">
-            &ldquo;Use as account key&rdquo; replaces your account&apos;s SerpApi credential with this key and removes its project copies. &ldquo;Remove from …&rdquo; makes that project use
-            your account key.
+            &ldquo;Use as account key&rdquo; replaces your own SerpApi credential with this key and removes its project copies. &ldquo;Remove from …&rdquo; deletes the stored copy
+            from that project.
           </p>
         </>
       )}
@@ -237,19 +251,8 @@ function LegacySerpKeys({ state, onAction }: { state: LegacySerpState; onAction:
   );
 }
 
-/** Account connections kept in their existing editor (Tracking & connections): Asana and Bing Webmaster Tools. */
+/** The Bing Webmaster key, kept in its existing editor (Tracking & connections). */
 function OtherConnections({ bingConnected, onOpen }: { bingConnected: boolean; onOpen: () => void }) {
-  const [asana, setAsana] = useState<boolean | null>(null);
-  useEffect(() => {
-    let live = true;
-    fetch("/api/settings/asana", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j: { connected?: boolean }) => live && setAsana(Boolean(j.connected)))
-      .catch(() => live && setAsana(null));
-    return () => {
-      live = false;
-    };
-  }, []);
   const badge = (on: boolean | null) => (
     <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: on ? "var(--good)" : on === null ? "var(--muted, #888)" : "var(--bad)" }} aria-hidden="true" />
@@ -258,7 +261,7 @@ function OtherConnections({ bingConnected, onOpen }: { bingConnected: boolean; o
   );
   return (
     <Card
-      title="Other account connections"
+      title="Bing Webmaster Tools"
       actions={
         <button className={buttonClass} onClick={onOpen}>
           Edit
@@ -266,11 +269,6 @@ function OtherConnections({ bingConnected, onOpen }: { bingConnected: boolean; o
       }
     >
       <ul className="divide-y text-sm">
-        <li className="flex flex-wrap items-center gap-3 py-2.5">
-          <span className="w-48 font-medium">Asana</span>
-          {badge(asana)}
-          <span className="text-muted">Personal access token: weekly report status updates and task lists.</span>
-        </li>
         <li className="flex flex-wrap items-center gap-3 py-2.5">
           <span className="w-48 font-medium">Bing Webmaster Tools</span>
           {badge(bingConnected)}

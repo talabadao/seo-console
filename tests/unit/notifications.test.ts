@@ -1,6 +1,7 @@
 // In-app notifications and Docs: rules only fire on live, complete, non-demo saved results above thresholds and
-// minimum volumes; dedupe by rule + project + period; read/unread per account; project filter; weekly digest
-// once per week; Docs drafts and publishing only for explicit admins; demo examples never notify.
+// minimum volumes; dedupe by rule + project + period; project alerts to managers (personal mutes), task alerts to the
+// verified Asana assignee; read/unread per person; project filter; weekly digest once per week; Docs drafts and
+// publishing only for explicit admins (by verified linked login); demo examples never notify.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pg } = await vi.hoisted(async () => {
@@ -30,8 +31,8 @@ vi.mock("@/lib/db", () => ({
 import { BASELINE_STATEMENTS } from "@/lib/schema";
 import { MIGRATIONS } from "@/db/migrations";
 import { DEFAULT_SETTINGS, candidatesFrom, isoWeek, normalizeSettings, type CachedSection } from "@/lib/notifications/rules";
-import { listNotifications, markRead, runRules, saveSettings } from "@/lib/notifications/store";
-import { DocsForbidden, ensureDemoDocs, getArticle, isDocsAdmin, listArticles, saveArticle, setPublished } from "@/lib/docs/store";
+import { listMutes, listNotifications, markRead, runRules, saveSettings, setMute } from "@/lib/notifications/store";
+import { DocsForbidden, emailIsDocsAdmin, ensureDemoDocs, getArticle, isDocsAdmin, listArticles, saveArticle, setPublished } from "@/lib/docs/store";
 
 const period = { preset: "last28", compare: "previous", label: "", compareLabel: null, current: { start: "2026-09-16", end: "2026-10-13" }, previous: { start: "2026-08-19", end: "2026-09-15" } };
 const gsc = (current: number, previous: number, over: Record<string, unknown> = {}): CachedSection => ({
@@ -126,41 +127,95 @@ describe("rules", () => {
 beforeAll(async () => {
   for (const s of BASELINE_STATEMENTS) await pg.exec(s);
   for (const m of MIGRATIONS.slice(1)) for (const s of m.statements) await pg.exec(s);
-  await pg.exec(`INSERT INTO users (email, created_at, updated_at) VALUES ('tinledoihoa@gmail.com', 0, 0), ('analytics@artemisdigital.com', 0, 0), ('stranger@example.com', 0, 0);
-    INSERT INTO projects (id, user_id, name, created_at, updated_at) VALUES (1, 1, 'Wewine', 0, 0), (2, 2, 'Theirs', 0, 0);`);
+  // Workspace 1: Tin (1) manages Wewine, a colleague (2) manages Theirs; the analytics account (3) is a data
+  // connection only; 4 is outside the workspace; 5 is Tin's company login before it's linked (a separate person).
+  await pg.exec(`INSERT INTO users (id, email, kind, status, workspace_id, created_at, updated_at) VALUES
+      (1, 'tinledoihoa@gmail.com', 'person', 'active', 1, 0, 0), (2, 'colleague@headsonpillows.com', 'person', 'active', 1, 0, 0),
+      (3, 'analytics@artemisdigital.com', 'shared-connection', 'active', NULL, 0, 0), (4, 'stranger@example.com', 'person', 'active', NULL, 0, 0),
+      (5, 'tin@artemisdigital.com', 'person', 'active', 1, 0, 0);
+    INSERT INTO user_identities (user_id, issuer, subject, email, hosted_domain, created_at) VALUES
+      (1, 'https://accounts.google.com', 's1', 'tinledoihoa@gmail.com', NULL, 0),
+      (2, 'https://accounts.google.com', 's2', 'colleague@headsonpillows.com', 'headsonpillows.com', 0),
+      (4, 'https://accounts.google.com', 's4', 'stranger@example.com', NULL, 0),
+      (5, 'https://accounts.google.com', 's5', 'tin@artemisdigital.com', 'artemisdigital.com', 0);
+    INSERT INTO projects (id, user_id, name, workspace_id, created_by, primary_manager_id, created_at, updated_at) VALUES
+      (1, 1, 'Wewine', 1, 1, 1, 0, 0), (2, 2, 'Theirs', 1, 2, 2, 0, 0);`);
 });
 beforeEach(async () => {
-  await pg.exec("DELETE FROM notifications; DELETE FROM notification_settings; DELETE FROM report_cache; DELETE FROM doc_articles;");
+  await pg.exec(`DELETE FROM notifications; DELETE FROM notification_settings; DELETE FROM notification_mutes; DELETE FROM report_cache; DELETE FROM doc_articles;
+    DELETE FROM project_members; INSERT INTO project_members (project_id, user_id, added_at) VALUES (1, 1, 0), (2, 2, 0);
+    UPDATE users SET asana_user_gid = NULL;`);
 });
 
-const saveSection = async (userId: number, s: CachedSection, key: string) =>
+/** A saved shared section in workspace `ws`'s cache scope (what a viewer's read leaves behind). */
+const saveSection = async (ws: number, s: CachedSection, key: string) =>
   pg.query(
-    `INSERT INTO report_cache (scope, cache_key, kind, provider, user_id, project_id, query, payload, fetched_at, fresh_until) VALUES ($1, $2, $3, 'gsc', $4, $5, $6, $7, $8, $9)`,
-    [`user:${userId}`, key, s.kind, userId, s.projectId, JSON.stringify(s.query), JSON.stringify(s.payload), Date.now(), Date.now() + 1e6],
+    `INSERT INTO report_cache (scope, cache_key, kind, provider, user_id, project_id, query, payload, fetched_at, fresh_until) VALUES ($1, $2, $3, 'gsc', NULL, $4, $5, $6, $7, $8)`,
+    [`ws:${ws}`, key, s.kind, s.projectId, JSON.stringify(s.query), JSON.stringify(s.payload), Date.now(), Date.now() + 1e6],
   );
 
 describe("store", () => {
   const sunday = Date.parse("2026-10-18T12:00:00Z"); // no digest on Sundays
   const monday = Date.parse("2026-10-19T12:00:00Z");
 
-  it("creates from saved results once, per account, and throttles runs", async () => {
+  it("project alerts go to the project's managers once, not to other viewers, and runs are throttled", async () => {
     await saveSection(1, gsc(600, 1000), "a");
     await saveSection(1, gsc(600, 1000), "b"); // same period saved twice
-    await saveSection(2, { ...gsc(600, 1000), projectId: 2 }, "c"); // another account's data in its own scope
     expect(await runRules(1, { now: sunday })).toEqual({ ran: true, created: 1 });
     expect(await runRules(1, { now: sunday + 60_000 })).toEqual({ ran: false, created: 0 });
     expect((await runRules(1, { now: sunday + 60_000, force: true })).created).toBe(0);
     const list = await listNotifications(1);
     expect(list.unread).toBe(1);
     expect(list.items[0]).toMatchObject({ projectId: 1, projectName: "Wewine", kind: "performance", href: "/p/1/search-console/performance" });
+    // The colleague can view Wewine but doesn't manage it: no project alert.
+    expect((await runRules(2, { now: sunday })).created).toBe(0);
     expect((await listNotifications(2)).items).toHaveLength(0);
   });
 
-  it("never reads another account's cache rows for its projects", async () => {
-    // A row in account 2's scope for project 1 (owned by account 1) is ignored for both.
+  it("sharing subscribes the new manager; mutes are personal", async () => {
+    await saveSection(1, gsc(600, 1000), "a");
+    await pg.exec("INSERT INTO project_members (project_id, user_id, added_at) VALUES (1, 2, 0)");
+    await setMute(1, 1, "performance", true);
+    expect((await runRules(1, { now: sunday })).created).toBe(0); // Tin muted it
+    expect((await runRules(2, { now: sunday })).created).toBe(1); // the colleague (now a manager) still gets it
+    expect(await listMutes(2)).toEqual([]);
+    await setMute(1, 1, "performance", false);
+    expect((await runRules(1, { now: sunday, force: true })).created).toBe(1);
+  });
+
+  it("task alerts go to the verified Asana assignee in any visible project; managers get completed tasks", async () => {
+    const task = (gid: string, assigneeGid: string | null, dueOn: string | null, completedAt: string | null = null) => ({ gid, name: `Task ${gid}`, assignee: null, assigneeGid, dueOn, completedAt, status: "open", url: null });
+    await saveSection(
+      1,
+      {
+        kind: "summary:tasks",
+        projectId: 1,
+        projectName: "Wewine",
+        query: { period },
+        payload: {
+          state: "live",
+          source: "Asana",
+          data: {
+            today: "2026-10-19",
+            overdueTasks: [task("o1", "g2", "2026-10-10"), task("o2", "g9", "2026-10-11")],
+            upcoming: [task("u1", "g2", "2026-10-20")],
+            recentlyCompleted: [task("c1", "g2", null, "2026-10-18T10:00:00Z")],
+          },
+        } as never,
+        fetchedAt: sunday,
+      },
+      "t",
+    );
+    await pg.exec("UPDATE users SET asana_user_gid = 'g2' WHERE id = 2");
+    await runRules(2, { now: sunday });
+    expect((await listNotifications(2)).items.map((i) => i.kind).sort()).toEqual(["tasks", "tasks"]); // o1 and u1 only, not o2
+    await runRules(1, { now: sunday });
+    expect((await listNotifications(1)).items.map((i) => i.kind)).toEqual(["content"]); // the manager: completed c1 only
+  });
+
+  it("never reads another workspace's cache rows", async () => {
     await saveSection(2, gsc(600, 1000), "x");
     expect((await runRules(1, { now: sunday })).created).toBe(0);
-    expect((await runRules(2, { now: sunday })).created).toBe(0);
   });
 
   it("read and unread, all or by id, own rows only, project filter", async () => {
@@ -190,45 +245,58 @@ describe("store", () => {
 });
 
 describe("docs", () => {
-  // Owner decision 2026-10-17: exactly these two accounts publish (a third allowed account, and anyone off the allowlist, can't).
+  // Owner decision 2026-10-17: exactly these two logins publish (a listed address that isn't a team login can't).
   const env = { DOCS_ADMIN_EMAILS: "tin@artemisdigital.com,tinledoihoa@gmail.com, stranger@example.com", VERCEL_ENV: "preview" };
   const admin = { id: 1, email: "tinledoihoa@gmail.com" };
+  const analytics = { id: 3, email: "analytics@artemisdigital.com" };
 
-  it("admins are explicit and must be allowed to sign in", () => {
-    expect(isDocsAdmin("tinledoihoa@gmail.com", env)).toBe(true);
-    expect(isDocsAdmin("tin@artemisdigital.com", env)).toBe(true);
-    expect(isDocsAdmin(" Tin@ArtemisDigital.com ", env)).toBe(true);
-    for (const other of ["analytics@artemisdigital.com", "analytics@headsonpillows.com", "tin@headsonpillows.com"]) expect(isDocsAdmin(other, env), other).toBe(false); // allowed to sign in, not publishers
-    expect(isDocsAdmin("stranger@example.com", env)).toBe(false); // listed but not on the allowlist
-    expect(isDocsAdmin("tinledoihoa@gmail.com", {})).toBe(false);
+  it("admins are explicit, matched on a verified linked login of an active team member", async () => {
+    expect(emailIsDocsAdmin(" Tin@ArtemisDigital.com ", env)).toBe(true);
+    expect(await isDocsAdmin({ id: 1 }, env)).toBe(true);
+    expect(await isDocsAdmin({ id: 5 }, env)).toBe(true);
+    expect(await isDocsAdmin({ id: 2 }, env)).toBe(false); // a team member, not a publisher
+    expect(await isDocsAdmin({ id: 3 }, env)).toBe(false); // the shared analytics account has no login
+    expect(await isDocsAdmin({ id: 4 }, env)).toBe(false); // listed, but not in the workspace
+    expect(await isDocsAdmin({ id: 1 }, {})).toBe(false);
+    // Linking Tin's company login to his profile keeps publishing with the same profile.
+    await pg.exec("UPDATE user_identities SET user_id = 1 WHERE subject = 's5'");
+    try {
+      expect(await isDocsAdmin({ id: 1 }, { DOCS_ADMIN_EMAILS: "tin@artemisdigital.com" })).toBe(true);
+    } finally {
+      await pg.exec("UPDATE user_identities SET user_id = 5 WHERE subject = 's5'");
+    }
+    await pg.exec("UPDATE users SET status = 'disabled' WHERE id = 1");
+    try {
+      expect(await isDocsAdmin({ id: 1 }, env)).toBe(false);
+    } finally {
+      await pg.exec("UPDATE users SET status = 'active' WHERE id = 1");
+    }
   });
 
-  it("drafts are hidden from readers; only admins write and publish; publishing notifies each account once", async () => {
-    await expect(saveArticle({ id: 2, email: "analytics@artemisdigital.com" }, { title: "x" }, env)).rejects.toBeInstanceOf(DocsForbidden);
+  it("drafts are hidden from readers; only admins write and publish; publishing notifies each person once", async () => {
+    await expect(saveArticle(analytics, { title: "x" }, env)).rejects.toBeInstanceOf(DocsForbidden);
+    await expect(saveArticle({ id: 2, email: "colleague@headsonpillows.com" }, { title: "x" }, env)).rejects.toBeInstanceOf(DocsForbidden);
     const a = await saveArticle(admin, { title: "Rank tracking guide", summary: "How to read rankings", body: "## Hi" }, env);
     expect(a).toMatchObject({ slug: "rank-tracking-guide", status: "draft" });
     expect(await getArticle(a.slug, { admin: false })).toBeNull();
     expect((await listArticles({ admin: false })).map((x) => x.slug)).toEqual([]);
-    await expect(setPublished({ id: 2, email: "analytics@artemisdigital.com" }, a.id, true, env)).rejects.toBeInstanceOf(DocsForbidden);
+    await expect(setPublished(analytics, a.id, true, env)).rejects.toBeInstanceOf(DocsForbidden);
     await setPublished(admin, a.id, true, env);
     await setPublished(admin, a.id, false, env);
     await setPublished(admin, a.id, true, env);
     expect((await getArticle(a.slug, { admin: false }))?.status).toBe("published");
-    const n1 = await listNotifications(1);
-    const n2 = await listNotifications(2);
-    expect(n1.items.filter((i) => i.kind === "docs")).toMatchObject([{ title: "New in Docs: Rank tracking guide", href: "/docs/rank-tracking-guide" }]);
-    expect(n2.items.filter((i) => i.kind === "docs")).toHaveLength(1);
-    const stranger = await pg.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = 3");
-    expect(stranger.rows[0].n).toBe(0); // not on the allowlist
+    expect((await listNotifications(1)).items.filter((i) => i.kind === "docs")).toMatchObject([{ title: "New in Docs: Rank tracking guide", href: "/docs/rank-tracking-guide" }]);
+    expect((await listNotifications(2)).items.filter((i) => i.kind === "docs")).toHaveLength(1);
+    const outside = await pg.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM notifications WHERE user_id IN (3, 4)");
+    expect(outside.rows[0].n).toBe(0); // the analytics connection and people outside the workspace get nothing
   });
 
-  it("both authorized publishers can publish a test article; a third allowed account can't", async () => {
-    await pg.query("INSERT INTO users (id, email, created_at, updated_at) VALUES (4, 'tin@artemisdigital.com', 0, 0) ON CONFLICT DO NOTHING");
-    for (const who of [{ id: 4, email: "tin@artemisdigital.com" }, admin]) {
+  it("both authorized publishers can publish a test article; another team member can't", async () => {
+    for (const who of [{ id: 5, email: "tin@artemisdigital.com" }, admin]) {
       const a = await saveArticle(who, { title: `Temporary test (${who.id})`, summary: "Temporary test document", body: "Remove me." }, env);
       expect((await setPublished(who, a.id, true, env)).status).toBe("published");
-      await expect(setPublished({ id: 2, email: "analytics@artemisdigital.com" }, a.id, false, env)).rejects.toBeInstanceOf(DocsForbidden);
-      expect((await getArticle(a.slug, { admin: false }))?.status).toBe("published"); // other allowed accounts still read it
+      await expect(setPublished({ id: 2, email: "colleague@headsonpillows.com" }, a.id, false, env)).rejects.toBeInstanceOf(DocsForbidden);
+      expect((await getArticle(a.slug, { admin: false }))?.status).toBe("published"); // other team members still read it
     }
     await pg.query("DELETE FROM doc_articles WHERE title LIKE 'Temporary test%'");
   });

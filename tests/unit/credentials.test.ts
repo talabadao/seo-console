@@ -1,6 +1,7 @@
-// Account API credentials: encryption, storage/verification states, account isolation, persistence across a
-// fresh server instance, the shared resolver's order, and the legacy project-key migration (consolidation and
-// conflicts). Runs against a real Postgres engine (PGlite).
+// Personal API credentials: encryption, storage/verification states, isolation between people, persistence across a
+// fresh server instance, the resolver (a paid request uses only the acting person's OWN key — never a legacy
+// project key, another person's or a shared server key), and the protected legacy project-key consolidation.
+// Runs on the real schema (baseline + every migration, PGlite).
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pg } = await vi.hoisted(async () => {
@@ -25,9 +26,12 @@ vi.mock("@/lib/db", () => ({
     }),
   },
   tableExists: async (name: string) => (await pg.query<{ t: string | null }>("SELECT to_regclass($1) AS t", [`public.${name}`])).rows[0].t != null,
+  withTransaction: async <T,>(fn: (q: (sql: string, ...args: unknown[]) => Promise<Record<string, unknown>[]>) => Promise<T>) =>
+    pg.transaction(async (tx) => fn(async (sql, ...args) => (await tx.query(toPositional(sql), args)).rows as Record<string, unknown>[])),
 }));
 
-import { migration as accountCredentials } from "@/db/migrations/0005_account_credentials";
+import { BASELINE_STATEMENTS } from "@/lib/schema";
+import { MIGRATIONS } from "@/db/migrations";
 import { decryptFor, encryptFor } from "@/lib/credentials/crypto";
 import {
   CredentialInputError,
@@ -48,20 +52,10 @@ const KEY_A = Buffer.alloc(32, 1).toString("base64");
 const KEY_B = Buffer.alloc(32, 2).toString("base64");
 
 beforeAll(async () => {
-  await pg.exec(`
-    CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT);
-    CREATE TABLE sites (user_id BIGINT, source TEXT, property TEXT);
-    CREATE TABLE ga_properties (user_id BIGINT, property_id TEXT);
-    CREATE TABLE projects (
-      id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, name TEXT NOT NULL DEFAULT '',
-      website_url TEXT NOT NULL DEFAULT '', favicon_url TEXT NOT NULL DEFAULT '',
-      gsc_property TEXT, ga_property_id TEXT, maps_url TEXT NOT NULL DEFAULT '',
-      gbp_location TEXT, gbp_location_title TEXT, serpapi_key TEXT, serpapi_key_updated_at BIGINT,
-      asana_project_gid TEXT NOT NULL DEFAULT '', asana_project_name TEXT NOT NULL DEFAULT '',
-      created_at BIGINT NOT NULL DEFAULT 0, updated_at BIGINT NOT NULL DEFAULT 0
-    );
-    INSERT INTO users (email) VALUES ('owner@example.com'), ('other@example.com');`);
-  for (const s of accountCredentials.statements) await pg.exec(s);
+  for (const s of BASELINE_STATEMENTS) await pg.exec(s);
+  for (const m of MIGRATIONS.slice(1)) for (const s of m.statements) await pg.exec(s);
+  await pg.exec(`INSERT INTO users (id, email, kind, status, workspace_id, created_at, updated_at)
+    VALUES (1, 'owner@artemisdigital.com', 'person', 'active', 1, 0, 0), (2, 'other@artemisdigital.com', 'person', 'active', 1, 0, 0);`);
 });
 
 beforeEach(async () => {
@@ -70,11 +64,14 @@ beforeEach(async () => {
   vi.stubEnv("CREDENTIALS_ENCRYPTION_KEYS_OLD", "");
   vi.stubEnv("LEGACY_SERVER_CREDENTIAL_ACCOUNTS", "");
   vi.stubEnv("SERPAPI_API_KEY", "");
-  await pg.exec("DELETE FROM account_credentials; DELETE FROM projects;");
+  await pg.exec("DELETE FROM account_credentials; DELETE FROM project_members; DELETE FROM projects;");
+  // One workspace: person 1 manages projects 1 and 2 (and is their legacy owner); person 2 manages project 3.
   await pg.query(
-    `INSERT INTO projects (id, user_id, name, website_url) VALUES
-       (1, 1, 'Wewine', 'https://wewine.vn/'), (2, 1, 'Second', 'https://second.example/'), (3, 2, 'Theirs', 'https://theirs.example/')`,
+    `INSERT INTO projects (id, user_id, name, website_url, workspace_id, created_by, primary_manager_id, created_at, updated_at) VALUES
+       (1, 1, 'Wewine', 'https://wewine.vn/', 1, 1, 1, 0, 0), (2, 1, 'Second', 'https://second.example/', 1, 1, 1, 0, 0),
+       (3, 2, 'Theirs', 'https://theirs.example/', 1, 2, 2, 0, 0)`,
   );
+  await pg.exec("INSERT INTO project_members (project_id, user_id, added_at) VALUES (1, 1, 0), (2, 1, 0), (3, 2, 0)");
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -161,11 +158,14 @@ describe("account isolation", () => {
     expect((await readCredential(1, "serpapi"))!.values.apiKey).toBe("owner-key-1111");
   });
 
-  it("never resolves another account's project key", async () => {
+  it("never resolves a project's legacy key, and only managers can remove one", async () => {
     await pg.query("UPDATE projects SET serpapi_key = 'their-project-key' WHERE id = 3");
-    // Account 1 naming account 2's project gets nothing from it.
+    // Person 1 can view project 3 but gets nothing from its key, and can't remove it (they don't manage it).
     expect(await resolveCredential(1, "serpapi", 3)).toBeNull();
     expect(await removeSerpKey(1, 3)).toBeNull();
+    expect((await pg.query("SELECT serpapi_key FROM projects WHERE id = 3")).rows[0]).toEqual({ serpapi_key: "their-project-key" });
+    // Its own manager doesn't get it for runs either.
+    expect(await resolveCredential(2, "serpapi", 3)).toBeNull();
   });
 });
 
@@ -190,21 +190,20 @@ describe("shared resolver", () => {
     expect((await getProject(1, 2))!).toMatchObject({ hasSerpKey: true, serpKeySource: "account", serpKeyLast4: "-key" });
   });
 
-  it("prefers the account key; a legacy project key applies only to its project and only without one", async () => {
+  it("never uses a legacy project key for a run; only the person's own key", async () => {
     await pg.query("UPDATE projects SET serpapi_key = 'legacy-project-key' WHERE id = 1");
-    expect((await serpKey(1, 1))!).toMatchObject({ key: "legacy-project-key", source: "project-legacy" });
-    expect(await serpKey(1, 2)).toBeNull();
+    expect(await serpKey(1, 1)).toBeNull();
     await saveCredential(1, "serpapi", { apiKey: "account-key-0000" });
-    // A newly saved account key wins over an old project key (an exhausted or invalid project key used to win).
     expect((await serpKey(1, 1))!).toMatchObject({ key: "account-key-0000", source: "account" });
     expect((await serpKey(1, 2))!).toMatchObject({ key: "account-key-0000", source: "account" });
+    // Person 2 running something on person 1's project would still need their own key.
+    expect(await serpKey(2, 1)).toBeNull();
   });
 
-  it("uses a server key only for accounts explicitly listed", async () => {
+  it("never falls back to a shared server key, even for an account listed in the old setting", async () => {
     vi.stubEnv("SERPAPI_API_KEY", "server-key-zz");
+    vi.stubEnv("LEGACY_SERVER_CREDENTIAL_ACCOUNTS", "owner@artemisdigital.com");
     expect(await resolveCredential(1, "serpapi")).toBeNull();
-    vi.stubEnv("LEGACY_SERVER_CREDENTIAL_ACCOUNTS", "Owner@Example.com");
-    expect((await resolveCredential(1, "serpapi"))!.source).toBe("server-legacy");
     expect(await resolveCredential(2, "serpapi")).toBeNull();
   });
 });
@@ -221,15 +220,17 @@ describe("legacy project keys", () => {
     expect((await readCredential(2, "serpapi"))).toBeNull();
   });
 
-  it("never chooses between different keys; both keep working until the owner decides", async () => {
+  it("never chooses between different keys; both stay pending (unused for runs) until their legacy owner decides", async () => {
     await pg.query("UPDATE projects SET serpapi_key = 'key-one-1111' WHERE id = 1");
     await pg.query("UPDATE projects SET serpapi_key = 'key-two-2222' WHERE id = 2");
     const state = await consolidateLegacySerpKeys(1);
     expect(state.status).toBe("conflict");
     expect(state.pending.map((p) => p.last4).sort()).toEqual(["1111", "2222"]);
     expect(await readCredential(1, "serpapi")).toBeNull();
-    expect((await serpKey(1, 1))!.key).toBe("key-one-1111");
-    expect((await serpKey(1, 2))!.key).toBe("key-two-2222");
+    expect(await serpKey(1, 1)).toBeNull();
+    expect(await serpKey(1, 2)).toBeNull();
+    // Another person can't consolidate (or even see) them: they are only the legacy owner's to decide.
+    expect(await consolidateLegacySerpKeys(2)).toMatchObject({ status: "none", pending: [] });
   });
 
   it("clears only project keys identical to an existing account key", async () => {

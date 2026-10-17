@@ -1,59 +1,20 @@
 import { NextResponse } from "next/server";
-import { currentUser } from "@/lib/session";
-import { db } from "@/lib/db";
-import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
-import { cleanGaError, listGaProperties } from "@/lib/ga4";
+import { isDenied, viewer } from "@/lib/access";
+import { workspaceGaProperties } from "@/lib/google/discovery";
 
+/**
+ * GA4 properties the workspace's shared Google connections can read (each with its connection), for project
+ * mappings and the Analytics pages. Read from the stored lists; refreshing them is Account → Data connections.
+ */
 export async function GET() {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  if (!hasAnalyticsScope(user.google_scopes)) {
-    return NextResponse.json({ properties: [], needsReconnect: true });
-  }
-
-  let refreshError: string | null = null;
-  let enableUrl: string | null = null;
-  let needsReconnect = false;
-  try {
-    const token = await accessTokenFor(user);
-    const remote = await listGaProperties(token);
-    const now = Date.now();
-    const upsert = db.prepare(`
-      INSERT INTO ga_properties (user_id, property_id, display_name, account_name, created_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, property_id) DO UPDATE SET
-        display_name = excluded.display_name, account_name = excluded.account_name
-    `);
-    for (const p of remote) {
-      await upsert.run(user.id, p.propertyId, p.displayName, p.accountName, now);
-    }
-    // Drop properties the user no longer has access to.
-    const keep = new Set(remote.map((p) => p.propertyId));
-    for (const row of (await db
-      .prepare("SELECT property_id FROM ga_properties WHERE user_id = ?")
-      .all(user.id)) as { property_id: string }[]) {
-      if (!keep.has(row.property_id)) {
-        await db
-          .prepare("DELETE FROM ga_properties WHERE user_id = ? AND property_id = ?")
-          .run(user.id, row.property_id);
-      }
-    }
-  } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) {
-      needsReconnect = true;
-    } else {
-      const cleaned = cleanGaError(e instanceof Error ? e.message : String(e));
-      refreshError = cleaned.message;
-      enableUrl = cleaned.enableUrl;
-    }
-  }
-
-  const properties = await db
-    .prepare(
-      'SELECT property_id AS "propertyId", display_name AS "displayName", account_name AS "accountName" FROM ga_properties WHERE user_id = ? ORDER BY account_name, display_name',
-    )
-    .all(user.id);
-
-  return NextResponse.json({ properties, refreshError, enableUrl, needsReconnect });
+  const user = await viewer();
+  if (isDenied(user)) return user;
+  const properties = (await workspaceGaProperties(user.workspace_id!)).map((p) => ({
+    propertyId: p.propertyId,
+    displayName: p.displayName ?? p.propertyId,
+    accountName: p.accountName ?? "",
+    connectionId: p.connectionId,
+    connectionEmail: p.connectionEmail,
+  }));
+  return NextResponse.json({ properties, refreshError: null, enableUrl: null, needsReconnect: false });
 }
