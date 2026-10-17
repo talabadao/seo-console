@@ -25,7 +25,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 /** Compares the latest run's AI answers with the reviews again (one metered OpenAI call). */
 export async function POST(_req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   try {
     const config = await readConfig(g.project);

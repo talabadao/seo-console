@@ -35,9 +35,11 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
     leads: leads?.events ?? [],
     leadSource: leads?.source ?? "none",
     period: periodFor(q.get("preset"), q.get("compare"), c.timeZone),
-    config: await projectConfigVersion(c.user, c.project),
+    config: await projectConfigVersion(c.project),
   };
-  const r = await readThrough<Ga4TemplateQuery, TemplateResult>({ kind: "ga4:template", userId: c.user.id, projectId: c.project.id, query, waitMs: 20_000, force: q.get("refresh") === "1" });
+  // A manual refresh is a management action; a viewer's request reads through the normal refresh policy.
+  const force = q.get("refresh") === "1" && c.project.canManage;
+  const r = await readThrough<Ga4TemplateQuery, TemplateResult>({ kind: "ga4:template", workspaceId: c.project.workspaceId, actorUserId: c.user.id, projectId: c.project.id, query, waitMs: 20_000, force });
   if (r.payload) return NextResponse.json({ state: "live", result: r.payload, cache: cacheInfo(r) });
   if (r.state === "pending") return NextResponse.json({ state: "pending", message: "Fetching from GA4…" });
   return NextResponse.json({ state: "error", source: GA4_SOURCE, message: r.error ?? "The GA4 request failed." });

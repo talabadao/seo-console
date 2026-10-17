@@ -1,52 +1,31 @@
 import { NextResponse } from "next/server";
-import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
-import { listSites } from "@/lib/google/searchconsole";
-import { db } from "@/lib/db";
+import { isDenied, viewer } from "@/lib/access";
+import { workspaceSites } from "@/lib/google/discovery";
+import { listConnections } from "@/lib/google/connections";
 import { dataDateRange, lastSync } from "@/lib/metrics";
 
+/**
+ * Search Console sites the workspace's shared Google connections can read (each with its connection), for project
+ * mappings. Read from the stored lists; refreshing them is Account → Data connections → Refresh.
+ */
 export async function GET() {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  let refreshError: string | null = null;
-  let needsReconnect = false;
-  try {
-    const token = await accessTokenFor(user);
-    const remote = await listSites(token);
-    const now = Date.now();
-    const upsert = db.prepare(
-      `INSERT INTO sites (user_id, source, property, permission_level, created_at)
-       VALUES (?, 'google', ?, ?, ?)
-       ON CONFLICT(user_id, source, property) DO UPDATE SET permission_level = excluded.permission_level`,
-    );
-    for (const s of remote) {
-      if (s.permissionLevel === "siteUnverifiedUser") continue;
-      await upsert.run(user.id, s.siteUrl, s.permissionLevel, now);
-    }
-  } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) needsReconnect = true;
-    else refreshError = e instanceof Error ? e.message : String(e);
-  }
-
-  const rows = (await db
-    .prepare(
-      "SELECT id, source, property, permission_level FROM sites WHERE user_id = ? AND source = 'google' ORDER BY property",
-    )
-    .all(user.id)) as {
-    id: number;
-    source: string;
-    property: string;
-    permission_level: string | null;
-  }[];
-
+  const user = await viewer();
+  if (isDenied(user)) return user;
+  const rows = await workspaceSites(user.workspace_id!);
+  const connections = await listConnections(user.workspace_id!);
   const sites = await Promise.all(
     rows.map(async (r) => ({
-      ...r,
+      id: r.id,
+      source: "google",
+      property: r.property,
+      permission_level: r.permissionLevel,
+      connectionId: r.connectionId,
+      connectionEmail: r.connectionEmail,
       dataRange: await dataDateRange(r.id),
       lastSync: (await lastSync(r.id)) ?? null,
     })),
   );
-
-  return NextResponse.json({ sites, refreshError, needsReconnect });
+  // A personal login never carries Google data access; a connection that must be reconnected is reported instead.
+  const reconnect = connections.filter((c) => c.status !== "ok").map((c) => ({ id: c.id, email: c.email, status: c.status }));
+  return NextResponse.json({ sites, needsReconnect: false, connectionsNeedingAttention: reconnect });
 }

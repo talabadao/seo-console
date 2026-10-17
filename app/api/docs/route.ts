@@ -8,7 +8,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!(await docsReady())) return NextResponse.json({ error: "This database hasn't run migration 0010 (Docs) yet." }, { status: 503 });
   await ensureDemoDocs();
-  const admin = isDocsAdmin(user.email);
+  const admin = (await isDocsAdmin(user));
   return NextResponse.json({ admin, articles: await listArticles({ admin }) }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -16,7 +16,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!isDocsAdmin(user.email)) return NextResponse.json({ error: "Only Docs admins can edit articles." }, { status: 403 });
+  if (!(await isDocsAdmin(user))) return NextResponse.json({ error: "Only Docs admins can edit articles." }, { status: 403 });
   if (!(await docsReady())) return NextResponse.json({ error: "Docs unavailable" }, { status: 503 });
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   try {

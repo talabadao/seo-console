@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!externalWritesAllowed()) return NextResponse.json({ error: PREVIEW_WRITES_BLOCKED }, { status: 403 });
   const body = (await req.json().catch(() => ({}))) as { projectId?: number };
-  const ctx = await reviewContext(user.id, Number(body.projectId));
+  const ctx = await reviewContext(user.id, Number(body.projectId), { manage: true });
   if ("error" in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
   return NextResponse.json(await classifyPending(ctx.project, 170_000, ctx.openaiKey));
 }

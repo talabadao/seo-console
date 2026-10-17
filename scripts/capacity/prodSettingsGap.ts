@@ -2,7 +2,8 @@
 // targets, lead events, SerpApi key source). Prints project names and yes/no flags only — no keys or data values.
 //   npx tsx --env-file=<protected file> scripts/capacity/prodSettingsGap.ts
 import postgres from "postgres";
-import { ALLOWED_EMAILS } from "../../lib/auth/allowlist";
+// The five accounts of the limited pilot (before the workspace model replaced the allowlist).
+const ALLOWED_EMAILS = ["analytics@headsonpillows.com", "analytics@artemisdigital.com", "tinledoihoa@gmail.com", "tin@headsonpillows.com", "tin@artemisdigital.com"];
 
 const sql = postgres(process.env.MIGRATE_DATABASE_URL!, { max: 1, onnotice: () => {} });
 const rows = (await sql.begin("READ ONLY", (tx) =>

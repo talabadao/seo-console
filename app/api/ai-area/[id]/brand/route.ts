@@ -59,7 +59,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
 /** Saves Brand Mentions settings: platforms and models. The daily spending limit is a server setting, not editable here. */
 export async function PUT(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => null)) as Partial<BrandSettings> | null;
   if (!body) return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });

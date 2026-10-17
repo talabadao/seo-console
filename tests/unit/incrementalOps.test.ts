@@ -101,10 +101,10 @@ describe("incremental Search Console daily totals", () => {
   it("stores the first refresh, then serves warm reads with no request", async () => {
     const gsc = fakeGsc(days("2026-09-01", "2026-10-15", 2));
     const range = { start: "2026-09-01", end: "2026-10-16" };
-    const first = await gscDailyTotals(1, PROPERTY, range, gsc.fetch, at("2026-10-17"));
+    const first = await gscDailyTotals(10, PROPERTY, range, gsc.fetch, at("2026-10-17"));
     expect(gsc.calls).toEqual([range]);
     expect(first!.days).toHaveLength(45);
-    const again = await gscDailyTotals(1, PROPERTY, range, gsc.fetch, at("2026-10-17") + 60_000);
+    const again = await gscDailyTotals(10, PROPERTY, range, gsc.fetch, at("2026-10-17") + 60_000);
     expect(gsc.calls).toHaveLength(1);
     expect(again!.fetched).toEqual([]);
     expect(again!.days).toEqual(first!.days);
@@ -114,11 +114,11 @@ describe("incremental Search Console daily totals", () => {
     const values = days("2026-09-01", "2026-10-15", 2);
     const gsc = fakeGsc(values);
     const range = { start: "2026-09-01", end: "2026-10-16" };
-    await gscDailyTotals(1, PROPERTY, range, gsc.fetch, at("2026-10-16"));
+    await gscDailyTotals(10, PROPERTY, range, gsc.fetch, at("2026-10-16"));
     values.set("2026-10-14", 7); // Google revised a recent day
     values.delete("2026-10-15"); // ...and withdrew another
     values.set("2026-10-16", 3); // a new day arrived
-    const later = await gscDailyTotals(1, PROPERTY, range, gsc.fetch, at("2026-10-17"));
+    const later = await gscDailyTotals(10, PROPERTY, range, gsc.fetch, at("2026-10-17"));
     expect(gsc.calls[1]).toEqual({ start: "2026-10-13", end: "2026-10-16" });
     const byDate = new Map(later!.days.map((d) => [d.date, d.clicks]));
     expect(byDate.get("2026-10-14")).toBe(7);
@@ -131,8 +131,8 @@ describe("incremental Search Console daily totals", () => {
 
   it("fetches only the missing earlier days when a longer range is requested", async () => {
     const gsc = fakeGsc(days("2026-06-01", "2026-10-15"));
-    await gscDailyTotals(1, PROPERTY, { start: "2026-09-01", end: "2026-10-16" }, gsc.fetch, at("2026-10-17"));
-    const wider = await gscDailyTotals(1, PROPERTY, { start: "2026-07-01", end: "2026-10-16" }, gsc.fetch, at("2026-10-17") + 60_000);
+    await gscDailyTotals(10, PROPERTY, { start: "2026-09-01", end: "2026-10-16" }, gsc.fetch, at("2026-10-17"));
+    const wider = await gscDailyTotals(10, PROPERTY, { start: "2026-07-01", end: "2026-10-16" }, gsc.fetch, at("2026-10-17") + 60_000);
     expect(gsc.calls[1]).toEqual({ start: "2026-07-01", end: "2026-08-31" });
     expect(wider!.days).toHaveLength(107);
     const cov = await pg.query<{ covered_from: string; covered_to: string }>("SELECT covered_from, covered_to FROM gsc_daily_coverage WHERE site_id = 10");
@@ -143,8 +143,8 @@ describe("incremental Search Console daily totals", () => {
     const gsc = fakeGsc(days("2026-01-01", "2026-10-15"));
     const now = at("2026-10-17");
     await Promise.all([
-      gscDailyTotals(1, PROPERTY, { start: "2026-09-01", end: "2026-10-15" }, gsc.fetch, now),
-      gscDailyTotals(1, PROPERTY, { start: "2026-02-01", end: "2026-02-28" }, gsc.fetch, now),
+      gscDailyTotals(10, PROPERTY, { start: "2026-09-01", end: "2026-10-15" }, gsc.fetch, now),
+      gscDailyTotals(10, PROPERTY, { start: "2026-02-01", end: "2026-02-28" }, gsc.fetch, now),
     ]);
     const cov = (await pg.query<{ covered_from: string; covered_to: string }>("SELECT covered_from, covered_to FROM gsc_daily_coverage WHERE site_id = 10")).rows[0];
     // One of the two ranges is recorded; never a range spanning March–August, which nobody fetched.
@@ -153,7 +153,7 @@ describe("incremental Search Console daily totals", () => {
       { covered_from: "2026-02-01", covered_to: "2026-02-28" },
     ]).toContainEqual(cov);
     const calls = gsc.calls.length;
-    const summer = await gscDailyTotals(1, PROPERTY, { start: "2026-06-01", end: "2026-06-30" }, gsc.fetch, now + 60_000);
+    const summer = await gscDailyTotals(10, PROPERTY, { start: "2026-06-01", end: "2026-06-30" }, gsc.fetch, now + 60_000);
     expect(gsc.calls.length).toBeGreaterThan(calls); // the gap is fetched, not served as empty
     expect(summer!.days).toHaveLength(30);
   });
@@ -165,18 +165,18 @@ describe("incremental Search Console daily totals", () => {
     expect(mergeCoverage(cur, { from: "2026-11-01", to: "2026-11-05" }, 9)).toBeNull();
   });
 
-  it("keeps each account's copy of the same property separate", async () => {
+  it("keeps each connection's copy of the same property separate", async () => {
     const a = fakeGsc(days("2026-10-01", "2026-10-15", 5));
     const b = fakeGsc(days("2026-10-01", "2026-10-15", 9));
     const range = { start: "2026-10-01", end: "2026-10-15" };
-    await gscDailyTotals(1, PROPERTY, range, a.fetch, at("2026-10-17"));
-    const forB = await gscDailyTotals(2, PROPERTY, range, b.fetch, at("2026-10-17"));
-    expect(b.calls).toHaveLength(1); // account B's stored rows don't come from account A's refresh
+    await gscDailyTotals(10, PROPERTY, range, a.fetch, at("2026-10-17"));
+    const forB = await gscDailyTotals(20, PROPERTY, range, b.fetch, at("2026-10-17"));
+    expect(b.calls).toHaveLength(1); // connection B's stored rows don't come from connection A's refresh
     expect(forB!.days.every((d) => d.clicks === 9)).toBe(true);
-    const forA = await gscDailyTotals(1, PROPERTY, range, a.fetch, at("2026-10-17") + 60_000);
+    const forA = await gscDailyTotals(10, PROPERTY, range, a.fetch, at("2026-10-17") + 60_000);
     expect(forA!.days.every((d) => d.clicks === 5)).toBe(true);
-    // An account without a stored site row for the property uses the direct queries instead.
-    expect(await gscDailyTotals(3, PROPERTY, range, a.fetch)).toBeNull();
+    // No stored site row for the property (not discovered by the mapped connection): the direct queries are used.
+    expect(await gscDailyTotals(null, PROPERTY, range, a.fetch)).toBeNull();
   });
 
   it("derives CTR from clicks and impressions and weights position by impressions", () => {
@@ -229,6 +229,6 @@ describe("scheduled-run history", () => {
     expect(await cronStart("sync")).toBeNull();
     await expect(recordCron("sync", async () => ({ status: "ok" as const }))).resolves.toEqual({ status: "ok" });
     expect(await recentCronRuns()).toBeNull();
-    expect(await gscDailyTotals(1, PROPERTY, { start: "2026-10-01", end: "2026-10-02" }, async () => [])).toBeNull();
+    expect(await gscDailyTotals(10, PROPERTY, { start: "2026-10-01", end: "2026-10-02" }, async () => [])).toBeNull();
   });
 });

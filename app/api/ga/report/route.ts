@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
-import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
-import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
+import { gaForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
+import { aiDomainsForProject } from "@/lib/gaConfig";
 import {
   classifyTraffic,
   cleanGaError,
@@ -35,13 +36,12 @@ const iso = (yyyymmdd: string) =>
 export async function GET(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!hasAnalyticsScope(user.google_scopes)) {
-    return NextResponse.json({ needsReconnect: true }, { status: 200 });
-  }
 
   const p = req.nextUrl.searchParams;
   const propertyId = p.get("propertyId");
-  if (!propertyId || !(await ownsGaProperty(user.id, propertyId))) {
+  // Any team member may read a property mapped by a project they can see, through that project's connection.
+  const ga = await gaForProperty(user, propertyId);
+  if (!propertyId || !ga) {
     return NextResponse.json({ error: "unknown or unlinked GA property" }, { status: 404 });
   }
 
@@ -52,13 +52,13 @@ export async function GET(req: NextRequest) {
     ? p.get("grain")
     : "day") as Grain;
 
-  const aiDomains = aiDomainsFor(user);
+  const aiDomains = await aiDomainsForProject(ga.project.id);
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await ga.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 
@@ -69,8 +69,8 @@ export async function GET(req: NextRequest) {
   // hours the property is offset from UTC, undercounting or overcounting a
   // partial day at each boundary versus a reference report.
   const cached = (await db
-    .prepare("SELECT currency_code, time_zone FROM ga_properties WHERE user_id = ? AND property_id = ?")
-    .get(user.id, propertyId)) as { currency_code: string | null; time_zone: string | null } | undefined;
+    .prepare("SELECT currency_code, time_zone FROM ga_properties WHERE connection_id = ? AND property_id = ?")
+    .get(ga.connectionId, propertyId)) as { currency_code: string | null; time_zone: string | null } | undefined;
   let currency = cached?.currency_code ?? null;
   let timeZone = cached?.time_zone ?? null;
   if (!currency || !timeZone) {
@@ -80,9 +80,9 @@ export async function GET(req: NextRequest) {
     if (meta.currency || meta.timeZone) {
       await db
         .prepare(
-          "UPDATE ga_properties SET currency_code = COALESCE(currency_code, ?), time_zone = COALESCE(time_zone, ?) WHERE user_id = ? AND property_id = ?",
+          "UPDATE ga_properties SET currency_code = COALESCE(currency_code, ?), time_zone = COALESCE(time_zone, ?) WHERE connection_id = ? AND property_id = ?",
         )
-        .run(meta.currency, meta.timeZone, user.id, propertyId);
+        .run(meta.currency, meta.timeZone, ga.connectionId, propertyId);
     }
   }
 

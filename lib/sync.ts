@@ -1,8 +1,9 @@
 import { db, rawSql } from "@/lib/db";
-import { accessTokenFor } from "@/lib/google/oauth";
+import { ConnectionUnavailableError, type GoogleTokenSource } from "@/lib/google/connections";
 import { searchAnalytics } from "@/lib/google/searchconsole";
 import { discoverSitemapUrls, runIndexCheck } from "@/lib/indexer";
-import type { UserRow } from "@/lib/session";
+import { listProjects } from "@/lib/projects";
+import { projectGsc } from "@/lib/access";
 
 // dashboard dimension -> GSC API dimensions (always prefixed with "date" so we
 // keep a daily grain and can aggregate over any range later).
@@ -61,7 +62,7 @@ async function upsertPerfRows(values: PerfRowValue[]): Promise<number> {
   return written;
 }
 
-export async function syncGoogleSite(user: UserRow, site: SiteRow) {
+export async function syncGoogleSite(google: GoogleTokenSource, site: SiteRow) {
   const started = Date.now();
   const logId = (
     (await db
@@ -85,7 +86,7 @@ export async function syncGoogleSite(user: UserRow, site: SiteRow) {
 
   let written = 0;
   try {
-    const token = await accessTokenFor(user);
+    const token = await google.token();
     const end = new Date();
     const start = new Date(end.getTime() - LOOKBACK_DAYS * 86_400_000);
     const startDate = ymd(start);
@@ -140,18 +141,24 @@ export async function syncGoogleSite(user: UserRow, site: SiteRow) {
   }
 }
 
-export async function syncAllForUser(user: UserRow, opts: { index?: boolean } = {}) {
-  const sites = (await db
-    .prepare("SELECT id, user_id, source, property FROM sites WHERE user_id = ? AND source = 'google'")
-    .all(user.id)) as unknown as SiteRow[];
+/**
+ * Syncs every Search Console property mapped by a project the User manages (an explicit, free reporting refresh),
+ * each through the project's shared connection. A property mapped by several of their projects syncs once.
+ */
+export async function syncManagedProjects(userId: number, opts: { index?: boolean } = {}) {
   const results = [];
-  for (const site of sites) {
-    const perf = await syncGoogleSite(user, site);
+  const seen = new Set<number>();
+  for (const project of (await listProjects(userId)).filter((p) => p.canManage)) {
+    const access = await projectGsc(project);
+    if (access instanceof ConnectionUnavailableError || access.siteId == null || seen.has(access.siteId)) continue;
+    seen.add(access.siteId);
+    const site: SiteRow = { id: access.siteId, user_id: 0, source: "google", property: access.property };
+    const perf = await syncGoogleSite(access, site);
     let index: { discovered?: number; checked?: number; error?: string } | undefined;
     if (opts.index !== false) {
       try {
-        const d = await discoverSitemapUrls(user, site);
-        const c = await runIndexCheck(user, site);
+        const d = await discoverSitemapUrls(access, site);
+        const c = await runIndexCheck(access, site);
         index = { discovered: d.found, checked: c.checked };
       } catch (e) {
         index = { error: e instanceof Error ? e.message : String(e) };

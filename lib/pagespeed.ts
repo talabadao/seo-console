@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
-import { accessTokenFor } from "@/lib/google/oauth";
-import type { UserRow } from "@/lib/session";
-import { isAllowedEmail } from "@/lib/auth/allowlist";
+import { connectionAccessToken } from "@/lib/google/connections";
+import { getProject, type Project } from "@/lib/projects";
 import {
   STRATEGIES,
   parsePsi,
@@ -64,16 +63,23 @@ export interface PsiPage {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** The page, only if it belongs to one of this user's projects. */
-export async function pageFor(userId: number, pageId: number): Promise<PsiPage | null> {
-  const row = await db
-    .prepare(
-      `SELECT g.id, g.project_id AS "projectId", g.url
-         FROM psi_pages g JOIN projects p ON p.id = g.project_id
-        WHERE g.id = ? AND p.user_id = ?`,
-    )
-    .get(pageId, userId);
-  return (row as unknown as PsiPage | undefined) ?? null;
+/** The page and its project, only if the project is visible to this User (any live workspace project). */
+export async function pageFor(userId: number, pageId: number): Promise<(PsiPage & { project: Project }) | null> {
+  if (!Number.isSafeInteger(pageId) || pageId <= 0) return null;
+  const row = (await db.prepare(`SELECT g.id, g.project_id AS "projectId", g.url FROM psi_pages g WHERE g.id = ?`).get(pageId)) as PsiPage | undefined;
+  if (!row) return null;
+  const project = await getProject(userId, Number(row.projectId));
+  return project ? { ...row, id: Number(row.id), projectId: Number(row.projectId), project } : null;
+}
+
+/** A PageSpeed token: the server key when set (null here), else the project's Search Console connection, else none. */
+export async function psiTokenFor(project: Pick<Project, "gscConnectionId">): Promise<string | null> {
+  if (process.env.PAGESPEED_API_KEY || project.gscConnectionId == null) return null;
+  try {
+    return await connectionAccessToken(project.gscConnectionId);
+  } catch {
+    return null; // run unauthenticated
+  }
 }
 
 export async function addPage(projectId: number, url: string): Promise<PsiPage> {
@@ -261,35 +267,25 @@ export async function runDuePages(budgetMs: number): Promise<{ ran: number; fail
   const started = Date.now();
   const rows = (await db
     .prepare(
-      `SELECT g.id, g.url, s.strategy, p.user_id AS "userId", u.email AS "email"
+      `SELECT g.id, g.url, s.strategy, p.gsc_connection_id AS "connectionId"
          FROM psi_pages g
-         JOIN projects p ON p.id = g.project_id
-         JOIN users u ON u.id = p.user_id
+         JOIN projects p ON p.id = g.project_id AND p.workspace_id IS NOT NULL AND p.deleted_at IS NULL
          CROSS JOIN (VALUES ('mobile'), ('desktop')) AS s(strategy)
         WHERE NOT EXISTS (
                 SELECT 1 FROM psi_runs r
                  WHERE r.page_id = g.id AND r.strategy = s.strategy AND r.run_date = ? AND r.score IS NOT NULL)
         ORDER BY g.id`,
     )
-    .all(today())) as { id: number; url: string; strategy: Strategy; userId: number; email: string }[];
-  // Accounts that may no longer sign in don't get work run on their behalf.
-  const due = rows.filter((r) => isAllowedEmail(r.email));
+    .all(today())) as { id: number; url: string; strategy: Strategy; connectionId: number | null }[];
+  // Pages of live workspace projects only (deleted or unshared projects get no scheduled work).
+  const due = rows;
 
-  // One access token per user (only needed when no API key is configured).
+  // One token per Search Console connection (only needed when no API key is configured).
   const tokens = new Map<number, string | null>();
-  async function tokenFor(userId: number): Promise<string | null> {
-    if (process.env.PAGESPEED_API_KEY) return null;
-    if (!tokens.has(userId)) {
-      const user = (await db.prepare("SELECT * FROM users WHERE id = ?").get(userId)) as UserRow | undefined;
-      let token: string | null = null;
-      try {
-        if (user) token = await accessTokenFor(user);
-      } catch {
-        /* run unauthenticated */
-      }
-      tokens.set(userId, token);
-    }
-    return tokens.get(userId) ?? null;
+  async function tokenFor(connectionId: number | null): Promise<string | null> {
+    if (process.env.PAGESPEED_API_KEY || connectionId == null) return null;
+    if (!tokens.has(connectionId)) tokens.set(connectionId, await psiTokenFor({ gscConnectionId: connectionId }));
+    return tokens.get(connectionId) ?? null;
   }
 
   let ran = 0;
@@ -298,7 +294,7 @@ export async function runDuePages(budgetMs: number): Promise<{ ran: number; fail
   async function worker() {
     while (next < due.length && Date.now() - started < budgetMs) {
       const job = due[next++];
-      const r = await runAndStore(job, job.strategy, await tokenFor(job.userId));
+      const r = await runAndStore(job, job.strategy, await tokenFor(job.connectionId == null ? null : Number(job.connectionId)));
       if (r.ok) ran++;
       else failed++;
     }

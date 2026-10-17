@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
-import { ownsGaProperty } from "@/lib/gaConfig";
+import { gaForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
 import {
   KEY_EVENT_FILTER,
   andFilter,
@@ -22,14 +22,13 @@ export const maxDuration = 120;
 export async function GET(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!hasAnalyticsScope(user.google_scopes)) {
-    return NextResponse.json({ needsReconnect: true }, { status: 200 });
-  }
 
   const p = req.nextUrl.searchParams;
   const propertyId = p.get("propertyId");
+  // Any team member may read a property mapped by a project they can see, through that project's connection.
+  const ga = await gaForProperty(user, propertyId);
   const sourceMedium = p.get("sourceMedium");
-  if (!propertyId || !(await ownsGaProperty(user.id, propertyId)) || !sourceMedium) {
+  if (!propertyId || !ga || !sourceMedium) {
     return NextResponse.json({ error: "propertyId, sourceMedium required" }, { status: 400 });
   }
 
@@ -46,9 +45,9 @@ export async function GET(req: NextRequest) {
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await ga.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

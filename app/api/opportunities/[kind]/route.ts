@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { subMonths, subYears, format, parseISO } from "date-fns";
 import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
+import { gscForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
 import { siteConfigFor } from "@/lib/siteConfig";
 import { resolveRange, type PresetId, type Range } from "@/lib/dateRanges";
 import {
@@ -28,7 +29,8 @@ export async function GET(
   const p = req.nextUrl.searchParams;
   const property = p.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
-  const sc = await siteConfigFor(user.id, property);
+  const gsc = await gscForProperty(user, property, p.get("projectId"));
+  const sc = gsc?.siteId != null ? await siteConfigFor(gsc.siteId) : null;
   if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   const searchType = (p.get("searchType") || "web") as SearchType;
@@ -40,9 +42,9 @@ export async function GET(
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await gsc!.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

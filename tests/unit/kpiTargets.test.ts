@@ -49,7 +49,7 @@ const backfill = MIGRATIONS.find((m) => m.id === "0007_kpi_targets")!;
 
 beforeAll(async () => {
   for (const s of BASELINE_STATEMENTS) await pg.exec(s);
-  await pg.exec(`INSERT INTO users (email, created_at, updated_at) VALUES ('owner@example.com', 0, 0), ('other@example.com', 0, 0);`);
+  await pg.exec(`INSERT INTO users (email, created_at, updated_at) VALUES ('owner@artemisdigital.com', 0, 0), ('other@artemisdigital.com', 0, 0);`);
   await pg.exec(`
     INSERT INTO ga_properties (user_id, property_id, display_name, time_zone, created_at) VALUES (1, '111', 'Wewine', 'Asia/Ho_Chi_Minh', 0), (1, '222', 'Unlinked', NULL, 0);
     INSERT INTO projects (id, user_id, name, ga_property_id, created_at, updated_at) VALUES (1, 1, 'Wewine', '111', 0, 0), (2, 1, 'Wewine copy', '111', 0, 0), (3, 2, 'Theirs', NULL, 0, 0);

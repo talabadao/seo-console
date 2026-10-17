@@ -9,7 +9,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!(await docsReady())) return NextResponse.json({ error: "Docs unavailable" }, { status: 503 });
-  const admin = isDocsAdmin(user.email);
+  const admin = (await isDocsAdmin(user));
   const article = await getArticle((await ctx.params).slug, { admin });
   if (!article) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ admin, article }, { headers: { "Cache-Control": "no-store" } });
@@ -19,7 +19,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 export async function POST(req: NextRequest, ctx: Ctx) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!isDocsAdmin(user.email)) return NextResponse.json({ error: "Only Docs admins can publish." }, { status: 403 });
+  if (!(await isDocsAdmin(user))) return NextResponse.json({ error: "Only Docs admins can publish." }, { status: 403 });
   if (!(await docsReady())) return NextResponse.json({ error: "Docs unavailable" }, { status: 503 });
   const current = await getArticle((await ctx.params).slug, { admin: true });
   if (!current) return NextResponse.json({ error: "not found" }, { status: 404 });

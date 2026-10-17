@@ -26,7 +26,7 @@ function isValidDevice(v: unknown): v is TrackingConfig["settings"]["device"] {
 
 /** Saves the tracking config (validation adapted from the donor's config route). */
 export async function PUT(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const input = (await req.json().catch(() => null)) as Partial<TrackingConfig> | null;
   if (!input) return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });

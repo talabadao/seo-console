@@ -18,7 +18,6 @@
 
 import { db, tableExists, withTransaction } from "@/lib/db";
 import type { SearchAnalyticsRow } from "@/lib/google/searchconsole";
-import { siteIdFor } from "@/lib/metrics";
 import { addDaysYmd, ymdUTC } from "@/lib/v2/summary/period";
 
 /** Days before the previous refresh that are refetched, because Google may still revise them. */
@@ -89,7 +88,7 @@ export function mergeCoverage(current: Coverage | null, fetched: { from: string;
 
 /** Daily totals for `want`, fetching only missing and revisable days. Null: not available, query directly. */
 export async function gscDailyTotals(
-  userId: number,
+  siteId: number | null,
   property: string,
   want: DateWindow,
   fetchDaily: FetchDaily,
@@ -97,8 +96,7 @@ export async function gscDailyTotals(
 ): Promise<{ days: DailyTotal[]; fetched: DateWindow[] } | null> {
   if (!YMD.test(want.start) || !YMD.test(want.end) || want.start > want.end) return null;
   if (!(await tableExists("gsc_daily_coverage"))) return null;
-  const siteId = await siteIdFor(userId, property);
-  if (siteId == null) return null;
+  if (siteId == null || !property) return null;
 
   // Google has no data after today.
   const range = { start: want.start, end: minYmd(want.end, ymdUTC(new Date(now))) };

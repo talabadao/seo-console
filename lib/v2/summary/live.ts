@@ -4,16 +4,18 @@
 // provider's message, never substitute numbers.
 
 import { db } from "@/lib/db";
-import type { UserRow } from "@/lib/session";
 import type { Project } from "@/lib/projects";
-import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
+import { ANALYTICS_SCOPE } from "@/lib/google/oauth";
+import { ConnectionUnavailableError, connectionAccessToken, isReconnectError } from "@/lib/google/connections";
+import { connectionHasScope, gaPropertyMeta, projectGsc } from "@/lib/access";
+import { AsanaUnavailableError, asanaToken } from "@/lib/asanaConnections";
 import { searchAnalytics } from "@/lib/google/searchconsole";
 import { foldDays, gscDailyTotals } from "@/lib/gscDaily";
 import { classifyTraffic, cleanGaError, getPropertyMeta, propertyNow, runReport, Semaphore } from "@/lib/ga4";
-import { aiDomainsFor, ownsGaProperty } from "@/lib/gaConfig";
-import { buildKpiCard, configFor, leadsPair, reportWindows, trafficPair } from "@/lib/weeklyReport";
+import { aiDomainsForProject } from "@/lib/gaConfig";
+import { buildKpiCard, configForProject, leadsPair, reportWindows, trafficPair } from "@/lib/weeklyReport";
 import { fetchProjectTasks, getProject as getAsanaProject } from "@/lib/asana";
-import { siteIdFor, lastSync } from "@/lib/metrics";
+import { lastSync } from "@/lib/metrics";
 import { addDaysYmd, daysBetween, taskMonth, ymdUTC } from "./period";
 import { listSites, matchSite, rankingsFor, seRankingConfigured } from "@/lib/seranking/rankings";
 import { seRankingSiteFor } from "@/lib/projectSettings";
@@ -40,20 +42,27 @@ const GSC_STALE_DAYS = 4;
 
 export type TokenResult = { token: string } | { error: Section<never> };
 
-export async function googleToken(user: UserRow, source: string): Promise<TokenResult> {
+/**
+ * A Google token for a project's Search Console or GA4 data, through the project's mapped shared connection. A
+ * missing mapping is "not connected"; a connection that must be reconnected is "unavailable" with that reason.
+ */
+export async function projectToken(project: Project, kind: "gsc" | "ga4", source: string): Promise<TokenResult> {
+  const connectionId = kind === "gsc" ? project.gscConnectionId : project.gaConnectionId;
+  const mapped = kind === "gsc" ? project.gscProperty : project.gaPropertyId;
+  if (!mapped || connectionId == null) {
+    return { error: { state: "not-connected", source, message: kind === "gsc" ? "No Search Console property linked to this project." : "No GA4 property linked to this project." } };
+  }
   try {
-    return { token: await accessTokenFor(user) };
+    return { token: await connectionAccessToken(connectionId) };
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) {
-      return { error: { state: "unavailable", source, message: "Google access expired. Sign out and sign in again to reconnect." } };
-    }
+    if (isReconnectError(e)) return { error: { state: "unavailable", source, message: errorText(e) } };
     return { error: { state: "error", source, message: errorText(e) } };
   }
 }
 
 type GscTotals = Partial<Record<"clicks" | "impressions" | "ctr" | "position", number | null>>;
 
-export async function gscSection(userId: number, token: string, project: Project, period: PeriodInfo, detail: boolean): Promise<Section<GscData>> {
+export async function gscSection(siteId: number | null, token: string, project: Project, period: PeriodInfo, detail: boolean): Promise<Section<GscData>> {
   if (!project.gscProperty) return { state: "not-connected", source: GSC, message: "No Search Console property linked to this project." };
   const site = project.gscProperty;
   try {
@@ -66,7 +75,7 @@ export async function gscSection(userId: number, token: string, project: Project
       start: period.previous && period.previous.start < period.current.start ? period.previous.start : period.current.start,
       end: period.previous && period.previous.end > period.current.end ? period.previous.end : period.current.end,
     };
-    const stored = await gscDailyTotals(userId, site, span, (w) =>
+    const stored = await gscDailyTotals(siteId, site, span, (w) =>
       providerGate.run(() => searchAnalytics(token, site, { startDate: w.start, endDate: w.end, dimensions: ["date"], dataState: "all", type: "web", rowLimit: 25000 })),
     );
     if (stored) {
@@ -148,12 +157,10 @@ export async function gscSection(userId: number, token: string, project: Project
   }
 }
 
-export async function gaContext(user: UserRow, token: string, propertyId: string) {
-  const row = (await db
-    .prepare("SELECT time_zone, currency_code FROM ga_properties WHERE user_id = ? AND property_id = ?")
-    .get(user.id, propertyId)) as { time_zone: string | null; currency_code: string | null } | undefined;
-  let timeZone = row?.time_zone ?? null;
-  let currency = row?.currency_code ?? null;
+export async function gaContext(connectionId: number, token: string, propertyId: string) {
+  const known = await gaPropertyMeta(connectionId, propertyId);
+  let timeZone = known.timeZone;
+  let currency = known.currency;
   if (!timeZone || !currency) {
     const meta = await providerGate.run(() => getPropertyMeta(token, propertyId));
     timeZone = timeZone ?? meta.timeZone;
@@ -162,24 +169,23 @@ export async function gaContext(user: UserRow, token: string, propertyId: string
   return { timeZone, currency };
 }
 
-export async function gaPreconditions(user: UserRow, project: Project, source: string): Promise<Section<never> | null> {
-  if (!project.gaPropertyId) return { state: "not-connected", source, message: "No GA4 property linked to this project." };
-  if (!hasAnalyticsScope(user.google_scopes)) {
-    return { state: "unavailable", source, message: "Google Analytics access hasn't been granted. Sign out and sign in again to allow it." };
+export async function gaPreconditions(project: Project, source: string): Promise<Section<never> | null> {
+  if (!project.gaPropertyId || project.gaConnectionId == null) return { state: "not-connected", source, message: "No GA4 property linked to this project." };
+  if (!(await connectionHasScope(project.gaConnectionId, ANALYTICS_SCOPE))) {
+    return { state: "unavailable", source, message: "The project's Google connection hasn't granted Google Analytics access. Reconnect it in Account → Data connections." };
   }
-  if (!(await ownsGaProperty(user.id, project.gaPropertyId))) {
-    return { state: "unavailable", source, message: "This account no longer lists the linked GA4 property." };
-  }
+  const listed = await db.prepare("SELECT 1 FROM ga_properties WHERE connection_id = ? AND property_id = ?").get(project.gaConnectionId, project.gaPropertyId);
+  if (!listed) return { state: "unavailable", source, message: "The project's Google connection no longer lists the linked GA4 property." };
   return null;
 }
 
-export async function ga4Section(user: UserRow, token: string, project: Project, period: PeriodInfo, detail: boolean): Promise<Section<Ga4Data>> {
-  const blocked = await gaPreconditions(user, project, GA4);
+export async function ga4Section(token: string, project: Project, period: PeriodInfo, detail: boolean): Promise<Section<Ga4Data>> {
+  const blocked = await gaPreconditions(project, GA4);
   if (blocked) return blocked;
   const propertyId = project.gaPropertyId!;
   try {
-    const { currency } = await gaContext(user, token, propertyId);
-    const aiDomains = aiDomainsFor(user);
+    const { currency } = await gaContext(project.gaConnectionId!, token, propertyId);
+    const aiDomains = await aiDomainsForProject(project.id);
     const ranges = [{ startDate: period.current.start, endDate: period.current.end }];
     if (period.previous) ranges.push({ startDate: period.previous.start, endDate: period.previous.end });
     // Totals from one query without a date dimension, so sessions spanning
@@ -255,14 +261,14 @@ export async function ga4Section(user: UserRow, token: string, project: Project,
   }
 }
 
-export async function kpiSection(user: UserRow, token: string, project: Project): Promise<Section<KpiData>> {
-  const blocked = await gaPreconditions(user, project, KPI);
+export async function kpiSection(token: string, project: Project): Promise<Section<KpiData>> {
+  const blocked = await gaPreconditions(project, KPI);
   if (blocked) return blocked;
   const propertyId = project.gaPropertyId!;
   try {
-    const { timeZone } = await gaContext(user, token, propertyId);
+    const { timeZone } = await gaContext(project.gaConnectionId!, token, propertyId);
     const w = reportWindows(propertyNow(timeZone));
-    const config = await configFor(user.id, propertyId, w.yearMonth);
+    const config = await configForProject(project, propertyId, w.yearMonth, project.primaryManagerId ?? 0);
     // Targets from KPI Planning (the same source as the Weekly report): null = blank, so the KPI isn't shown;
     // an explicit 0 is a real target.
     const t = config.targets;
@@ -287,7 +293,7 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
     }
     // One query per kind covering both month-to-date and the last 30 days.
     const span = { start: w.mtd.start < w.last30.start ? w.mtd.start : w.last30.start, end: w.mtd.end };
-    const aiDomains = aiDomainsFor(user);
+    const aiDomains = await aiDomainsForProject(project.id);
     const needLeads = wanted.some((k) => k.kind === "leads");
     const [traffic, leads] = await Promise.all([
       providerGate.run(() => trafficPair(token, propertyId, span, null, aiDomains)),
@@ -307,12 +313,17 @@ export async function kpiSection(user: UserRow, token: string, project: Project)
   }
 }
 
-export async function tasksSection(user: UserRow, project: Project, now: Date = new Date()): Promise<Section<TaskData>> {
+export async function tasksSection(project: Project, now: Date = new Date()): Promise<Section<TaskData>> {
   if (!project.asanaProjectGid) return { state: "not-connected", source: ASANA, message: "No Asana project linked to this project." };
-  if (!user.asana_api_token) {
-    return { state: "unavailable", source: ASANA, message: "No Asana token saved. Add one in Settings → Asana to show tasks." };
+  if (project.asanaConnectionId == null) {
+    return { state: "unavailable", source: ASANA, message: "No Asana connection is mapped for this project. Choose one in Project settings → Integrations." };
   }
-  const token = user.asana_api_token;
+  let token: string;
+  try {
+    token = await asanaToken(project.asanaConnectionId);
+  } catch (e) {
+    return { state: "unavailable", source: ASANA, message: e instanceof AsanaUnavailableError ? e.message : errorText(e) };
+  }
   try {
     const month = taskMonth(now);
     // Read-only: lists tasks and the project link. Nothing is written to Asana.
@@ -332,9 +343,10 @@ export async function tasksSection(user: UserRow, project: Project, now: Date = 
 }
 
 /** Stored history only (no provider calls): last Search Console sync, PageSpeed and reviews failures. */
-export async function healthSection(user: UserRow, project: Project): Promise<Section<HealthData>> {
+export async function healthSection(project: Project): Promise<Section<HealthData>> {
   try {
-    const siteId = project.gscProperty ? await siteIdFor(user.id, project.gscProperty) : null;
+    const gsc = await projectGsc(project);
+    const siteId = gsc instanceof ConnectionUnavailableError ? null : gsc.siteId;
     const sync = siteId ? await lastSync(siteId) : undefined;
     const weekAgo = addDaysYmd(ymdUTC(new Date()), -7);
     const psi = (await db

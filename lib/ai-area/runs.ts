@@ -50,8 +50,11 @@ export async function startRun<E>(userId: number, projectId: number, kind: strin
   const id = randomUUID();
   try {
     await db
-      .prepare("INSERT INTO ai_runs (id, user_id, project_id, kind, trigger, status, estimate, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)")
-      .run(id, userId, projectId, kind, trigger, JSON.stringify(estimate), now);
+      .prepare(
+        `INSERT INTO ai_runs (id, user_id, project_id, kind, trigger, status, estimate, started_at, payer_user_id, origin_user_id, authorization_version)
+         VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, (SELECT spending_version FROM projects WHERE id = ?))`,
+      )
+      .run(id, userId, projectId, kind, trigger, JSON.stringify(estimate), now, userId, userId, projectId);
   } catch (e) {
     if (/ai_runs_one_running|duplicate key/i.test(e instanceof Error ? e.message : String(e))) throw new RunInProgress();
     throw e;

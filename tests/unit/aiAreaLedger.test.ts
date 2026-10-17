@@ -53,10 +53,12 @@ async function usageRows(projectId?: number) {
 const fetchMock = vi.fn();
 
 beforeAll(async () => {
-  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, user_id BIGINT, serpapi_key TEXT, serpapi_key_updated_at BIGINT);
+  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, user_id BIGINT, serpapi_key TEXT, serpapi_key_updated_at BIGINT, spending_version INTEGER NOT NULL DEFAULT 1);
     INSERT INTO users (email) VALUES ('owner@example.com'); INSERT INTO projects (user_id) VALUES (1), (1);`);
   for (const s of aiArea.statements) await pg.exec(s);
   for (const s of accountCredentials.statements) await pg.exec(s);
+  // Spending attribution columns of migration 0014 (payer, credential, authorization version, origin).
+  await pg.exec("ALTER TABLE ai_runs ADD COLUMN payer_user_id BIGINT, ADD COLUMN credential_fingerprint TEXT, ADD COLUMN authorization_version INTEGER, ADD COLUMN origin_user_id BIGINT");
 });
 
 beforeEach(async () => {
