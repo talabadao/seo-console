@@ -31,17 +31,17 @@ beforeAll(async () => {
       (1, 'tinledoihoa@gmail.com', 'rt-tin-plain', 'openid email', 'chatgpt.com', NULL, 0, 0),
       (2, 'analytics@artemisdigital.com', 'rt-ad-plain', 'openid email', NULL, 'asana-plain-token', 0, 0),
       (3, 'analytics@headsonpillows.com', NULL, NULL, NULL, NULL, 0, 0),
-      (4, 'kin.mkt@kinhotel.com', 'rt-kin-plain', 'openid email', NULL, NULL, 0, 0),
+      (4, 'marketing@other-company.example', 'rt-outside-plain', 'openid email', NULL, NULL, 0, 0),
       (5, 'Someone@ArtemisDigital.com', NULL, NULL, NULL, NULL, 0, 0);
     INSERT INTO sites (user_id, source, property, permission_level, created_at) VALUES
       (1, 'google', 'sc-domain:tin.example', 'siteOwner', 0), (2, 'google', 'sc-domain:ad.example', 'siteOwner', 0),
-      (3, 'google', 'sc-domain:hop.example', 'siteOwner', 0), (4, 'google', 'sc-domain:kin.example', 'siteOwner', 0);
-    INSERT INTO ga_properties (user_id, property_id, display_name, created_at) VALUES (1, '101', 'Tin', 0), (2, '201', 'AD', 0), (4, '401', 'Kin', 0);
+      (3, 'google', 'sc-domain:hop.example', 'siteOwner', 0), (4, 'google', 'sc-domain:outside.example', 'siteOwner', 0);
+    INSERT INTO ga_properties (user_id, property_id, display_name, created_at) VALUES (1, '101', 'Tin', 0), (2, '201', 'AD', 0), (4, '401', 'Outside', 0);
     INSERT INTO projects (id, user_id, name, gsc_property, ga_property_id, serpapi_key, asana_project_gid, created_at, updated_at) VALUES
       (10, 1, 'Tin site', 'sc-domain:tin.example', '101', 'legacy-project-key', '', 0, 0),
       (20, 2, 'Artemis client', 'sc-domain:ad.example', '201', NULL, 'g-1', 0, 0),
       (30, 3, 'HoP client', 'sc-domain:hop.example', NULL, NULL, '', 0, 0),
-      (40, 4, 'KiN Hotel', 'sc-domain:kin.example', '401', NULL, '', 0, 0);
+      (40, 4, 'Outside project', 'sc-domain:outside.example', '401', NULL, '', 0, 0);
     INSERT INTO provider_allowances (key, max_units, used_units, note, created_at, updated_at) VALUES ('serpapi-month:project:10:2026-10', 10, 4, 'x', 0, 0);
   `);
   for (const s of W.statements) await pg.exec(s);
@@ -71,7 +71,7 @@ describe("migration 0014", () => {
     expect(await rows("SELECT s.property, c.legacy_user_id FROM sites s LEFT JOIN google_connections c ON c.id = s.connection_id ORDER BY s.property")).toEqual([
       { property: "sc-domain:ad.example", legacy_user_id: 2 },
       { property: "sc-domain:hop.example", legacy_user_id: 3 },
-      { property: "sc-domain:kin.example", legacy_user_id: null },
+      { property: "sc-domain:outside.example", legacy_user_id: null },
       { property: "sc-domain:tin.example", legacy_user_id: 1 },
     ]);
   });
@@ -105,7 +105,7 @@ describe("migration 0014", () => {
       { id: 30, user_id: 3, serpapi_key: null },
       { id: 40, user_id: 4, serpapi_key: null },
     ]);
-    expect((await rows("SELECT google_refresh_token FROM users ORDER BY id")).map((r) => r.google_refresh_token)).toEqual(["rt-tin-plain", "rt-ad-plain", null, "rt-kin-plain", null]);
+    expect((await rows("SELECT google_refresh_token FROM users ORDER BY id")).map((r) => r.google_refresh_token)).toEqual(["rt-tin-plain", "rt-ad-plain", null, "rt-outside-plain", null]);
     expect((await rows("SELECT user_id FROM sites ORDER BY property")).map((r) => r.user_id)).toEqual([2, 3, 4, 1]);
   });
 
