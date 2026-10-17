@@ -126,7 +126,7 @@ for (const part of ["gsc", "ga4", "kpi", "tasks", "health", "rankings"] as const
     isAccessError: isAccess,
     async run({ userId, projectId, query }) {
       const { user, project } = await context(userId, projectId);
-      if (part === "gsc") return settle(await gscSection(await token(user, "Google Search Console"), project, query.period, query.detail));
+      if (part === "gsc") return settle(await gscSection(user.id, await token(user, "Google Search Console"), project, query.period, query.detail));
       if (part === "ga4") return settle(await ga4Section(user, await token(user, "Google Analytics 4"), project, query.period, query.detail));
       if (part === "kpi") return settle(await kpiSection(user, await token(user, "Monthly targets (KPI settings) and GA4"), project));
       if (part === "tasks") return settle(await tasksSection(user, project));

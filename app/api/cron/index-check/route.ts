@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { discoverSitemapUrls, runIndexCheck, type SiteRow } from "@/lib/indexer";
 import type { UserRow } from "@/lib/session";
 import { isAllowedEmail } from "@/lib/auth/allowlist";
+import { cronFinish, cronStart } from "@/lib/cronRuns";
 
 export const maxDuration = 300;
 
@@ -49,6 +50,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "hour required" }, { status: 400 });
   }
 
+  // Authenticated from here on: recorded in cron_runs, one row per hourly entry.
+  const runId = await cronStart(`index-check:${hour}`);
   const rows = (await db
     .prepare(`
       SELECT s.id AS "siteId", s.user_id AS "userId", s.source AS "source", s.property AS "property",
@@ -91,5 +94,13 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const errors = results.filter((r) => r.error).length;
+  await cronFinish(runId, {
+    status: "ok",
+    processed: results.length - errors,
+    skipped: rows.length - results.length,
+    details: { sites: rows.length, errors, checked: results.reduce((n, r) => n + (r.checked ?? 0), 0) },
+    error: errors ? results.find((r) => r.error)?.error : undefined,
+  });
   return NextResponse.json({ ran: results.length, results });
 }

@@ -10,6 +10,7 @@ import { migration as syncCache } from "./0008_sync_cache";
 import { migration as organicSerp } from "./0009_organic_serp";
 import { migration as notificationsDocs } from "./0010_notifications_docs";
 import { migration as pageMeta } from "./0011_page_meta";
+import { migration as opsIncremental } from "./0012_ops_incremental";
 
 /** Every migration, in id order. Append new ones; never edit or reorder applied ones. */
-export const MIGRATIONS: readonly Migration[] = [baseline, projectSettings, aiArea, projectSerpapiMeta, accountCredentials, budgetLimits, kpiTargets, syncCache, organicSerp, notificationsDocs, pageMeta];
+export const MIGRATIONS: readonly Migration[] = [baseline, projectSettings, aiArea, projectSerpapiMeta, accountCredentials, budgetLimits, kpiTargets, syncCache, organicSerp, notificationsDocs, pageMeta, opsIncremental];

@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       token && "token" in token ? run(token.token) : ({ ...(token as { error: object }).error, source } as T);
     await Promise.all(
       parts.map(async (p) => {
-        if (p === "gsc") out.gsc = await withToken(SOURCE.gsc, (t) => gscSection(t, project, period, detail));
+        if (p === "gsc") out.gsc = await withToken(SOURCE.gsc, (t) => gscSection(user.id, t, project, period, detail));
         if (p === "ga4") out.ga4 = await withToken(SOURCE.ga4, (t) => ga4Section(user, t, project, period, detail));
         if (p === "kpi") out.kpi = await withToken(SOURCE.kpi, (t) => kpiSection(user, t, project));
         if (p === "tasks") out.tasks = await tasksSection(user, project);
