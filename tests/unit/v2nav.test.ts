@@ -28,10 +28,8 @@ describe("navigation model", () => {
       ["Competitive Research", "competitive-research", "overview"],
       ["Link Building", "link-building", "backlinks"],
       ["SE Ranking", "organic-serp", "se-ranking"],
-      ["Google Search Tracking", "organic-serp", "google"],
-      ["Bing Search Tracking", "organic-serp", "bing"],
-      ["Yandex Search Tracking", "organic-serp", "yandex"],
-      ["Naver Search Tracking", "organic-serp", "naver"],
+      // Google, Bing, Yandex and Naver are engines of one page (the engine is the sub-path).
+      ["Organic SERP: Google, Bing, Yandex, Naver", "organic-serp", "organic"],
       ["Google Search Console", "search-console", "performance"],
       ["Google Analytics 4", "analytics", "overview"],
       ["Google Business Profile", "local-seo", "business-profile"],
@@ -144,5 +142,20 @@ describe("feature flag and local mock mode", () => {
     expect(devMockEnabled({ V2_MOCK: "1", NODE_ENV: "development", VERCEL_ENV: "preview" })).toBe(false);
     expect(devMockEnabled({ V2_MOCK: "1", NODE_ENV: "production" })).toBe(false);
     expect(devMockEnabled({ NODE_ENV: "development" })).toBe(false);
+  });
+});
+
+describe("rank tracking addresses", () => {
+  it("old per-engine Rank tracking pages open Organic SERP with that engine, same project", () => {
+    for (const engine of ["google", "bing", "yandex", "naver"]) {
+      expect(parseShellPath(["p", "3", "organic-serp", engine])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: engine });
+      // An old sub-tab (the Google item used to open AI Area's tracker views) is dropped.
+      expect(parseShellPath(["p", "3", "organic-serp", engine, "settings"])).toEqual({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: engine });
+      expect(parseShellPath(["portfolio", "organic-serp", engine])).toEqual({ kind: "pick", group: "organic-serp", item: "organic", sub: engine });
+    }
+    expect(buildShellPath({ kind: "project", projectId: 3, group: "organic-serp", item: "organic", sub: "bing" })).toBe("/p/3/organic-serp/organic/bing");
+    // AI Area's Google Search Tracking stays where it is.
+    expect(parseShellPath(["p", "3", "ai-area", "google-search-tracking"])).toMatchObject({ group: "ai-area", item: "google-search-tracking" });
+    expect(findItem("organic-serp", "se-ranking")?.item.status).toBe("live");
   });
 });

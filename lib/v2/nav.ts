@@ -92,11 +92,9 @@ export const NAV: NavGroup[] = [
     items: [
       // Read-only report from the SE Ranking project mapped in Project settings → Integrations.
       { id: "se-ranking", label: "SE Ranking", status: "live" },
-      // Shares data and runs with AI Area → Google Search Tracking (opens on its Rank tracker view).
-      { id: "google", label: "Google", status: "live" },
-      { id: "bing", label: "Bing", status: "planned", milestone: "07", description: "Bing SERP tracking through SerpApi." },
-      { id: "yandex", label: "Yandex", status: "planned", milestone: "07", description: "Yandex SERP tracking through SerpApi." },
-      { id: "naver", label: "Naver", status: "planned", milestone: "07", description: "Naver SERP tracking through SerpApi." },
+      // Google, Bing, Yandex and Naver results through SerpApi; the engine is the sub-path
+      // (/p/<id>/organic-serp/organic/bing). Separate from the AI Area: its own runs, snapshots and history.
+      { id: "organic", label: "Organic SERP", status: "live" },
     ],
   },
   {
@@ -251,6 +249,17 @@ export const LEGACY_ITEMS: Record<string, { section: string }> = {
   "settings/account": { section: "" },
 };
 
+/**
+ * Rank tracking pages that became one page: the old per-engine items open Organic SERP with that engine selected
+ * (and, for the old Google item, nothing from AI Area's tracker). Same project; any old sub-path is dropped.
+ */
+export const LEGACY_PAGES: Record<string, { group: string; item: string; sub: string }> = {
+  "organic-serp/google": { group: "organic-serp", item: "organic", sub: "google" },
+  "organic-serp/bing": { group: "organic-serp", item: "organic", sub: "bing" },
+  "organic-serp/yandex": { group: "organic-serp", item: "organic", sub: "yandex" },
+  "organic-serp/naver": { group: "organic-serp", item: "organic", sub: "naver" },
+};
+
 /** True for paths the v2 shell owns; everything else stays with the legacy dashboard. */
 export function isShellPath(segments: string[]): boolean {
   return segments[0] === "portfolio" || segments[0] === "p" || segments[0] === "docs" || segments[0] === "account";
@@ -265,6 +274,8 @@ export function parseShellPath(segments: string[], search?: string): ShellLocati
     // Older account / usage addresses: Account settings without a project.
     const moved = a && b ? LEGACY_ITEMS[`${a}/${b}`] : undefined;
     if (moved) return { kind: "account", section: accountSection(c) || moved.section, projectId: null };
+    const page = a && b ? LEGACY_PAGES[`${a}/${b}`] : undefined;
+    if (page) return { kind: "pick", ...page };
     if (a && b && findItem(a, b)) return c ? { kind: "pick", group: a, item: b, sub: c } : { kind: "pick", group: a, item: b };
     return { kind: "portfolio" };
   }
@@ -274,6 +285,8 @@ export function parseShellPath(segments: string[], search?: string): ShellLocati
     // Older account / usage addresses keep the project as the usage filter.
     const moved = b && c ? LEGACY_ITEMS[`${b}/${c}`] : undefined;
     if (moved) return { kind: "account", section: accountSection(d) || moved.section, projectId };
+    const page = b && c ? LEGACY_PAGES[`${b}/${c}`] : undefined;
+    if (page) return { kind: "project", projectId, ...page };
     if (b && c && findItem(b, c)) return { kind: "project", projectId, group: b, item: c, sub: d ?? "" };
     return { kind: "project", projectId, ...DEFAULT_ITEM, sub: "" };
   }
