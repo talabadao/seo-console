@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { runDueJobs, syncReady } from "@/lib/sync/cache";
 import { syncStatus } from "@/lib/sync/status";
+import { recentCronRuns } from "@/lib/cronRuns";
 import "@/lib/sync/kinds";
 import { runRules } from "@/lib/notifications/store";
 
@@ -12,7 +13,8 @@ export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!(await syncReady())) return NextResponse.json({ error: "This database hasn't run migration 0008 (shared cache) yet.", state: "unavailable" }, { status: 503 });
-  return NextResponse.json(await syncStatus(user.id), { headers: { "Cache-Control": "no-store" } });
+  // Scheduled runs are deployment-wide operational records (counts only, no account data).
+  return NextResponse.json({ ...(await syncStatus(user.id)), cronRuns: await recentCronRuns(30) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**

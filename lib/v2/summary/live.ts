@@ -8,6 +8,7 @@ import type { UserRow } from "@/lib/session";
 import type { Project } from "@/lib/projects";
 import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
 import { searchAnalytics } from "@/lib/google/searchconsole";
+import { foldDays, gscDailyTotals } from "@/lib/gscDaily";
 import { classifyTraffic, cleanGaError, getPropertyMeta, propertyNow, runReport, Semaphore } from "@/lib/ga4";
 import { aiDomainsFor, ownsGaProperty } from "@/lib/gaConfig";
 import { buildKpiCard, configFor, leadsPair, reportWindows, trafficPair } from "@/lib/weeklyReport";
@@ -50,35 +51,61 @@ export async function googleToken(user: UserRow, source: string): Promise<TokenR
   }
 }
 
-export async function gscSection(token: string, project: Project, period: PeriodInfo, detail: boolean): Promise<Section<GscData>> {
+type GscTotals = Partial<Record<"clicks" | "impressions" | "ctr" | "position", number | null>>;
+
+export async function gscSection(userId: number, token: string, project: Project, period: PeriodInfo, detail: boolean): Promise<Section<GscData>> {
   if (!project.gscProperty) return { state: "not-connected", source: GSC, message: "No Search Console property linked to this project." };
   const site = project.gscProperty;
   try {
-    const totals = (r: { start: string; end: string }) =>
-      providerGate.run(() => searchAnalytics(token, site, { startDate: r.start, endDate: r.end, dataState: "all", type: "web" }));
-    const [cur, prev, days] = await Promise.all([
-      totals(period.current),
-      period.previous ? totals(period.previous) : Promise.resolve(null),
-      providerGate.run(() =>
-        searchAnalytics(token, site, {
-          startDate: period.current.start,
-          endDate: period.current.end,
-          dimensions: ["date"],
-          dataState: "all",
-          type: "web",
-          rowLimit: 500,
-        }),
-      ),
-    ]);
-    // Without dimensions Google returns one row with its own period totals:
-    // CTR and position come from Google, not from averaging daily values.
-    const c = cur[0];
-    const p = prev?.[0];
+    let cur: GscTotals | undefined;
+    let prev: GscTotals | undefined | null = null;
+    let series: { date: string; clicks: number; impressions: number }[];
+    // Incremental path (lib/gscDaily.ts): stored daily totals for this account's site, refreshing only missing
+    // and still-revisable days. One store read covers both periods.
+    const span = {
+      start: period.previous && period.previous.start < period.current.start ? period.previous.start : period.current.start,
+      end: period.previous && period.previous.end > period.current.end ? period.previous.end : period.current.end,
+    };
+    const stored = await gscDailyTotals(userId, site, span, (w) =>
+      providerGate.run(() => searchAnalytics(token, site, { startDate: w.start, endDate: w.end, dimensions: ["date"], dataState: "all", type: "web", rowLimit: 25000 })),
+    );
+    if (stored) {
+      const fold = (r: { start: string; end: string }) => {
+        const t = foldDays(stored.days, r);
+        return t.rows ? t : undefined;
+      };
+      cur = fold(period.current);
+      prev = period.previous ? fold(period.previous) : null;
+      series = stored.days
+        .filter((d) => d.date >= period.current.start && d.date <= period.current.end)
+        .map((d) => ({ date: d.date, clicks: d.clicks, impressions: d.impressions }));
+    } else {
+      // Not migrated yet, or no stored site row for this account: query the periods directly.
+      const totals = (r: { start: string; end: string }) =>
+        providerGate.run(() => searchAnalytics(token, site, { startDate: r.start, endDate: r.end, dataState: "all", type: "web" }));
+      const [c, p, days] = await Promise.all([
+        totals(period.current),
+        period.previous ? totals(period.previous) : Promise.resolve(null),
+        providerGate.run(() =>
+          searchAnalytics(token, site, {
+            startDate: period.current.start,
+            endDate: period.current.end,
+            dimensions: ["date"],
+            dataState: "all",
+            type: "web",
+            rowLimit: 500,
+          }),
+        ),
+      ]);
+      // Without dimensions Google returns one row with its own period totals.
+      cur = c[0];
+      prev = p == null ? null : p[0];
+      series = days.map((r) => ({ date: r.keys?.[0] ?? "", clicks: r.clicks, impressions: r.impressions })).sort((a, b) => (a.date < b.date ? -1 : 1));
+    }
     const pair = (key: "clicks" | "impressions" | "ctr" | "position", fallback: number | null) => ({
-      current: c ? c[key] : fallback,
-      previous: prev == null ? null : p ? p[key] : fallback,
+      current: cur ? (cur[key] ?? fallback) : fallback,
+      previous: prev === null ? null : prev ? (prev[key] ?? fallback) : fallback,
     });
-    const series = days.map((r) => ({ date: r.keys?.[0] ?? "", clicks: r.clicks, impressions: r.impressions })).sort((a, b) => (a.date < b.date ? -1 : 1));
     const dataThrough = series.length ? series[series.length - 1].date : null;
     let insights: Pick<GscData, "pages" | "queries"> = {};
     if (detail) {

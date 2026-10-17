@@ -6,7 +6,10 @@
 // 15 seconds while open; never polls a provider. Paid usage lives in Usage & Costs.
 
 import { useEffect, useState } from "react";
-import type { SyncStatus as Status } from "@/lib/sync/status";
+import type { SyncStatus as BaseStatus } from "@/lib/sync/status";
+import type { CronRunRow } from "@/lib/cronRuns";
+
+type Status = BaseStatus & { cronRuns?: CronRunRow[] | null };
 import { Card, buttonClass } from "./ui";
 
 const when = (ms: number | null) => (ms ? new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -142,6 +145,46 @@ export function SyncStatusPage({ projectId, onOpenUsage }: { projectId: number |
             Waiting on provider limits: {data.cooldowns.map((c) => `${c.bucket} until ${when(c.until)}${c.reason ? ` (${c.reason})` : ""}`).join("; ")}.
           </p>
         )}
+      </Card>
+
+      <Card title="Scheduled runs">
+        {data.cronRuns == null ? (
+          <p className="text-sm text-muted">Run history isn&apos;t recorded on this database yet (migration 0012).</p>
+        ) : data.cronRuns.length === 0 ? (
+          <p className="text-sm text-muted">No authenticated scheduled run recorded yet. Scheduled runs happen on Production only.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="px-2 py-1.5 font-medium">Started</th>
+                  <th className="px-2 py-1.5 font-medium">Job</th>
+                  <th className="px-2 py-1.5 font-medium">Status</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Processed</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Queued</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Skipped</th>
+                  <th className="px-2 py-1.5 text-right font-medium">Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.cronRuns.map((r) => (
+                  <tr key={r.id} className="border-t border-border/60 align-top">
+                    <td className="px-2 py-1.5">{when(r.startedAt)}</td>
+                    <td className="px-2 py-1.5">{r.job}</td>
+                    <td className="px-2 py-1.5 text-xs">
+                      {r.status === "ok" ? (r.processed || r.queued ? "OK" : "OK, nothing due") : r.status === "running" ? "Running or stopped" : <span style={{ color: "var(--bad)" }} title={r.error ?? undefined}>Error{r.error ? `: ${r.error}` : ""}</span>}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.processed}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.queued}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.skipped}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.durationMs == null ? "—" : `${(r.durationMs / 1000).toFixed(1)} s`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-2 text-xs text-muted">Only authenticated runs from Vercel Cron are recorded; a refused request leaves no row. Kept for 60 days.</p>
       </Card>
 
       <Card

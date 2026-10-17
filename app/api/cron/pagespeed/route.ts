@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { schedulesAllowed } from "@/lib/environment";
 import { runDuePages } from "@/lib/pagespeed";
+import { recordCron } from "@/lib/cronRuns";
 
 export const maxDuration = 300;
 
@@ -17,5 +18,10 @@ export async function GET(req: NextRequest) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  return NextResponse.json(await runDuePages(180_000));
+  // Authenticated: recorded in cron_runs.
+  const out = await recordCron("pagespeed", async () => {
+    const r = await runDuePages(180_000);
+    return { status: "ok" as const, processed: r.ran, skipped: r.left, details: { failed: r.failed, left: r.left } };
+  });
+  return NextResponse.json(out);
 }

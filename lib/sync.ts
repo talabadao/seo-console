@@ -75,7 +75,7 @@ export async function syncGoogleSite(user: UserRow, site: SiteRow) {
   // Incremental syncs re-pull a short window (GSC keeps refining recent days).
   // The very first sync of a property backfills as far as GSC allows (~16 months).
   const hasData = (
-    (await db.prepare("SELECT COUNT(*) AS n FROM perf_rows WHERE site_id = ?").get(site.id)) as {
+    (await db.prepare("SELECT COUNT(*) AS n FROM perf_rows WHERE site_id = ? AND dimension <> 'total'").get(site.id)) as {
       n: number;
     }
   ).n;
