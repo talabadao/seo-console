@@ -1,4 +1,4 @@
-# Verification matrix: Preview feedback and sync release (#18–#24)
+# Verification matrix: Preview release (#18–#25)
 
 **Preview:** https://seo-console-git-preview-zoro-hoang.vercel.app. Branch `preview` is at `ed7525e`, and the Vercel deployment is Ready.
 
@@ -35,22 +35,26 @@
 | `/api/cron/sync` on Preview | Pass: `{"skipped":"schedules run in production only"}` |
 | Build of each PR head | Pass. An early build of #19 failed (a client bundle pulled in the DB driver); fixed in #19 and caught by `next build` from then on. |
 
-## C. Authenticated Preview: blocked until you sign in
-None of these could run: nobody signed in to the Preview's Google sign-in during this task, and I can't sign in for you.
+## C. Authenticated Preview (owner-verified)
+The owner ran the authenticated checks in their own browser on **Góc Săn Deal (project 4)** and reported them complete on 2026-10-17. Per the owner's instruction they are accepted as **user-verified**, the browser-login blocker is closed, and they weren't repeated: the agent's browser pane is a separate, unsigned session, so these weren't observed by the agent. No further SerpApi requests were made by the agent.
 
-| Check | Status | Blocked on |
+| Check | Status | Evidence |
 |---|---|---|
-| Migrations 0008–0011 applied on the Preview DB (Sync & cache page loads, not 503) | Blocked | Sign-in (they apply at first DB access) |
-| SerpApi key save/replace/remove; persists across refresh, navigation, sign-out/sign-in and a fresh instance; storage status separate from verification | Blocked | Sign-in, and you entering the key |
-| KPI and credential persistence in the UI | Blocked | Sign-in |
-| Account menu (collapsed sidebar and mobile), Docs and bell in the header, cog icon, account redirects keep filters | Blocked | Sign-in |
-| SE Ranking page vs SE Ranking UI (Top 3/5/10, average) for Wewine | Blocked | Sign-in |
-| GA4 and GSC numbers vs the source UIs for the same dates | Blocked | Sign-in |
-| Organic SERP live Google search on Wewine (counts against the 5-request Preview allowance) | Blocked | Sign-in, plus `PREVIEW_SERPAPI_TEST_PROJECT_ID` (Wewine's project id), which isn't set on Preview, so every Preview SerpApi call is refused today |
-| Notifications from real saved data; Docs (read-only: `DOCS_ADMIN_EMAILS` isn't set on Preview) | Blocked | Sign-in; admin identity is the owner's decision |
-| Thumbnails on real Wewine pages | Blocked | Sign-in |
-| Live single-session latency (p50/p95) on Preview | Blocked | Sign-in |
-| Authenticated screenshots | Blocked | Sign-in |
+| Sign-in, project access, project switching | User-verified | Owner report, 2026-10-17 |
+| SerpApi: account credential resolution, separate saved / verified / allowed states, blocked reasons | User-verified | Owner report; also covered by credentials.test.ts and moduleUpdate.test.ts |
+| SerpApi smoke test on Góc Săn Deal within the cumulative 5-request Preview allowance; results in Organic SERP | User-verified | Owner report. `PREVIEW_SERPAPI_TEST_PROJECT_ID` set on Preview by the owner. The allowance is now one cumulative total seeded from earlier per-project usage (ef5cec5). |
+| SE Ranking Overview / Rankings, Competitors, Site audit, Backlinks; Data API entitlement line | User-verified | Owner report |
+| Source comparisons (SE Ranking, GSC, GA4) | User-verified | Owner report |
+| Credential persistence, KPI planning 2026–2028, navigation and redirects, archive, icons, desktop and mobile | User-verified | Owner report |
+| Docs publishing by both publishers; refusal for a third account | Covered by tests; Production smoke test step 6 | notifications.test.ts. `DOCS_ADMIN_EMAILS` is set on Preview. |
+
+## C2. Release rehearsals (agent, local)
+| Check | Result | Evidence |
+|---|---|---|
+| Production migration path (status → baseline → apply → no-op re-apply; wrong confirm refused; data kept; KPI backfill) | Pass | scripts/capacity/migrateRehearsal.ts output, PRODUCTION-PILOT.md "Rehearsals" |
+| Code rollback compatibility (v1 startup statements on the migrated schema) | Pass | Same rehearsal |
+| Release candidate: tests, typecheck, lint, production build | Pass | 256 tests; `next build` clean at ef5cec5; Vercel Preview build Ready |
+| Release PR mergeability | Pass | `preview` contains `main` (fast-forward, 65 commits) |
 
 ## D. Still Demo or Planned
 - **Demo:** Keyword explorer, Competitor overview, Backlinks, Editorial board (content workflow), Monthly report, the demo Docs examples (Preview/dev only), and demo projects (`.example`).
