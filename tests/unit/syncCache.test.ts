@@ -202,10 +202,35 @@ describe("leases and generations", () => {
 
     // An older job's result (lower generation) is ignored.
     await pg.query("UPDATE report_cache SET generation = generation + 1000");
+    await ago(MANUAL_COOLDOWN_MS + 1000); // past the manual cooldown, so the older job does run
     const older = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "manual" });
     fake.value = 30;
     expect(await runJob(older)).toBe("done");
     expect((await read(1, 1)).payload?.value).toBe(20);
+  });
+});
+
+describe("late joiners", () => {
+  it("a job queued by a reader that saw the old result skips the provider once the result is fresh", async () => {
+    await read(1, 1);
+    await ago(2 * 60 * 60_000);
+    await read(1, 1); // stale: one refresh
+    await drain();
+    expect(fake.calls).toBe(2);
+    // A reader that loaded the stale row just before that refresh finished queues another job.
+    const late = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "stale" });
+    expect(await runJob(late)).toBe("skipped");
+    const cold = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "cold" });
+    expect(await runJob(cold)).toBe("skipped");
+    expect(fake.calls).toBe(2);
+  });
+
+  it("runs due jobs concurrently without running any twice", async () => {
+    for (let i = 0; i < 12; i++) await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1, "k" + i), reason: "schedule" });
+    fake.delayMs = 30;
+    const r = await Promise.all([runDueJobs({ limit: 50, budgetMs: 5000, concurrency: 4 }), runDueJobs({ limit: 50, budgetMs: 5000, concurrency: 4 })]);
+    expect(r[0].ran + r[1].ran - (r[0].outcomes["not-claimed"] ?? 0) - (r[1].outcomes["not-claimed"] ?? 0)).toBe(12);
+    expect(fake.calls).toBe(12);
   });
 });
 
