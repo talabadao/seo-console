@@ -48,6 +48,7 @@ import { NotificationBell } from "./NotificationBell";
 import { LlmTrafficReport } from "./LlmTrafficReport";
 import { SeRankingPage } from "./SeRankingPage";
 import { OrganicSerpPage } from "./OrganicSerpPage";
+import { DocsPage } from "./DocsPage";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
 import { AiUsageSummary } from "./UsageCosts";
@@ -612,11 +613,8 @@ function Page(props: PageProps) {
   if (loc.kind === "docs") {
     return (
       <>
-        <PageHeader crumbs={[{ label: "Workspace" }, { label: "Docs" }]} title="Docs" status="planned" onNavigate={nav} />
-        <EmptyState
-          title="Docs aren't available yet."
-          body="A product guide, SOPs and training material, linking to existing Drive documents with their current permissions."
-        />
+        <PageHeader crumbs={loc.slug ? [{ label: "Workspace" }, { label: "Docs", href: "/docs" }, { label: "Article" }] : [{ label: "Workspace" }, { label: "Docs" }]} title="Docs" onNavigate={nav} />
+        <DocsPage slug={loc.slug} onNavigate={nav} />
       </>
     );
   }

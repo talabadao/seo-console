@@ -8,6 +8,7 @@ import { migration as budgetLimits } from "./0006_budget_limits";
 import { migration as kpiTargets } from "./0007_kpi_targets";
 import { migration as syncCache } from "./0008_sync_cache";
 import { migration as organicSerp } from "./0009_organic_serp";
+import { migration as notificationsDocs } from "./0010_notifications_docs";
 
 /** Every migration, in id order. Append new ones; never edit or reorder applied ones. */
-export const MIGRATIONS: readonly Migration[] = [baseline, projectSettings, aiArea, projectSerpapiMeta, accountCredentials, budgetLimits, kpiTargets, syncCache, organicSerp];
+export const MIGRATIONS: readonly Migration[] = [baseline, projectSettings, aiArea, projectSerpapiMeta, accountCredentials, budgetLimits, kpiTargets, syncCache, organicSerp, notificationsDocs];

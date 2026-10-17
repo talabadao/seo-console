@@ -14,11 +14,13 @@ import { CredentialField } from "./CredentialField";
 import { UsageCostsPage } from "./UsageCosts";
 import { BudgetLimits } from "./BudgetLimits";
 import { SyncStatusPage } from "./SyncStatus";
+import { NotificationSettingsPage } from "./NotificationSettings";
 
 export const ACCOUNT_SECTIONS = [
   { id: "credentials", label: "API credentials" },
   { id: "usage", label: "Usage & Costs" },
   { id: "budgets", label: "Budgets & limits" },
+  { id: "notifications", label: "Notifications" },
   { id: "sync", label: "Sync & cache" },
 ] as const;
 type SectionId = (typeof ACCOUNT_SECTIONS)[number]["id"];
@@ -66,6 +68,7 @@ export function AccountSettings({
         )}
         {section === "usage" && <UsageCostsPage projectId={projectId} projects={projects} onOpenBudgets={() => onSub("budgets")} />}
         {section === "budgets" && <BudgetLimits projectId={null} />}
+        {section === "notifications" && <NotificationSettingsPage />}
         {section === "sync" && <SyncStatusPage projectId={projectId} onOpenUsage={() => onSub("usage")} />}
       </div>
     </div>
