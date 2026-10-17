@@ -14,7 +14,7 @@ import type { UserRow } from "@/lib/session";
 import type { PeriodInfo, Section, SummaryPart } from "@/lib/v2/summary/types";
 import { ga4Section, gaContext, googleToken, gscSection, healthSection, kpiSection, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
 import { llmReport, type Granularity, type LlmMetric } from "@/lib/v2/llm/report";
-import { registerKind } from "./cache";
+import { peek, registerKind } from "./cache";
 import { SeRankingError } from "@/lib/seranking/client";
 import { listSites, matchSite } from "@/lib/seranking/rankings";
 import { fetchRawReport, reportRange, type SeRawReport } from "@/lib/seranking/report";
@@ -239,8 +239,15 @@ const seAccess = (e: unknown) => e instanceof AccessLostError || (e instanceof S
 const DAY = 86_400_000;
 const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 
-/** Keywords whose top 10 is read per competition refresh (one request each), by search volume. */
-export const COMPETITION_SERP_KEYWORDS = 40;
+/**
+ * Keywords whose top 10 is read for the competition view (one Project API request each, highest volume first).
+ * The donor read 100 in one go; here they're read in batches of COMPETITION_BATCH so each job stays well inside a
+ * function's time limit and the shared 5 req/s window. A refresh that finds the dataset incomplete is due again
+ * after COMPETITION_CONTINUE_MS, so the next read or scheduled tick reads the next batch.
+ */
+export const COMPETITION_SERP_KEYWORDS = 100;
+export const COMPETITION_BATCH = 40;
+export const COMPETITION_CONTINUE_MS = 10_000;
 
 registerKind<SeModuleQuery, SeModulePayload<{ summary: SeSummary | null; engines: SeEngine[]; history: SeSnapshot["history"]; backlinks: SeBacklinks | null; errors: SeSnapshot["errors"] }>>({
   kind: "seranking:overview",
@@ -286,14 +293,17 @@ registerKind<SeModuleQuery, SeModulePayload<{ engines: SeEngine[]; keywords: SeK
   kind: "seranking:competition",
   provider: "seranking",
   freshMs: 24 * H,
+  freshFor: (p) => (p.status === "ok" && p.competition?.coverage && !p.competition.coverage.complete ? COMPETITION_CONTINUE_MS : 24 * H),
   isAccessError: seAccess,
-  async run({ userId, projectId }) {
+  async run({ userId, projectId, query }) {
     const { project } = await context(userId, projectId);
     const m = await siteForProject(project);
     if (!m.site) return { payload: { status: "not-mapped", chosenMissing: m.chosenMissing } };
     const site = m.site;
     const to = isoDay(Date.now());
     const from30 = isoDay(Date.now() - 30 * DAY);
+    const earlier = await peek<SeModulePayload<{ competition: SeCompetition | null; rivals: SeRival[] }>>({ kind: "seranking:competition", userId, query });
+    const before = earlier.payload?.status === "ok" ? earlier.payload : null;
     const errors: SeSnapshot["errors"] = {};
     const [engines, names, keywords, competitors] = await Promise.all([
       fetchEngines(site.id),
@@ -312,13 +322,19 @@ registerKind<SeModuleQuery, SeModulePayload<{ engines: SeEngine[]; keywords: SeK
     let competition: SeCompetition | null = null;
     if (main && lastCheck) {
       try {
-        competition = await fetchCompetition(site.id, main, lastCheck, keywords, hostOf(site.url), competitors, COMPETITION_SERP_KEYWORDS);
+        competition = await fetchCompetition(site.id, main, lastCheck, keywords, hostOf(site.url), competitors, {
+          limit: COMPETITION_SERP_KEYWORDS,
+          batch: COMPETITION_BATCH,
+          previous: before?.competition ?? null,
+        });
       } catch (e) {
         if (seAccess(e)) throw e;
         errors.competition = seMessage(e);
       }
     }
-    const rivals = await fetchRivals(competitors, from30, to, errors);
+    // Tracked competitors' positions don't depend on the batch: carry them forward while a batch sequence continues.
+    const continuing = Boolean(before?.competition && competition && before.competition.date === competition.date && before.rivals?.length);
+    const rivals = continuing ? before!.rivals : await fetchRivals(competitors, from30, to, errors);
     return {
       payload: { status: "ok", site: { id: site.id, title: site.title, url: site.url }, engines, keywords, competitors, competition, rivals, errors },
       dataThrough: lastCheck ?? null,

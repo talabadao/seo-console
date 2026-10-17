@@ -133,7 +133,19 @@ export async function fetchCompetitors(siteId: number): Promise<SeCompetitor[]> 
 }
 
 /** Every domain in the top 10 of the project's keywords on the main engine: 14 days of visibility, plus each keyword's top 10. */
-export async function fetchCompetition(siteId: number, engine: SeEngine, date: string, keywords: SeKeyword[], siteHost: string, competitors: SeCompetitor[], maxKeywords = MAX_SERP_KEYWORDS): Promise<SeCompetition> {
+export async function fetchCompetition(
+  siteId: number,
+  engine: SeEngine,
+  date: string,
+  keywords: SeKeyword[],
+  siteHost: string,
+  competitors: SeCompetitor[],
+  opts: { limit?: number; batch?: number; previous?: SeCompetition | null } = {},
+): Promise<SeCompetition> {
+  const limit = opts.limit ?? MAX_SERP_KEYWORDS;
+  const batch = opts.batch ?? limit;
+  // Continue an earlier batch of the same check date; a new check date starts over.
+  const prev = opts.previous && opts.previous.date === date && opts.previous.engineId === engine.id ? opts.previous : null;
   const visibilityDay = async (day: string): Promise<VisibilityDay> => ({
     date: day,
     rows: asList(await seGet("project-management/competitors/metrics", { site_id: siteId, site_engine_id: engine.id, date: day })).map((d) => ({
@@ -144,13 +156,13 @@ export async function fetchCompetition(siteId: number, engine: SeEngine, date: s
     })),
   });
   const earlier = Array.from({ length: VISIBILITY_DAYS - 1 }, (_, i) => isoDay(Date.parse(date) - (VISIBILITY_DAYS - 1 - i) * DAY_MS));
-  const top = keywords
-    .filter((k) => k.engineId === engine.id)
-    .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
-    .slice(0, maxKeywords);
+  const mine = keywords.filter((k) => k.engineId === engine.id).sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0) || a.name.localeCompare(b.name));
+  const attempted = new Set(prev?.coverage?.attemptedIds ?? Object.keys(prev?.serps ?? {}));
+  // Highest search volume first, never re-reading a keyword already attempted for this check date.
+  const top = mine.slice(0, limit).filter((k) => !attempted.has(k.id)).slice(0, batch);
   let failed = 0;
   let lastError: unknown = null;
-  const serps: Record<string, SeSerpResult[]> = {};
+  const serps: Record<string, SeSerpResult[]> = { ...(prev?.serps ?? {}) };
   const readSerp = async (k: SeKeyword) => {
     try {
       const rows = asList(await seGet("project-management/competitors/serp10", { site_id: siteId, site_engine_id: engine.id, keyword_id: k.id, date }));
@@ -168,8 +180,22 @@ export async function fetchCompetition(siteId: number, engine: SeEngine, date: s
     Promise.all([visibilityDay(date), ...earlier.map((d) => visibilityDay(d).catch(() => ({ date: d, rows: [] })))]),
     Promise.all(top.map(readSerp)),
   ]);
-  if (top.length > 0 && failed === top.length) throw lastError;
-  return buildCompetition({ engine, days, serps, keywords: top, siteHost, competitors });
+  if (top.length > 0 && failed === top.length && !Object.keys(serps).length) throw lastError;
+  for (const k of top) attempted.add(k.id);
+  const target = Math.min(limit, mine.length);
+  const competition = buildCompetition({ engine, days, serps, keywords: mine.filter((k) => serps[k.id]), siteHost, competitors });
+  return {
+    ...competition,
+    coverage: {
+      read: Object.keys(serps).length,
+      attempted: attempted.size,
+      target,
+      total: mine.length,
+      limit,
+      complete: mine.slice(0, limit).every((k) => attempted.has(k.id)),
+      attemptedIds: [...attempted],
+    },
+  };
 }
 
 /** Tracked competitors' positions for the project's keywords, on every engine, over 30 days. */

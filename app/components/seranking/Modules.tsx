@@ -37,9 +37,11 @@ export function useModule<T>(url: string, nonce: number, refreshParam = true): {
           const body = await r.json().catch(() => ({}));
           if (!r.ok && body.state === undefined) throw new Error(body.error ?? `Request failed (${r.status})`);
           if (!live) return;
-          if ((body.state === "pending" || body.cache?.refreshing) && polls < 40) {
+          // A resumable dataset (competitors) that isn't complete yet: show what's there and ask again for the next batch.
+          const partial = body.data?.competition?.coverage && !body.data.competition.coverage.complete;
+          if ((body.state === "pending" || body.cache?.refreshing || partial) && polls < 40) {
             if (body.state !== "pending") setState({ key, res: body, error: null });
-            timer = setTimeout(() => load(false, polls + 1), body.state === "pending" ? 3000 : 6000);
+            timer = setTimeout(() => load(false, polls + 1), body.state === "pending" ? 3000 : partial && !body.cache?.refreshing ? 11_000 : 6000);
             return;
           }
           setState({ key, res: body, error: null });
@@ -154,14 +156,39 @@ export function CompetitorsModule({ projectId, demo, onOpenIntegrations }: { pro
         cache={res.cache}
         onRefresh={() => setNonce((n) => n + 1)}
         refreshLabel="Refresh from SE Ranking"
-        refreshNote="Re-reads competitors, the top 10 of the 40 highest-volume keywords and competitors' positions (about 60–70 SE Ranking Project API requests, no credits). Refreshes daily on its own when opened."
+        refreshNote="Re-reads competitors and the top 10 of the highest-volume keywords in batches of 40 (up to 100), plus tracked competitors’ positions. Project API requests, no credits; refreshes daily on its own when opened."
       />
+      <CoverageNote competition={d.competition} />
       <div className="ai-area">
         <CompetitorsSection snap={snap} />
       </div>
     </div>
   );
 }
+/**
+ * The actual keyword coverage of the competitor results, and that it's a sample: the top 10 is read for the
+ * highest-search-volume keywords, in batches, up to a limit; keywords beyond it aren't in these numbers.
+ */
+function CoverageNote({ competition }: { competition: SeSnapshot["competition"] }) {
+  const c = competition?.coverage;
+  if (!competition || !c) return null;
+  const failed = c.attempted - c.read;
+  return (
+    <div className="rounded-lg border px-4 py-2.5 text-xs text-muted" role={c.complete ? "note" : "status"}>
+      <p>
+        <strong className="text-foreground">Keyword coverage:</strong> top-10 results read for {c.read.toLocaleString("en-US")} of {c.total.toLocaleString("en-US")} tracked keywords on {competition.engineName}, highest
+        search volume first{c.total > c.limit ? ` (limit ${c.limit.toLocaleString("en-US")})` : ""}.{" "}
+        {c.complete
+          ? c.total > c.limit
+            ? `The ${(c.total - c.limit).toLocaleString("en-US")} lowest-volume keywords aren't included, so this is a sample, not a complete competitor analysis.`
+            : "Every tracked keyword is included."
+          : "Still reading the next batch in the background; the numbers below will update. Until then they cover only the keywords read so far."}
+        {failed > 0 ? ` ${failed} keyword${failed === 1 ? "" : "s"} couldn't be read.` : ""}
+      </p>
+    </div>
+  );
+}
+
 type SeSnapshotPart = Pick<SeSnapshot, "engines" | "keywords" | "competitors" | "competition" | "rivals" | "errors">;
 
 export function AuditModule({ projectId, demo, onOpenIntegrations }: { projectId: number; demo: ReactNode; onOpenIntegrations: () => void }) {

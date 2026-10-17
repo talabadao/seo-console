@@ -30,6 +30,11 @@ export interface JobKind<Q = unknown, P = unknown> {
   isAccessError?(e: unknown): boolean;
   /** Refreshed only by an explicit (e.g. chargeable) action: never by stale reads or the scheduler. */
   manualOnly?: boolean;
+  /**
+   * A result's own freshness, when it depends on the result: a resumable dataset that isn't complete yet returns a
+   * short time, so the next read or scheduled tick continues it; a complete one returns its full interval.
+   */
+  freshFor?(payload: P): number;
 }
 
 const registry = new Map<string, JobKind>();
@@ -231,7 +236,7 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
       JSON.stringify(result.payload),
       id,
       now2,
-      now2 + k.freshMs,
+      now2 + (k.freshFor ? k.freshFor(result.payload) : k.freshMs),
       result.dataThrough ?? null,
       job.scope,
       job.cache_key,

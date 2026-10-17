@@ -160,6 +160,11 @@ export interface SeCompetition {
   prevDate: string | null;
   /** Keywords whose top 10 was read (by search volume, up to MAX_SERP_KEYWORDS). */
   keywordCount: number;
+  /**
+   * How much of the project's keyword set the top-10 reading covers. Keywords are read highest search volume first
+   * and in resumable batches, so a result can be partial while later batches are still to come.
+   */
+  coverage?: { read: number; attempted: number; target: number; total: number; limit: number; complete: boolean; attemptedIds: string[] };
   domains: SeRivalDomain[];
   /** Daily visibility % (SE Ranking keeps 14 days), for the site, its tracked competitors and the leading domains. */
   visibilityTrend: Array<{ date: string; values: Record<string, number> }>;
