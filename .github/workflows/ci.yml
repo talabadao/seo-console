@@ -1,0 +1,38 @@
+# Validation for every pull request and branch push: typecheck, lint, unit tests (PGlite, real schema) and a
+# production build. Uses no secrets and no provider credentials, so it is safe for feature branches and forks.
+# Vercel deploys only `main` (Production) and `preview` (the staging Preview); see vercel.json git.deploymentEnabled.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npx eslint --quiet
+      - name: Unit tests
+        run: npx vitest run
+      - name: Production build
+        run: npx next build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
