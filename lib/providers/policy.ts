@@ -5,8 +5,10 @@
 // them (ledger.takeAllowances).
 //
 // Preview (VERCEL_ENV=preview):
-// - SerpApi: only for the one project named in PREVIEW_SERPAPI_TEST_PROJECT_ID, and at most
-//   PREVIEW_SERPAPI_TEST_MAX_REQUESTS requests in total (never more than 5), counting pagination and
+// - SerpApi: only for the one project named in PREVIEW_SERPAPI_TEST_PROJECT_ID (changed from Wewine to Góc Săn Deal on
+//   2026-10-17), and at most
+//   PREVIEW_SERPAPI_TEST_MAX_REQUESTS requests in total across ALL projects (never more than 5; usage on any earlier
+//   test project counts, see ensurePreviewTotal), counting pagination and
 //   retries. That allowance is created once and never refills, whatever the limits in Settings say; the
 //   account and project limits apply on top. Every other project: refused.
 // - OpenAI, Anthropic, DataForSEO: always refused. The broader ALLOW_PREVIEW_EXTERNAL_WRITES switch (Asana,
@@ -18,6 +20,7 @@
 // - Model calls: account-wide estimated USD per day (default AI_AREA_DAILY_USD_LIMIT or $5) and, if set, a
 //   project's estimated USD per month.
 
+import { db, tableExists } from "@/lib/db";
 import { deploymentOf } from "@/lib/environment";
 import { effectiveLimits } from "@/lib/budgets";
 
@@ -48,12 +51,17 @@ export interface Allowance {
   syncMax: boolean;
 }
 
-export type Decision = { allowed: true; allowances: Allowance[]; scope: string } | { allowed: false; reason: string };
+/** Why a request is refused before anything is sent (shown with a remedy in the UI). */
+export type RefusalCode = "preview-no-test-project" | "preview-other-project" | "preview-no-allowance" | "preview-model-blocked";
+export type Decision = { allowed: true; allowances: Allowance[]; scope: string } | { allowed: false; reason: string; code?: RefusalCode };
 
 const month = (now: Date) => now.toISOString().slice(0, 7);
 const day = (now: Date) => now.toISOString().slice(0, 10);
 
 export const allowanceKeys = {
+  /** The one cumulative Preview smoke-test allowance, shared by every project (owner decision 2026-10-17). */
+  previewSerpTotal: () => "preview-serpapi-test:total",
+  /** Earlier per-project allowances (before the test project was changed): kept as history and counted into the total. */
   previewSerp: (projectId: number) => `preview-serpapi-test:project:${projectId}`,
   projectSerpMonth: (projectId: number, now: Date) => `serpapi-month:project:${projectId}:${month(now)}`,
   accountSerpMonth: (userId: number, now: Date) => `serpapi-month:user:${userId}:${month(now)}`,
@@ -61,19 +69,48 @@ export const allowanceKeys = {
   projectModelMonth: (projectId: number, now: Date) => `llm-usd-month:project:${projectId}:${month(now)}`,
 };
 
+/**
+ * Makes sure the cumulative Preview allowance exists. The first time, it starts at whatever any project's earlier
+ * per-project allowance had already used (so changing the test project, from Wewine to another, never grants a fresh
+ * five requests), capped at the maximum. Never lowers or resets it afterwards; usage rows are untouched.
+ */
+export async function ensurePreviewTotal(max: number): Promise<void> {
+  if (!(await tableExists("provider_allowances"))) return;
+  const now = Date.now();
+  await db
+    .prepare(
+      `INSERT INTO provider_allowances (key, max_units, used_units, note, created_at, updated_at)
+       SELECT ?, ?, LEAST(?::bigint, COALESCE(SUM(used_units), 0)), ?, ?, ? FROM provider_allowances WHERE key LIKE 'preview-serpapi-test:project:%'
+       ON CONFLICT (key) DO NOTHING`,
+    )
+    .run(allowanceKeys.previewSerpTotal(), max, max, "Preview SerpApi smoke test", now, now);
+}
+
 export async function serpDecision(userId: number, projectId: number, env: Env = process.env, now = new Date()): Promise<Decision> {
   const allowances: Allowance[] = [];
   if (deploymentOf(env) === "preview") {
     const test = previewSerpTest(env);
-    if (test.projectId !== projectId) {
-      return { allowed: false, reason: "SerpApi calls are switched off on Preview, except for the one project set up for the SerpApi smoke test." };
+    if (test.projectId == null) {
+      return {
+        allowed: false,
+        code: "preview-no-test-project",
+        reason: "SerpApi calls are switched off on Preview: no smoke-test project is configured (PREVIEW_SERPAPI_TEST_PROJECT_ID is unset).",
+      };
     }
-    if (test.max <= 0) return { allowed: false, reason: "The Preview SerpApi smoke test has no requests allowed." };
+    if (test.projectId !== projectId) {
+      return {
+        allowed: false,
+        code: "preview-other-project",
+        reason: "SerpApi calls are switched off on Preview, except for the one project set up for the SerpApi smoke test.",
+      };
+    }
+    if (test.max <= 0) return { allowed: false, code: "preview-no-allowance", reason: "The Preview SerpApi smoke test has no requests allowed." };
+    await ensurePreviewTotal(test.max);
     allowances.push({
-      key: allowanceKeys.previewSerp(projectId),
+      key: allowanceKeys.previewSerpTotal(),
       max: test.max,
       note: "Preview SerpApi smoke test",
-      label: `Preview smoke test: at most ${test.max} SerpApi requests in total for this project`,
+      label: `Preview smoke test: at most ${test.max} SerpApi requests in total, across all projects`,
       syncMax: false,
     });
   }
@@ -126,7 +163,7 @@ export async function accountSerpDecision(userId: number, env: Env = process.env
 
 export async function llmDecision(userId: number, projectId: number | null = null, env: Env = process.env, now = new Date()): Promise<Decision> {
   if (deploymentOf(env) === "preview") {
-    return { allowed: false, reason: "Paid model calls (OpenAI, Anthropic) are switched off on Preview." };
+    return { allowed: false, code: "preview-model-blocked", reason: "Paid model calls (OpenAI, Anthropic) are switched off on Preview." };
   }
   const limits = await effectiveLimits(userId, projectId, env);
   const allowances: Allowance[] = [];

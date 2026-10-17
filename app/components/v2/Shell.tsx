@@ -49,6 +49,7 @@ import { LlmTrafficReport } from "./LlmTrafficReport";
 import { SeRankingPage } from "./SeRankingPage";
 import { OrganicSerpPage } from "./OrganicSerpPage";
 import { DocsPage } from "./DocsPage";
+import { AuditModule, BacklinksModule, CompetitorsModule } from "../seranking/Modules";
 import { TrackingTab } from "../ai-area/tracking/TrackingTab";
 import { BrandMentionsView } from "../ai-area/brand/BrandMentionsView";
 import { AiUsageSummary } from "./UsageCosts";
@@ -793,6 +794,7 @@ function ProjectPage({
     <GoogleReconnectBanner detail="Google stopped accepting this app's Search Console access. Sign in again to reconnect." />
   );
   const property = project.gscProperty ?? "";
+  const openIntegrations = () => onNavigate({ ...loc, group: "settings", item: "project", sub: "integrations" });
   const site = sites.find((s) => s.property === property);
 
   switch (`${loc.group}/${loc.item}`) {
@@ -802,22 +804,40 @@ function ProjectPage({
       return gscReconnect || <PerformanceView property={property} searchType={searchType} onNeedsReconnect={onNeedsReconnect} onNotice={onNotice} />;
     case "search-console/opportunities":
       return gscReconnect || <Opportunities property={property} searchType={searchType} sub={loc.sub} onSub={subNav} />;
-    case "ai-area/google-search-tracking":
+    case "organic-serp/organic":
+      // The earlier multi-engine snapshots: read-only archive (no new runs).
+      if (loc.sub === "archive") {
+        return (
+          <OrganicSerpPage
+            projectId={project.id}
+            engine=""
+            readOnly
+            onEngine={() => {}}
+            onBack={() => subNav("")}
+            onOpenUsage={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })}
+            onOpenBudgets={() => onNavigate({ kind: "account", section: "budgets", projectId: project.id })}
+          />
+        );
+      }
       return (
         <div className="ai-area">
           <AiUsageSummary projectId={project.id} onOpen={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })} />
-          <TrackingTab projectId={project.id} sub={loc.sub} onSub={subNav} defaultView="overview" />
+          <TrackingTab
+            projectId={project.id}
+            sub={loc.sub}
+            onSub={subNav}
+            defaultView="overview"
+            onOpenCredentials={() => onNavigate({ kind: "account", section: "", projectId: project.id })}
+            onOpenBudgets={() => onNavigate({ kind: "account", section: "budgets", projectId: project.id })}
+          />
+          <p className="mt-4 text-xs text-muted">
+            Earlier Google, Bing, Yandex and Naver snapshots (16 Oct 2026) are kept read-only in the{" "}
+            <button className="text-accent hover:underline" onClick={() => subNav("archive")}>
+              archive
+            </button>
+            .
+          </p>
         </div>
-      );
-    case "organic-serp/organic":
-      return (
-        <OrganicSerpPage
-          projectId={project.id}
-          engine={loc.sub}
-          onEngine={subNav}
-          onOpenUsage={() => onNavigate({ kind: "account", section: "usage", projectId: project.id })}
-          onOpenBudgets={() => onNavigate({ kind: "account", section: "budgets", projectId: project.id })}
-        />
       );
     case "ai-area/brand-mentions":
       return (
@@ -827,14 +847,44 @@ function ProjectPage({
             projectId={project.id}
             sub={loc.sub}
             onSub={subNav}
-            onOpenTrackingSettings={() => onNavigate({ ...loc, group: "ai-area", item: "google-search-tracking", sub: "settings" })}
+            onOpenTrackingSettings={() => onNavigate({ ...loc, group: "organic-serp", item: "organic", sub: "settings" })}
             onOpenReviews={() => onNavigate({ ...loc, group: "local-seo", item: "reviews", sub: "" })}
             onOpenBudgets={() => onNavigate({ kind: "account", section: "budgets", projectId: project.id })}
           />
         </div>
       );
+    case "competitive-research/overview":
+      return <CompetitorsModule projectId={project.id} demo={<CompetitorOverviewDemo />} onOpenIntegrations={openIntegrations} />;
+    case "link-building/backlinks":
+      return <BacklinksModule projectId={project.id} demo={<BacklinksDemo />} onOpenIntegrations={openIntegrations} />;
+    case "technical-seo/site-audit":
+      return (
+        <AuditModule
+          projectId={project.id}
+          demo={<EmptyState title="Demo project." body="Site audits come from SE Ranking, which isn't queried for demo (.example) projects." />}
+          onOpenIntegrations={openIntegrations}
+        />
+      );
     case "organic-serp/se-ranking":
-      return <SeRankingPage projectId={project.id} onOpenIntegrations={() => onNavigate({ ...loc, group: "settings", item: "project", sub: "integrations" })} />;
+      return (
+        <SeRankingPage
+          projectId={project.id}
+          sub={loc.sub}
+          onSub={subNav}
+          onOpenIntegrations={openIntegrations}
+          onOpenModule={(t) =>
+            onNavigate({
+              ...loc,
+              ...(t === "audit"
+                ? { group: "technical-seo", item: "site-audit" }
+                : t === "competitors"
+                  ? { group: "competitive-research", item: "overview" }
+                  : { group: "link-building", item: "backlinks" }),
+              sub: "",
+            })
+          }
+        />
+      );
     case "analytics/llm-traffic":
       return <LlmTrafficReport projectId={project.id} />;
     case "analytics/overview":

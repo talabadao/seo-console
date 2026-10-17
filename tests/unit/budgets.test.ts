@@ -151,16 +151,16 @@ describe("Preview smoke-test allowance", () => {
   it("isn't raised or reset by Settings limits, which can only make it stricter", async () => {
     expect(await send(1, 2)).toEqual(["ok", "ok"]);
     await setLimit(1, "project", 1, "serpapi_requests_month", 1000);
-    expect(await allowanceState("preview-serpapi-test:project:1")).toEqual({ used: 2, max: 5 });
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 2, max: 5 });
     expect(await send(1, 5)).toEqual(["ok", "ok", "ok", "refused", "refused"]);
-    expect(await allowanceState("preview-serpapi-test:project:1")).toEqual({ used: 5, max: 5 });
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 5, max: 5 });
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("a lower project limit applies on top", async () => {
     await setLimit(1, "project", 1, "serpapi_requests_month", 1);
     expect(await send(1, 3)).toEqual(["ok", "refused", "refused"]);
-    expect(await allowanceState("preview-serpapi-test:project:1")).toEqual({ used: 1, max: 5 });
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 1, max: 5 });
   });
 });
 

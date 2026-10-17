@@ -190,10 +190,13 @@ describe("shared resolver", () => {
     expect((await getProject(1, 2))!).toMatchObject({ hasSerpKey: true, serpKeySource: "account", serpKeyLast4: "-key" });
   });
 
-  it("uses a legacy project key for that project only, before the account key", async () => {
-    await saveCredential(1, "serpapi", { apiKey: "account-key-0000" });
+  it("prefers the account key; a legacy project key applies only to its project and only without one", async () => {
     await pg.query("UPDATE projects SET serpapi_key = 'legacy-project-key' WHERE id = 1");
     expect((await serpKey(1, 1))!).toMatchObject({ key: "legacy-project-key", source: "project-legacy" });
+    expect(await serpKey(1, 2)).toBeNull();
+    await saveCredential(1, "serpapi", { apiKey: "account-key-0000" });
+    // A newly saved account key wins over an old project key (an exhausted or invalid project key used to win).
+    expect((await serpKey(1, 1))!).toMatchObject({ key: "account-key-0000", source: "account" });
     expect((await serpKey(1, 2))!).toMatchObject({ key: "account-key-0000", source: "account" });
   });
 
@@ -245,7 +248,8 @@ describe("legacy project keys", () => {
     expect(await adoptLegacySerpKey(1, 2)).toBe(true);
     expect((await readCredential(1, "serpapi"))!.values.apiKey).toBe("key-two-2222");
     expect((await serpKey(1, 2))!.source).toBe("account");
-    expect((await serpKey(1, 1))!.key).toBe("key-one-1111");
+    // The account key now applies to every project, including the one that still has its own legacy key.
+    expect((await serpKey(1, 1))!).toMatchObject({ key: "key-two-2222", source: "account" });
     // Another account's project can't be adopted.
     await pg.query("UPDATE projects SET serpapi_key = 'their-key' WHERE id = 3");
     expect(await adoptLegacySerpKey(1, 3)).toBe(false);

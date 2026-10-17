@@ -1,4 +1,6 @@
-// Rank tracking → Organic SERP: saved configurations, saved snapshots and explicit runs (migration 0009).
+// Retired multi-engine Organic SERP (16–17 Oct 2026): saved configurations and snapshots (migration 0009), now an
+// archive read by Rank tracking → Organic SERP → archive. runSearch is no longer reachable from any route (the run
+// endpoint returns 410); it stays for the record-keeping rules its tests document.
 //
 // - A run is explicit (a button with the expected usage); opening a snapshot only reads the database.
 // - Each results page is one metered SerpApi search through lib/providers/serpapi.ts serpSearch, so the account

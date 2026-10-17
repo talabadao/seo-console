@@ -9,6 +9,8 @@ import type { MetricPair, Section, SectionMeta, SectionState } from "@/lib/v2/su
 import { COMPARE_MODES, RANGE_PRESETS, pctChange, type CompareMode, type RangePreset } from "@/lib/v2/summary/period";
 import { ATTAINMENT_LABEL } from "@/lib/v2/summary/kpi";
 import type { KpiAttainment } from "@/lib/v2/summary/types";
+import { iconForSource } from "@/lib/providerIcons";
+import { ProviderIcon } from "./ProviderIcon";
 
 const STATE: Record<SectionState, { label: string; color: string; title: string }> = {
   live: { label: "Live", color: "var(--good)", title: "Real data from a connected source" },
@@ -135,6 +137,7 @@ export function Stat({
 
 /** Footer line: where the numbers come from and how fresh they are. */
 export function SourceLine({ meta }: { meta: SectionMeta }) {
+  const icon = iconForSource(meta.source);
   const parts = [`Source: ${meta.source}`];
   if (meta.dataThrough) parts.push(`data through ${meta.dataThrough}`);
   const t = fmtTime(meta.cache?.fetchedAt ?? meta.fetchedAt);
@@ -142,6 +145,7 @@ export function SourceLine({ meta }: { meta: SectionMeta }) {
   const c = meta.cache;
   return (
     <p className="mt-3 flex flex-wrap items-center gap-2 border-t pt-2 text-xs text-muted">
+      {icon && <ProviderIcon id={icon} size={16} />}
       <span>{parts.join(" · ")}</span>
       {meta.state === "demo" && <span className="font-medium text-foreground">Demo data — not a measurement.</span>}
       {c?.state === "stale" && <span className="font-medium text-foreground">Saved result{c.refreshing ? "; refreshing in the background" : ""}.</span>}
@@ -175,6 +179,7 @@ export function SectionCard<T>({
   return (
     <section className={`flex min-w-0 flex-col rounded-xl border bg-surface ${className}`} aria-busy={loading || undefined}>
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+        {iconForSource(section?.source ?? title) && <ProviderIcon id={iconForSource(section?.source ?? title)!} size={20} />}
         <h2 className="text-sm font-semibold">{title}</h2>
         {section && !loading && <StateBadge state={section.state} />}
         {section?.stale && <StaleBadge />}

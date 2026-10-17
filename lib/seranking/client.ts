@@ -67,6 +67,16 @@ export async function seGet<T = unknown>(path: string, params: Record<string, Pa
   throw new SeRankingError(res.status, `SE Ranking ${path}: ${message}`.slice(0, 300));
 }
 
+/** Host of a URL or bare domain, lower-case, without www. */
+export function hostOf(urlOrDomain: string): string {
+  const raw = urlOrDomain.trim().toLowerCase();
+  try {
+    return new URL(/^https?:\/\//.test(raw) ? raw : `https://${raw}`).hostname.replace(/^www\./, "");
+  } catch {
+    return raw.replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#]/)[0];
+  }
+}
+
 /** List responses come as a bare array, or wrapped in `data` / `items`. */
 export function asList<T = Record<string, unknown>>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];

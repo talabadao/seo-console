@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { db, tableExists } from "@/lib/db";
 
-export type Provider = "serpapi" | "openai" | "anthropic" | "dataforseo";
+export type Provider = "serpapi" | "openai" | "anthropic" | "dataforseo" | "seranking-data";
 
 export class CapReached extends Error {
   constructor(

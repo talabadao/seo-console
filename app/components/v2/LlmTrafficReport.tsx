@@ -10,10 +10,26 @@ import type { SectionState } from "@/lib/v2/summary/types";
 import { usePeriodChoice } from "./summaryClient";
 import { Delta, PeriodPicker, StateBadge, fmtInt, fmtTime } from "./summaryUi";
 import { Card, buttonClass } from "./ui";
+import { ProviderIcon } from "./ProviderIcon";
+import { iconForPlatform } from "@/lib/providerIcons";
 
 type Response =
   | { state: "live" | "demo"; report: LlmReport; cached?: boolean }
   | { state: Exclude<SectionState, "live" | "demo">; source?: string; message?: string };
+
+/**
+ * A platform's colour (it matches the chart series) and, for the five AI assistants with a supplied icon, the
+ * provider icon. Decorative: the platform's name is always written next to it.
+ */
+function PlatformMark({ id, color, size = 20 }: { id: string; color: string; size?: number }) {
+  const icon = iconForPlatform(id);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1" aria-hidden="true">
+      {icon && <ProviderIcon id={icon} size={size} />}
+      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+    </span>
+  );
+}
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -185,7 +201,7 @@ function Body({
         {report.platforms.map((p) => (
           <div key={p.id} className="rounded-xl border bg-surface p-4">
             <div className="flex items-center gap-2 text-sm font-medium">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ background: p.color }} aria-hidden="true" />
+              <PlatformMark id={p.id} color={p.color} />
               <span className="truncate">{p.name}</span>
             </div>
             <div className="mt-1 text-2xl font-semibold tabular-nums">{fmtInt(p.value.current)}</div>
@@ -203,7 +219,7 @@ function Body({
             onClick={() => setPlatform(p.id)}
             className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${platform === p.id ? "border-accent bg-accent-soft text-accent" : "hover:bg-accent-soft/50"}`}
           >
-            <span className="h-2 w-2 rounded-full" style={{ background: p.color }} aria-hidden="true" />
+            <PlatformMark id={p.id} color={p.color} size={16} />
             {p.name}
             {p.id !== "all" && report.share && (
               <span className="text-xs text-muted tabular-nums">{report.share.find((s) => s.id === p.id)?.pct.toFixed(1)}%</span>
@@ -274,7 +290,7 @@ function Body({
               <ul className="mt-2 space-y-1 text-sm">
                 {report.share.map((s) => (
                   <li key={s.id} className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} aria-hidden="true" />
+                    <PlatformMark id={s.id} color={s.color} />
                     <span className="flex-1">{s.name}</span>
                     <span className="tabular-nums text-muted">{s.pct < 1 ? "<1" : Math.round(s.pct)}%</span>
                   </li>
@@ -316,7 +332,7 @@ function Body({
                 <tr key={e.id} className="border-t border-border/60">
                   <td className="px-2 py-2">
                     <span className="inline-flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full" style={{ background: e.color }} aria-hidden="true" />
+                      <PlatformMark id={e.id} color={e.color} size={18} />
                       {e.name}
                     </span>
                   </td>
@@ -351,7 +367,7 @@ function Body({
                 <tr key={`${l.platform.id}${l.page}`} className="border-t border-border/60">
                   <td className="whitespace-nowrap px-2 py-2">
                     <span className="inline-flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full" style={{ background: l.platform.color }} aria-hidden="true" />
+                      <PlatformMark id={l.platform.id} color={l.platform.color} size={18} />
                       {l.platform.name}
                     </span>
                   </td>

@@ -81,11 +81,14 @@ export async function serpSearch(params: Record<string, string>, ctx: SerpContex
       return {};
     }
     if (!res.ok || error) {
-      const message = /run out of searches|limit/i.test(error ?? "")
-        ? "This SerpApi key has no searches left."
-        : res.status === 401 || /invalid api key/i.test(error ?? "")
-          ? "SerpApi rejected the API key."
-          : `SerpApi ${params.engine ?? "search"}: ${error ?? `HTTP ${res.status}`}`;
+      const message =
+        res.status === 429 && !/run out of searches/i.test(error ?? "")
+          ? "SerpApi is rate-limiting this key (HTTP 429); try again in a minute."
+          : /run out of searches|searches? left|plan limit|monthly limit/i.test(error ?? "")
+            ? "This SerpApi key has no searches left."
+            : res.status === 401 || /invalid api key/i.test(error ?? "")
+              ? "SerpApi rejected the API key."
+              : `SerpApi ${params.engine ?? "search"}: ${error ?? `HTTP ${res.status}`}`;
       await completeUsage(usageId, { ok: false, error: message });
       throw new Error(message);
     }

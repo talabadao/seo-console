@@ -28,6 +28,13 @@ export interface JobKind<Q = unknown, P = unknown> {
   run(ctx: { userId: number; projectId: number | null; query: Q }): Promise<{ payload: P; dataThrough?: string | null }>;
   /** True when the error means the account no longer has access: cached data must not be served. */
   isAccessError?(e: unknown): boolean;
+  /** Refreshed only by an explicit (e.g. chargeable) action: never by stale reads or the scheduler. */
+  manualOnly?: boolean;
+  /**
+   * A result's own freshness, when it depends on the result: a resumable dataset that isn't complete yet returns a
+   * short time, so the next read or scheduled tick continues it; a complete one returns its full interval.
+   */
+  freshFor?(payload: P): number;
 }
 
 const registry = new Map<string, JobKind>();
@@ -229,7 +236,7 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
       JSON.stringify(result.payload),
       id,
       now2,
-      now2 + k.freshMs,
+      now2 + (k.freshFor ? k.freshFor(result.payload) : k.freshMs),
       result.dataThrough ?? null,
       job.scope,
       job.cache_key,
@@ -311,7 +318,8 @@ export async function enqueueDueRefreshes(opts: { activeSinceMs: number; limit: 
     .all(now, now - opts.activeSinceMs, opts.limit)) as Array<{ kind: string; user_id: number; project_id: number | null; query: unknown }>;
   let n = 0;
   for (const r of due) {
-    if (!kindOf(r.kind)) continue;
+    const k = kindOf(r.kind);
+    if (!k || k.manualOnly) continue;
     await enqueue({ kind: r.kind, userId: Number(r.user_id), projectId: r.project_id == null ? null : Number(r.project_id), query: parse(r.query), reason: "schedule" });
     n++;
   }
@@ -349,6 +357,8 @@ export async function readThrough<Q, P>(opts: { kind: string; userId: number; pr
   }
 
   if (fresh && !opts.force) return { state: "fresh", ...base };
+  // A manual-only dataset is never fetched by a plain read, stale or cold: only by an explicit refresh.
+  if (!opts.force && kindOf(opts.kind)?.manualOnly) return usable ? { state: "stale", ...base, refreshing: false, error: row!.last_error } : { state: "pending", refreshing: false };
   if (fresh && opts.force && Number(row!.fetched_at ?? 0) > now - MANUAL_COOLDOWN_MS) return { state: "fresh", ...base, cooldown: true };
 
   const jobId = await enqueue({ kind: opts.kind, userId: opts.userId, projectId: opts.projectId, query: opts.query, reason: opts.force ? "manual" : usable ? "stale" : "cold" });
@@ -388,4 +398,23 @@ export async function invalidateProject(projectId: number, kinds?: string[]): Pr
   } else {
     await db.prepare("UPDATE report_cache SET fresh_until = 0 WHERE project_id = ?").run(projectId);
   }
+}
+
+/**
+ * The saved result for a query without queuing anything (no provider request, no job): for datasets that must only
+ * refresh on an explicit, possibly chargeable action (SE Ranking backlink profile), and for summary panels that
+ * show a module's data only when it has already been fetched.
+ */
+export async function peek<P>(opts: { kind: string; userId: number; query: unknown }): Promise<{ payload: P | null; fetchedAt: number | null; lastError: string | null; accessError: string | null; refreshing: boolean }> {
+  const scope = scopeOf(opts.userId);
+  const key = cacheKey(opts.kind, opts.query);
+  const row = await readRow(scope, key);
+  const open = (await db.prepare("SELECT 1 FROM sync_jobs WHERE scope = ? AND cache_key = ? AND status IN ('queued', 'running')").get(scope, key)) as unknown;
+  return {
+    payload: row && row.payload != null && !row.access_error ? (parse(row.payload) as P) : null,
+    fetchedAt: row?.fetched_at == null ? null : Number(row.fetched_at),
+    lastError: row?.last_error ?? null,
+    accessError: row?.access_error ?? null,
+    refreshing: Boolean(open),
+  };
 }

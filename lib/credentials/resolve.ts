@@ -1,10 +1,11 @@
 // The one server-side place that decides which provider credential a request uses. Every consumer — Google
 // Search Tracking, Brand Mentions, Maps reviews, review classification, usage reporting — goes through here.
 //
-// Order:
-// 1. SerpApi only: a legacy key still stored on the project (from before account credentials), until the owner
-//    consolidates or resolves it in Settings → Account → API credentials. The project must belong to the user.
-// 2. The signed-in account's own encrypted credential.
+// Order (owner decision, 2026-10-17):
+// 1. The signed-in account's own encrypted credential (Account → API credentials).
+// 2. SerpApi only: a legacy key still stored on the project (from before account credentials), until the owner
+//    consolidates or resolves it. The project must belong to the user. It no longer overrides a newer account key:
+//    an old, exhausted or invalid project key used to win silently over the key the owner had just saved.
 // 3. A server environment key (SERPAPI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, DATAFORSEO_LOGIN/PASSWORD)
 //    only for accounts listed in LEGACY_SERVER_CREDENTIAL_ACCOUNTS — an explicit, auditable scope. Empty by
 //    default: there is no silent global fallback for every account.
@@ -62,13 +63,13 @@ export async function resolveCredential(
   projectId: number | null = null,
   env: Env = process.env,
 ): Promise<ResolvedSecret | null> {
-  if (provider === "serpapi" && projectId != null) {
-    const legacy = await projectLegacyKey(userId, projectId);
-    if (legacy) return { values: { apiKey: legacy }, source: "project-legacy", fingerprint: fingerprintOf(legacy) };
-  }
   if (storageConfigured(env)) {
     const own = await readCredential(userId, provider);
     if (own) return { values: own.values, source: "account", fingerprint: own.fingerprint };
+  }
+  if (provider === "serpapi" && projectId != null) {
+    const legacy = await projectLegacyKey(userId, projectId);
+    if (legacy) return { values: { apiKey: legacy }, source: "project-legacy", fingerprint: fingerprintOf(legacy) };
   }
   if (await serverKeysAllowed(userId, env)) {
     const server = serverValues(provider, env);

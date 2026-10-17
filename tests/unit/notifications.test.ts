@@ -190,12 +190,15 @@ describe("store", () => {
 });
 
 describe("docs", () => {
-  const env = { DOCS_ADMIN_EMAILS: "tinledoihoa@gmail.com, stranger@example.com", VERCEL_ENV: "preview" };
+  // Owner decision 2026-10-17: exactly these two accounts publish (a third allowed account, and anyone off the allowlist, can't).
+  const env = { DOCS_ADMIN_EMAILS: "tin@artemisdigital.com,tinledoihoa@gmail.com, stranger@example.com", VERCEL_ENV: "preview" };
   const admin = { id: 1, email: "tinledoihoa@gmail.com" };
 
   it("admins are explicit and must be allowed to sign in", () => {
     expect(isDocsAdmin("tinledoihoa@gmail.com", env)).toBe(true);
-    expect(isDocsAdmin("analytics@artemisdigital.com", env)).toBe(false); // allowed to sign in, not an admin
+    expect(isDocsAdmin("tin@artemisdigital.com", env)).toBe(true);
+    expect(isDocsAdmin(" Tin@ArtemisDigital.com ", env)).toBe(true);
+    for (const other of ["analytics@artemisdigital.com", "analytics@headsonpillows.com", "tin@headsonpillows.com"]) expect(isDocsAdmin(other, env), other).toBe(false); // allowed to sign in, not publishers
     expect(isDocsAdmin("stranger@example.com", env)).toBe(false); // listed but not on the allowlist
     expect(isDocsAdmin("tinledoihoa@gmail.com", {})).toBe(false);
   });
@@ -217,6 +220,17 @@ describe("docs", () => {
     expect(n2.items.filter((i) => i.kind === "docs")).toHaveLength(1);
     const stranger = await pg.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = 3");
     expect(stranger.rows[0].n).toBe(0); // not on the allowlist
+  });
+
+  it("both authorized publishers can publish a test article; a third allowed account can't", async () => {
+    await pg.query("INSERT INTO users (id, email, created_at, updated_at) VALUES (4, 'tin@artemisdigital.com', 0, 0) ON CONFLICT DO NOTHING");
+    for (const who of [{ id: 4, email: "tin@artemisdigital.com" }, admin]) {
+      const a = await saveArticle(who, { title: `Temporary test (${who.id})`, summary: "Temporary test document", body: "Remove me." }, env);
+      expect((await setPublished(who, a.id, true, env)).status).toBe("published");
+      await expect(setPublished({ id: 2, email: "analytics@artemisdigital.com" }, a.id, false, env)).rejects.toBeInstanceOf(DocsForbidden);
+      expect((await getArticle(a.slug, { admin: false }))?.status).toBe("published"); // other allowed accounts still read it
+    }
+    await pg.query("DELETE FROM doc_articles WHERE title LIKE 'Temporary test%'");
   });
 
   it("demo examples exist only outside Production, are labelled and can't be published or edited", async () => {

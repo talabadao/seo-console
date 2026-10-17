@@ -62,13 +62,8 @@ export const NAV: NavGroup[] = [
     label: "Competitors",
     icon: "compare",
     items: [
-      {
-        id: "overview",
-        label: "Competitor overview",
-        status: "demo",
-        milestone: "12",
-        description: "Domain comparison, estimated traffic and content gaps.",
-      },
+      // SE Ranking competitors (tracked competitors, top-10 domains, positions), ported from AI Brand Mention.
+      { id: "overview", label: "Competitor overview", status: "live" },
     ],
   },
   {
@@ -76,13 +71,8 @@ export const NAV: NavGroup[] = [
     label: "Link Building",
     icon: "link",
     items: [
-      {
-        id: "backlinks",
-        label: "Backlinks",
-        status: "demo",
-        milestone: "12",
-        description: "Referring domains, new and lost links, and prospects. No outreach.",
-      },
+      // SE Ranking Backlink Monitor and Data API backlink profile (credits; explicit refresh only).
+      { id: "backlinks", label: "Backlinks", status: "live" },
     ],
   },
   {
@@ -92,8 +82,9 @@ export const NAV: NavGroup[] = [
     items: [
       // Read-only report from the SE Ranking project mapped in Project settings → Integrations.
       { id: "se-ranking", label: "SE Ranking", status: "live" },
-      // Google, Bing, Yandex and Naver results through SerpApi; the engine is the sub-path
-      // (/p/<id>/organic-serp/organic/bing). Separate from the AI Area: its own runs, snapshots and history.
+      // Google Search Tracking (ported from AI Brand Mention): rankings, AI Overview / AI Mode mentions and citations,
+      // AI responses and tracking settings; the view is the sub-path (/p/<id>/organic-serp/organic/rank-tracker).
+      // The earlier multi-engine snapshots stay readable at /organic-serp/organic/archive.
       { id: "organic", label: "Organic SERP", status: "live" },
     ],
   },
@@ -135,13 +126,8 @@ export const NAV: NavGroup[] = [
     label: "Technical SEO",
     icon: "wrench",
     items: [
-      {
-        id: "site-audit",
-        label: "Site audit",
-        status: "planned",
-        milestone: "09c",
-        description: "A bounded crawl of your site checking status codes, redirects, canonicals, titles, headings and internal links.",
-      },
+      // The latest existing SE Ranking site audit (never starts a crawl).
+      { id: "site-audit", label: "Site audit", status: "live" },
       { id: "pagespeed", label: "PageSpeed", status: "live" },
       { id: "indexing", label: "Indexing", status: "live", requires: "gsc" },
       {
@@ -173,10 +159,8 @@ export const NAV: NavGroup[] = [
     icon: "sparkle",
     // Phase one ports the AI Brand Mention app's two screens; Searchable is not part of it. Usage, costs and
     // budgets live in Settings → Account (old ai-area/usage addresses redirect there; see LEGACY_ITEMS).
-    items: [
-      { id: "google-search-tracking", label: "Google Search Tracking", status: "live" },
-      { id: "brand-mentions", label: "Brand Mentions", status: "live" },
-    ],
+    // Google Search Tracking moved to Rank tracking → Organic SERP (old addresses redirect there, same view).
+    items: [{ id: "brand-mentions", label: "Brand Mentions", status: "live" }],
   },
   {
     id: "automation",
@@ -253,12 +237,18 @@ export const LEGACY_ITEMS: Record<string, { section: string }> = {
  * Rank tracking pages that became one page: the old per-engine items open Organic SERP with that engine selected
  * (and, for the old Google item, nothing from AI Area's tracker). Same project; any old sub-path is dropped.
  */
-export const LEGACY_PAGES: Record<string, { group: string; item: string; sub: string }> = {
-  "organic-serp/google": { group: "organic-serp", item: "organic", sub: "google" },
-  "organic-serp/bing": { group: "organic-serp", item: "organic", sub: "bing" },
-  "organic-serp/yandex": { group: "organic-serp", item: "organic", sub: "yandex" },
-  "organic-serp/naver": { group: "organic-serp", item: "organic", sub: "naver" },
+export const LEGACY_PAGES: Record<string, { group: string; item: string; sub: string | null }> = {
+  // sub null: keep the old sub-path (the view), e.g. …/ai-area/google-search-tracking/mentions → …/organic/mentions.
+  "ai-area/google-search-tracking": { group: "organic-serp", item: "organic", sub: null },
+  "organic-serp/google": { group: "organic-serp", item: "organic", sub: "rank-tracker" },
+  "organic-serp/bing": { group: "organic-serp", item: "organic", sub: "archive" },
+  "organic-serp/yandex": { group: "organic-serp", item: "organic", sub: "archive" },
+  "organic-serp/naver": { group: "organic-serp", item: "organic", sub: "archive" },
 };
+
+/** Sub-paths of the superseded multi-engine Organic SERP (2026-10-16): Google → the rank tracker, others → archive. */
+const OLD_ENGINE_SUB: Record<string, string> = { google: "rank-tracker", bing: "archive", yandex: "archive", naver: "archive" };
+const organicSub = (group: string, item: string, sub: string) => (group === "organic-serp" && item === "organic" && OLD_ENGINE_SUB[sub] ? OLD_ENGINE_SUB[sub] : sub);
 
 /** True for paths the v2 shell owns; everything else stays with the legacy dashboard. */
 export function isShellPath(segments: string[]): boolean {
@@ -275,8 +265,11 @@ export function parseShellPath(segments: string[], search?: string): ShellLocati
     const moved = a && b ? LEGACY_ITEMS[`${a}/${b}`] : undefined;
     if (moved) return { kind: "account", section: accountSection(c) || moved.section, projectId: null };
     const page = a && b ? LEGACY_PAGES[`${a}/${b}`] : undefined;
-    if (page) return { kind: "pick", ...page };
-    if (a && b && findItem(a, b)) return c ? { kind: "pick", group: a, item: b, sub: c } : { kind: "pick", group: a, item: b };
+    if (page) {
+      const sub = page.sub ?? c ?? "";
+      return sub ? { kind: "pick", group: page.group, item: page.item, sub } : { kind: "pick", group: page.group, item: page.item };
+    }
+    if (a && b && findItem(a, b)) return c ? { kind: "pick", group: a, item: b, sub: organicSub(a, b, c) } : { kind: "pick", group: a, item: b };
     return { kind: "portfolio" };
   }
   if (root === "p") {
@@ -286,8 +279,8 @@ export function parseShellPath(segments: string[], search?: string): ShellLocati
     const moved = b && c ? LEGACY_ITEMS[`${b}/${c}`] : undefined;
     if (moved) return { kind: "account", section: accountSection(d) || moved.section, projectId };
     const page = b && c ? LEGACY_PAGES[`${b}/${c}`] : undefined;
-    if (page) return { kind: "project", projectId, ...page };
-    if (b && c && findItem(b, c)) return { kind: "project", projectId, group: b, item: c, sub: d ?? "" };
+    if (page) return { kind: "project", projectId, group: page.group, item: page.item, sub: page.sub ?? d ?? "" };
+    if (b && c && findItem(b, c)) return { kind: "project", projectId, group: b, item: c, sub: organicSub(b, c, d ?? "") };
     return { kind: "project", projectId, ...DEFAULT_ITEM, sub: "" };
   }
   return null;
