@@ -8,7 +8,7 @@
 
 import { db, tableExists } from "@/lib/db";
 import { deploymentOf } from "@/lib/environment";
-import { isAllowedEmail, normalizeEmail } from "@/lib/auth/allowlist";
+import { normalizeEmail } from "@/lib/auth/eligibility";
 import { getSettings, insertCandidates } from "@/lib/notifications/store";
 
 type Env = Record<string, string | undefined>;
@@ -31,14 +31,29 @@ export class DocsForbidden extends Error {}
 
 export const docsReady = () => tableExists("doc_articles");
 
-/** Docs admins: listed in DOCS_ADMIN_EMAILS and allowed to sign in. */
-export function isDocsAdmin(email: string | null | undefined, env: Env = process.env): boolean {
-  if (!email || !isAllowedEmail(email)) return false;
+/** Whether an address is listed in DOCS_ADMIN_EMAILS. */
+export function emailIsDocsAdmin(email: string | null | undefined, env: Env = process.env): boolean {
+  if (!email) return false;
   const admins = (env.DOCS_ADMIN_EMAILS ?? "")
     .split(",")
     .map((s) => normalizeEmail(s))
     .filter(Boolean);
   return admins.includes(normalizeEmail(email));
+}
+
+/**
+ * Docs admins: an active person one of whose verified, linked logins is listed in DOCS_ADMIN_EMAILS. A narrow,
+ * existing capability (not a role): company sign-up and project sharing never grant it.
+ */
+export async function isDocsAdmin(user: { id: number } | null | undefined, env: Env = process.env): Promise<boolean> {
+  if (!user) return false;
+  const rows = (await db
+    .prepare(
+      `SELECT i.email FROM user_identities i JOIN users u ON u.id = i.user_id
+        WHERE u.id = ? AND u.kind = 'person' AND u.status = 'active' AND u.workspace_id IS NOT NULL`,
+    )
+    .all(user.id)) as Array<{ email: string }>;
+  return rows.some((r) => emailIsDocsAdmin(r.email, env));
 }
 
 function row(r: Record<string, unknown>): DocArticle {
@@ -111,7 +126,7 @@ export async function saveArticle(
   input: { id?: number | null; slug?: unknown; kind?: unknown; title?: unknown; summary?: unknown; body?: unknown },
   env: Env = process.env,
 ): Promise<DocArticle> {
-  if (!isDocsAdmin(admin.email, env)) throw new DocsForbidden("Only Docs admins can edit articles.");
+  if (!(await isDocsAdmin(admin, env))) throw new DocsForbidden("Only Docs admins can edit articles.");
   const title = typeof input.title === "string" ? input.title.trim().slice(0, 200) : "";
   if (!title) throw new DocsInputError("Enter a title.");
   const slug = typeof input.slug === "string" && input.slug.trim() ? input.slug.trim().toLowerCase() : title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -141,7 +156,7 @@ export async function saveArticle(
 
 /** Publishes or unpublishes. Publishing a real article notifies every account once (in-app). */
 export async function setPublished(admin: { id: number; email: string }, id: number, publish: boolean, env: Env = process.env): Promise<DocArticle> {
-  if (!isDocsAdmin(admin.email, env)) throw new DocsForbidden("Only Docs admins can publish.");
+  if (!(await isDocsAdmin(admin, env))) throw new DocsForbidden("Only Docs admins can publish.");
   const now = Date.now();
   const r = (await db
     .prepare(
@@ -152,9 +167,10 @@ export async function setPublished(admin: { id: number; email: string }, id: num
   if (!r) throw new DocsInputError("That article no longer exists (demo examples can't be changed).");
   const article = row(r);
   if (publish && !article.demo && (await tableExists("notifications"))) {
-    const users = (await db.prepare("SELECT id, email FROM users").all()) as Array<{ id: number; email: string }>;
+    // Every active person in the workspace (one inbox each); shared-connection and merged records get nothing.
+    const users = (await db.prepare("SELECT id FROM users WHERE kind = 'person' AND status = 'active' AND workspace_id IS NOT NULL").all()) as Array<{ id: number }>;
     for (const u of users) {
-      if (!isAllowedEmail(u.email) || !(await getSettings(Number(u.id))).docs.enabled) continue;
+      if (!(await getSettings(Number(u.id))).docs.enabled) continue;
       await insertCandidates(Number(u.id), [
         {
           rule: "docs",

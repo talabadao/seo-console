@@ -24,7 +24,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 
 /** Adds prompts (typed, uploaded or picked from suggestions); duplicates of existing prompts are skipped. */
 export async function POST(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => null)) as { prompts?: unknown; source?: unknown } | null;
   try {
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
 /** Edits prompts: { ids, active?, topic? } or { id, text }. */
 export async function PATCH(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   try {
@@ -84,7 +84,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 }
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => null)) as { ids?: unknown } | null;
   try {

@@ -24,9 +24,13 @@ vi.mock("@/lib/db", () => ({
     }),
   },
   tableExists: async (name: string) => (await pg.query<{ t: string | null }>("SELECT to_regclass($1) AS t", [`public.${name}`])).rows[0].t != null,
+  withTransaction: async <T,>(fn: (q: (sql: string, ...args: unknown[]) => Promise<Record<string, unknown>[]>) => Promise<T>) =>
+    pg.transaction(async (tx) => fn(async (sql, ...args) => (await tx.query(toPositional(sql), args)).rows as Record<string, unknown>[])),
 }));
 
-import { migration as aiArea } from "@/db/migrations/0003_ai_area";
+import { BASELINE_STATEMENTS } from "@/lib/schema";
+import { MIGRATIONS } from "@/db/migrations";
+import { saveCredential } from "@/lib/credentials/store";
 import type { Project } from "@/lib/projects";
 import type { UserRow } from "@/lib/session";
 import { beginBrandRun, continueBrandRun, previewBrandRun } from "@/lib/ai-area/brand/run";
@@ -50,16 +54,21 @@ const fetchMock = vi.fn(async (input: string | URL) => {
 });
 
 beforeAll(async () => {
-  // Both projects belong to account 1 and still carry a legacy project key, which the resolver uses.
-  await pg.exec(`CREATE TABLE users (id BIGSERIAL PRIMARY KEY, email TEXT); CREATE TABLE projects (id BIGSERIAL PRIMARY KEY, user_id BIGINT, serpapi_key TEXT, serpapi_key_updated_at BIGINT);
-    INSERT INTO users (email) VALUES ('owner@example.com'); INSERT INTO projects (user_id, serpapi_key) VALUES (1, 'test-key-not-real'), (1, 'test-key-not-real');`);
-  for (const s of aiArea.statements) await pg.exec(s);
+  // Person 1 manages both projects and runs with their own encrypted SerpApi key (manual runs bill the actor).
+  for (const s of BASELINE_STATEMENTS) await pg.exec(s);
+  for (const m of MIGRATIONS.slice(1)) for (const s of m.statements) await pg.exec(s);
+  await pg.exec(`INSERT INTO users (id, email, kind, status, workspace_id, created_at, updated_at) VALUES (1, 'owner@artemisdigital.com', 'person', 'active', 1, 0, 0);
+    INSERT INTO projects (id, user_id, name, workspace_id, created_by, primary_manager_id, created_at, updated_at) VALUES (1, 1, 'WeWine', 1, 1, 1, 0, 0), (2, 1, 'Other', 1, 1, 1, 0, 0);
+    INSERT INTO project_members (project_id, user_id, added_at) VALUES (1, 1, 0), (2, 1, 0);`);
+  vi.stubEnv("CREDENTIALS_ENCRYPTION_KEY", Buffer.alloc(32, 7).toString("base64"));
+  await saveCredential(1, "serpapi", { apiKey: "test-key-not-real" });
 });
 
 beforeEach(async () => {
   await pg.exec("DELETE FROM provider_usage; DELETE FROM provider_allowances; DELETE FROM ai_runs; DELETE FROM ai_documents;");
   fetchMock.mockClear();
   vi.stubGlobal("fetch", fetchMock);
+  vi.stubEnv("CREDENTIALS_ENCRYPTION_KEY", Buffer.alloc(32, 7).toString("base64"));
   vi.stubEnv("VERCEL_ENV", "preview");
   vi.stubEnv("PREVIEW_SERPAPI_TEST_PROJECT_ID", "1");
   vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");

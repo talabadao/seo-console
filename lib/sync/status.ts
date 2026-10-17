@@ -48,8 +48,9 @@ function label(kind: string, query: Record<string, unknown>): string {
   return `${name[kind] ?? kind}${query.detail ? " (detail)" : ""}${range}`;
 }
 
-export async function syncStatus(userId: number, sinceMs = 7 * 24 * 3600_000): Promise<SyncStatus> {
-  const scope = scopeOf(userId);
+/** The workspace shared cache (every team member sees the same results): entries, jobs and provider counters. */
+export async function syncStatus(workspaceId: number, sinceMs = 7 * 24 * 3600_000): Promise<SyncStatus> {
+  const scope = scopeOf(workspaceId);
   const since = Date.now() - sinceMs;
   const rows = (await db
     .prepare(
@@ -59,7 +60,7 @@ export async function syncStatus(userId: number, sinceMs = 7 * 24 * 3600_000): P
          FROM report_cache c
          LEFT JOIN projects p ON p.id = c.project_id
          LEFT JOIN sync_jobs j ON j.scope = c.scope AND j.cache_key = c.cache_key AND j.status IN ('queued', 'running')
-        WHERE c.scope = ?
+        WHERE c.scope = ? AND (c.project_id IS NULL OR p.deleted_at IS NULL)
         ORDER BY c.last_read_at DESC NULLS LAST
         LIMIT 300`,
     )

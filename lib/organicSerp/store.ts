@@ -115,14 +115,14 @@ async function expireStale(projectId: number): Promise<void> {
 export async function listSnapshots(userId: number, projectId: number, limit = 100): Promise<SnapshotSummary[]> {
   await expireStale(projectId);
   const rows = (await db
-    .prepare(`SELECT ${SUMMARY_COLS} FROM serp_snapshots WHERE user_id = ? AND project_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`)
-    .all(userId, projectId, limit)) as Record<string, unknown>[];
+    .prepare(`SELECT ${SUMMARY_COLS} FROM serp_snapshots WHERE project_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`)
+    .all(projectId, limit)) as Record<string, unknown>[];
   return rows.map(summary);
 }
 
 /** One snapshot, from the database only (never searches). */
 export async function getSnapshot(userId: number, projectId: number, id: number): Promise<Snapshot | null> {
-  const r = (await db.prepare(`SELECT ${SUMMARY_COLS}, results, features FROM serp_snapshots WHERE user_id = ? AND project_id = ? AND id = ?`).get(userId, projectId, id)) as
+  const r = (await db.prepare(`SELECT ${SUMMARY_COLS}, results, features FROM serp_snapshots WHERE project_id = ? AND id = ?`).get(projectId, id)) as
     | Record<string, unknown>
     | undefined;
   if (!r) return null;

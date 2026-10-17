@@ -9,14 +9,14 @@ import { runRules } from "@/lib/notifications/store";
 
 export const maxDuration = 60;
 
-/** Sync & cache status for the signed-in account, from local records only (no provider requests). */
+/** Sync & cache status of the team workspace, from local records only (no provider requests). */
 export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!(await syncReady())) return NextResponse.json({ error: "This database hasn't run migration 0008 (shared cache) yet.", state: "unavailable" }, { status: 503 });
   // Scheduled runs are deployment-wide operational records (counts only, no account data).
   // The database line shows migration ids only (no host or credentials).
-  return NextResponse.json({ ...(await syncStatus(user.id)), cronRuns: await recentCronRuns(30), database: await databaseStatus() }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ ...(await syncStatus(user.workspace_id!)), cronRuns: await recentCronRuns(30), database: await databaseStatus() }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**
@@ -29,8 +29,8 @@ export async function POST(req: NextRequest) {
   if (!(await syncReady())) return NextResponse.json({ error: "This database hasn't run migration 0008 (shared cache) yet." }, { status: 503 });
   const body = (await req.json().catch(() => ({}))) as { limit?: unknown };
   const limit = Math.max(1, Math.min(10, Math.round(Number(body.limit) || 10)));
-  const result = await runDueJobs({ limit, budgetMs: 45_000, userId: user.id });
+  const result = await runDueJobs({ limit, budgetMs: 45_000, workspaceId: user.workspace_id! });
   // New results may meet a notification rule (saved results only; throttled per account).
   const notified = (await runRules(user.id).catch(() => ({ created: 0 }))).created;
-  return NextResponse.json({ ...result, notified, status: await syncStatus(user.id) });
+  return NextResponse.json({ ...result, notified, status: await syncStatus(user.workspace_id!) });
 }

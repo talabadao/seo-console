@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
+import { gscForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
 import { fetchLiveReport, type CrossFilter } from "@/lib/gscLive";
 import {
   resolveComparison,
@@ -25,8 +26,10 @@ export async function GET(req: NextRequest) {
   const property = p.get("property");
   if (!property) return NextResponse.json({ error: "property required" }, { status: 400 });
 
-  const sc = await siteConfigFor(user.id, property);
-  if (!sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
+  // Any team member may read a property mapped by a project they can see, through that project's connection.
+  const gsc = await gscForProperty(user, property, p.get("projectId"));
+  const sc = gsc?.siteId != null ? await siteConfigFor(gsc.siteId) : null;
+  if (!gsc || !sc) return NextResponse.json({ error: "unknown property" }, { status: 404 });
 
   const preset = (p.get("preset") || "28d") as PresetId;
   const current = resolveRange(preset, {
@@ -73,9 +76,9 @@ export async function GET(req: NextRequest) {
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await gsc.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true, message: e instanceof Error ? e.message : "" });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

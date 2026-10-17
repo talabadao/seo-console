@@ -1,15 +1,17 @@
 // Shared checks for the GA4 report routes (app/api/v2/ga4/[id]/…). Server only.
-// Order: signed in (401) → the project is this account's (404) → demo project → GA4 linked, scope granted and the
-// property still listed for this account → Google token. Only then is anything read or fetched.
+// Order: signed in (401) → a live project of the viewer's workspace (404) → demo project → GA4 mapped through a
+// shared connection that still lists the property → that connection's token. Only then is anything read or fetched.
+// Templates and runs are shared reporting (any team member); saved report definitions are private to their author.
 
 import { NextResponse, after } from "next/server";
 import { currentUser, type UserRow } from "@/lib/session";
+import { connectionState } from "@/lib/access";
 import { getProject, type Project } from "@/lib/projects";
 import { propertyNow, validateReportCompatibility, type GaFailureKind } from "@/lib/ga4";
 import { filterExpression, normalizeSpec, unknownFields, type ReportSpec } from "./spec";
 import { isDemoWebsite } from "@/lib/v2/summary/demo";
-import { gaContext, gaPreconditions, googleToken } from "@/lib/v2/summary/live";
-import { readThrough, setBackgroundRunner, syncReady } from "@/lib/sync/cache";
+import { gaContext, gaPreconditions, projectToken } from "@/lib/v2/summary/live";
+import { readThrough, setBackgroundRunner } from "@/lib/sync/cache";
 import { DEFAULT_COMPARE, DEFAULT_PRESET, isCompare, isPreset, resolvePeriod, type CompareMode, type RangePreset } from "@/lib/v2/summary/period";
 import type { GaFieldMeta } from "@/lib/ga4";
 // Registers the ga4:* cache kinds (the type import below is erased at runtime).
@@ -20,7 +22,7 @@ export type RouteCtx = { params: Promise<{ id: string; reportId?: string }> };
 
 export const GA4_SOURCE = "Google Analytics 4";
 
-/** Signed-in account and its project, or the response to send instead. */
+/** The signed-in team member and a project they can view, or the response to send instead. */
 export async function ownedProject(ctx: RouteCtx): Promise<{ user: UserRow; project: Project } | NextResponse> {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -47,13 +49,14 @@ export async function gaRouteContext(ctx: RouteCtx): Promise<GaRouteContext | Ne
   if (isDemoWebsite(project.websiteUrl)) {
     return NextResponse.json({ state: "demo", message: "Demo project: GA4 reports need a live GA4 property, so none are shown here." });
   }
-  const blocked = await gaPreconditions(user, project, GA4_SOURCE);
+  const blocked = await gaPreconditions(project, GA4_SOURCE);
   if (blocked) return NextResponse.json(blocked);
-  if (!(await syncReady())) return NextResponse.json({ state: "unavailable", source: GA4_SOURCE, message: "GA4 reports need the shared cache (migration 0008)." });
-  const token = await googleToken(user, GA4_SOURCE);
+  const conn = await connectionState(project.gaConnectionId);
+  if (conn && conn.status !== "ok") return NextResponse.json({ state: "unavailable", source: GA4_SOURCE, message: conn.message });
+  const token = await projectToken(project, "ga4", GA4_SOURCE);
   if ("error" in token) return NextResponse.json(token.error);
   const propertyId = project.gaPropertyId!;
-  const { timeZone, currency } = await gaContext(user, token.token, propertyId);
+  const { timeZone, currency } = await gaContext(project.gaConnectionId!, token.token, propertyId);
   setBackgroundRunner((fn) => after(fn));
   return { user, project, propertyId, token: token.token, timeZone, currency };
 }
@@ -68,7 +71,14 @@ export function periodFor(preset: unknown, compare: unknown, timeZone: string | 
 /** The property's dimensions and metrics through the shared cache (one request per day per account and property). */
 export async function cachedMetadata(c: GaRouteContext): Promise<{ dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] } | { error: string }> {
   const query: Ga4MetadataQuery = { projectId: c.project.id, propertyId: c.propertyId };
-  const r = await readThrough<Ga4MetadataQuery, { dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }>({ kind: "ga4:metadata", userId: c.user.id, projectId: c.project.id, query, waitMs: 20_000 });
+  const r = await readThrough<Ga4MetadataQuery, { dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }>({
+    kind: "ga4:metadata",
+    workspaceId: c.project.workspaceId,
+    actorUserId: c.user.id,
+    projectId: c.project.id,
+    query,
+    waitMs: 20_000,
+  });
   if (r.payload) return r.payload;
   return { error: r.state === "pending" ? "GA4 field list is still loading. Try again in a moment." : (r.error ?? "Couldn't load the GA4 field list.") };
 }

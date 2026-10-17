@@ -81,8 +81,9 @@ const drain = async () => {
 };
 
 const q = (projectId: number, s = "a") => ({ projectId, q: s });
-const read = (userId: number, projectId: number, s = "a", extra: { force?: boolean; waitMs?: number } = {}) =>
-  readThrough<ReturnType<typeof q>, { value: number; q: string }>({ kind: "test:report", userId, projectId, query: q(projectId, s), waitMs: extra.waitMs ?? 5000, force: extra.force });
+/** A read in workspace `ws` (the cache scope); the route has already authorized the viewer for the project. */
+const read = (ws: number, projectId: number, s = "a", extra: { force?: boolean; waitMs?: number } = {}) =>
+  readThrough<ReturnType<typeof q>, { value: number; q: string }>({ kind: "test:report", workspaceId: ws, actorUserId: ws, projectId, query: q(projectId, s), waitMs: extra.waitMs ?? 5000, force: extra.force });
 
 const ago = async (ms: number) => {
   // Ages every saved result and job by `ms` (instead of mocking the clock, which PGlite's timers rely on).
@@ -93,8 +94,10 @@ const ago = async (ms: number) => {
 beforeAll(async () => {
   for (const s of BASELINE_STATEMENTS) await pg.exec(s);
   for (const m of MIGRATIONS.slice(1)) for (const s of m.statements) await pg.exec(s);
-  await pg.exec(`INSERT INTO users (email, created_at, updated_at) VALUES ('one@example.com', 0, 0), ('two@example.com', 0, 0);
-    INSERT INTO projects (id, user_id, name, created_at, updated_at) VALUES (1, 1, 'One', 0, 0), (2, 1, 'Two', 0, 0), (3, 2, 'Theirs', 0, 0);`);
+  // Two workspaces: projects 1 and 2 belong to workspace 1, project 3 to workspace 2.
+  await pg.exec(`INSERT INTO workspaces (id, name, created_at) VALUES (2, 'Other team', 0);
+    INSERT INTO users (email, created_at, updated_at, workspace_id) VALUES ('one@example.com', 0, 0, 1), ('two@example.com', 0, 0, 2);
+    INSERT INTO projects (id, user_id, name, created_at, updated_at, workspace_id) VALUES (1, 1, 'One', 0, 0, 1), (2, 1, 'Two', 0, 0, 1), (3, 2, 'Theirs', 0, 0, 2);`);
 });
 
 beforeEach(async () => {
@@ -127,13 +130,13 @@ describe("read-through", () => {
     expect((await pg.query("SELECT COUNT(*)::int AS n FROM sync_jobs")).rows[0]).toEqual({ n: 1 });
   });
 
-  it("keeps accounts and queries apart", async () => {
-    const account = (userId: number) =>
-      readThrough<{ q: string }, { value: number }>({ kind: "test:report", userId, projectId: null, query: { q: "account-wide" }, waitMs: 5000 });
-    expect((await account(1)).payload?.value).toBe(1);
+  it("keeps workspaces and queries apart", async () => {
+    const workspace = (ws: number) =>
+      readThrough<{ q: string }, { value: number }>({ kind: "test:report", workspaceId: ws, actorUserId: null, projectId: null, query: { q: "workspace-wide" }, waitMs: 5000 });
+    expect((await workspace(1)).payload?.value).toBe(1);
     fake.value = 2;
-    expect((await account(2)).payload?.value).toBe(2); // the same query for another account: its own fetch, never account 1's data
-    expect((await account(1)).payload?.value).toBe(1);
+    expect((await workspace(2)).payload?.value).toBe(2); // the same query in another workspace: its own fetch, never workspace 1's data
+    expect((await workspace(1)).payload?.value).toBe(1);
     await read(1, 1, "a");
     expect((await read(1, 2, "a")).payload?.value).toBe(2); // another project
     expect((await read(1, 1, "b")).payload?.value).toBe(2); // another query
@@ -177,7 +180,7 @@ describe("read-through", () => {
 
 describe("leases and generations", () => {
   it("a job whose worker died is picked up after its lease expires", async () => {
-    const id = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "cold" });
+    const id = await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 1, query: q(1), reason: "cold" });
     // A worker claims it and dies (simulated: the lease is taken but never completed).
     await pg.query("UPDATE sync_jobs SET status = 'running', lease_token = 'dead', lease_until = $1, attempts = 1 WHERE id = $2", [Date.now() + 60_000, id]);
     expect(await runJob(id)).toBe("not-claimed");
@@ -187,7 +190,7 @@ describe("leases and generations", () => {
   });
 
   it("a worker that lost its lease can't complete, and an older job never overwrites a newer result", async () => {
-    const id = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "cold" });
+    const id = await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 1, query: q(1), reason: "cold" });
     let open!: () => void;
     fake.gate = new Promise<void>((r) => (open = r));
     fake.value = 10;
@@ -203,7 +206,7 @@ describe("leases and generations", () => {
     // An older job's result (lower generation) is ignored.
     await pg.query("UPDATE report_cache SET generation = generation + 1000");
     await ago(MANUAL_COOLDOWN_MS + 1000); // past the manual cooldown, so the older job does run
-    const older = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "manual" });
+    const older = await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 1, query: q(1), reason: "manual" });
     fake.value = 30;
     expect(await runJob(older)).toBe("done");
     expect((await read(1, 1)).payload?.value).toBe(20);
@@ -218,15 +221,15 @@ describe("late joiners", () => {
     await drain();
     expect(fake.calls).toBe(2);
     // A reader that loaded the stale row just before that refresh finished queues another job.
-    const late = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "stale" });
+    const late = await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 1, query: q(1), reason: "stale" });
     expect(await runJob(late)).toBe("skipped");
-    const cold = await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1), reason: "cold" });
+    const cold = await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 1, query: q(1), reason: "cold" });
     expect(await runJob(cold)).toBe("skipped");
     expect(fake.calls).toBe(2);
   });
 
   it("runs due jobs concurrently without running any twice", async () => {
-    for (let i = 0; i < 12; i++) await enqueue({ kind: "test:report", userId: 1, projectId: 1, query: q(1, "k" + i), reason: "schedule" });
+    for (let i = 0; i < 12; i++) await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 1, query: q(1, "k" + i), reason: "schedule" });
     fake.delayMs = 30;
     const r = await Promise.all([runDueJobs({ limit: 50, budgetMs: 5000, concurrency: 4 }), runDueJobs({ limit: 50, budgetMs: 5000, concurrency: 4 })]);
     expect(r[0].ran + r[1].ran - (r[0].outcomes["not-claimed"] ?? 0) - (r[1].outcomes["not-claimed"] ?? 0)).toBe(12);
@@ -253,7 +256,7 @@ describe("manual refresh", () => {
 });
 
 describe("authorization", () => {
-  it("another account's project is never fetched or served", async () => {
+  it("another workspace's project is never fetched or served", async () => {
     await read(1, 1);
     const r = await read(2, 1);
     expect(r.state).toBe("error");
@@ -282,16 +285,16 @@ describe("authorization", () => {
     expect(await read(1, 1)).toMatchObject({ state: "fresh", payload: { value: 5 } });
   });
 
-  it("a job for a project the account no longer owns fails and clears the data", async () => {
+  it("a job for a project that was deleted (or left the workspace) fails and clears the data", async () => {
     await read(1, 2);
-    await pg.query("UPDATE projects SET user_id = 2 WHERE id = 2");
+    await pg.query("UPDATE projects SET deleted_at = 1 WHERE id = 2");
     try {
-      const id = await enqueue({ kind: "test:report", userId: 1, projectId: 2, query: q(2), reason: "manual" });
+      const id = await enqueue({ kind: "test:report", workspaceId: 1, actorUserId: 1, projectId: 2, query: q(2), reason: "manual" });
       expect(await runJob(id)).toBe("failed");
       expect((await read(1, 2)).state).toBe("error");
       expect(fake.calls).toBe(1);
     } finally {
-      await pg.query("UPDATE projects SET user_id = 1 WHERE id = 2");
+      await pg.query("UPDATE projects SET deleted_at = NULL WHERE id = 2");
     }
   });
 });

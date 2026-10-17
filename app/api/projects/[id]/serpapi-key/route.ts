@@ -6,8 +6,9 @@ import { serpKey, serpAccount } from "@/lib/providers/serpapi";
 // The SerpApi key as it applies to one project. Keys are now saved only as encrypted account credentials
 // (Settings → Account → API credentials, /api/account/credentials/serpapi):
 // - PUT     retired: new keys can't be stored in plain text on a project any more (410 with directions).
-// - DELETE  removes a legacy key still stored on the project (explicit), so it uses the account credential.
-// - POST    non-billable check of the key that applies to this project (SerpApi's free account endpoint).
+// - DELETE  removes a legacy key still stored on the project (a management action). It was never used for runs in
+//           the team model: paid runs use the acting person's own key.
+// - POST    non-billable check of the viewer's own key (SerpApi's free account endpoint).
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -29,7 +30,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   const id = await projectIdFor(ctx);
   if (id === null) return NextResponse.json({ error: "bad id" }, { status: 400 });
   const project = await removeSerpKey(user.id, id);
-  if (!project) return NextResponse.json({ error: "unknown project" }, { status: 404 });
+  if (!project) return NextResponse.json({ error: "unknown project, or you don't manage it" }, { status: 404 });
   return NextResponse.json({ project });
 }
 
@@ -43,7 +44,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   const project = await getProject(user.id, id);
   if (!project) return NextResponse.json({ error: "unknown project" }, { status: 404 });
   const key = await serpKey(user.id, id);
-  if (!key) return NextResponse.json({ error: "No SerpApi key applies to this project." }, { status: 404 });
+  if (!key) return NextResponse.json({ error: "You have no SerpApi key. Add your own in Account → API credentials." }, { status: 404 });
   try {
     const account = await serpAccount(key, true);
     return NextResponse.json({ ok: true, source: key.source, account });

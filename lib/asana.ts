@@ -60,7 +60,7 @@ export interface AsanaTask {
   completed: boolean;
   completed_at: string | null;
   due_on: string | null;
-  assignee: { name: string } | null;
+  assignee: { gid?: string; name: string } | null;
   permalink_url: string;
 }
 
@@ -68,7 +68,7 @@ export interface AsanaTask {
 export async function fetchProjectTasks(token: string, projectGid: string, sinceISO: string): Promise<AsanaTask[]> {
   const out: AsanaTask[] = [];
   let offset: string | null = null;
-  const optFields = "name,completed,completed_at,due_on,assignee.name,permalink_url";
+  const optFields = "name,completed,completed_at,due_on,assignee.gid,assignee.name,permalink_url";
   do {
     const params = new URLSearchParams({
       completed_since: sinceISO,

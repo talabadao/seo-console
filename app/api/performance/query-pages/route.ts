@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
-import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
+import { gscForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
 import { searchAnalyticsAll, type SearchType } from "@/lib/google/searchconsole";
 import { siteConfigFor } from "@/lib/siteConfig";
 
@@ -26,7 +27,8 @@ export async function GET(req: NextRequest) {
   if (!property || !start || !end) {
     return NextResponse.json({ error: "property, start and end required" }, { status: 400 });
   }
-  if (!(await siteConfigFor(user.id, property))) {
+  const gsc = await gscForProperty(user, property, p.get("projectId"));
+  if (!gsc || gsc.siteId == null || !(await siteConfigFor(gsc.siteId))) {
     return NextResponse.json({ error: "unknown property" }, { status: 404 });
   }
   const type = (SEARCH_TYPES.includes((p.get("searchType") || "web") as SearchType)
@@ -36,9 +38,9 @@ export async function GET(req: NextRequest) {
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await gsc.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true, message: e instanceof Error ? e.message : "" });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 

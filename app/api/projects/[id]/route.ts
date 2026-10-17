@@ -1,39 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import { currentUser } from "@/lib/session";
-import {
-  ProjectValidationError,
-  deleteProject,
-  updateProject,
-  type ProjectInput,
-} from "@/lib/projects";
+import { isDenied, manageProject, viewer } from "@/lib/access";
+import { ProjectValidationError, deleteProject, updateProject, type ProjectInput } from "@/lib/projects";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/** Edits project details and mappings: any management member (viewers get 403 with who can grant access). */
 export async function PUT(req: NextRequest, ctx: Ctx) {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const id = Number((await ctx.params).id);
-  if (!Number.isInteger(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
+  const user = await viewer();
+  if (isDenied(user)) return user;
+  const managed = await manageProject(user, (await ctx.params).id);
+  if (isDenied(managed)) return managed;
   const body = (await req.json().catch(() => ({}))) as ProjectInput;
   try {
-    const project = await updateProject(user.id, id, body);
+    const project = await updateProject(user.id, managed.id, body);
     if (!project) return NextResponse.json({ error: "unknown project" }, { status: 404 });
     return NextResponse.json({ project });
   } catch (e) {
-    if (e instanceof ProjectValidationError) {
-      return NextResponse.json({ error: e.message }, { status: 400 });
-    }
+    if (e instanceof ProjectValidationError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;
   }
 }
 
+/** Deletes the project (recoverable; queued work is cancelled, history kept): any management member. */
 export async function DELETE(_req: NextRequest, ctx: Ctx) {
-  const user = await currentUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const id = Number((await ctx.params).id);
-  if (!Number.isInteger(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
-  if (!(await deleteProject(user.id, id))) {
-    return NextResponse.json({ error: "unknown project" }, { status: 404 });
-  }
+  const user = await viewer();
+  if (isDenied(user)) return user;
+  const managed = await manageProject(user, (await ctx.params).id);
+  if (isDenied(managed)) return managed;
+  if (!(await deleteProject(user.id, managed.id))) return NextResponse.json({ error: "unknown project" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

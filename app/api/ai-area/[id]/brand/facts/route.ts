@@ -5,7 +5,7 @@ import type { FactVerdict } from "@/lib/ai-area/brand/types";
 
 /** Marks an AI-stated fact about the brand as correct or incorrect (null clears it). */
 export async function POST(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => null)) as { key?: unknown; verdict?: unknown } | null;
   const key = typeof body?.key === "string" ? body.key.slice(0, 200) : "";

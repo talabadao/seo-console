@@ -73,6 +73,37 @@ export function encryptFor(userId: number, provider: string, plaintext: string, 
   return { ciphertext: [iv, tag, data].map((b) => b.toString("base64")).join("."), keyId: ring.currentId };
 }
 
+/**
+ * Encrypts a secret bound to an arbitrary context string (GCM additional data), e.g. "google-connection:7:refresh".
+ * Used for workspace data connections, whose secrets belong to a connection rather than a person.
+ */
+export function encryptWithContext(context: string, plaintext: string, env: Env = process.env): { ciphertext: string; keyId: string } {
+  const ring = keyring(env);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", ring.keys.get(ring.currentId)!, iv);
+  cipher.setAAD(Buffer.from(context, "utf8"));
+  const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return { ciphertext: [iv, cipher.getAuthTag(), data].map((b) => b.toString("base64")).join("."), keyId: ring.currentId };
+}
+
+export function decryptWithContext(context: string, ciphertext: string, keyId: string, env: Env = process.env): string {
+  const key = keyring(env).keys.get(keyId);
+  if (!key) throw new CredentialStorageUnavailable(`no key with id "${keyId}" (needed to read a saved connection).`);
+  const [iv, tag, data] = ciphertext.split(".").map((p) => Buffer.from(p, "base64"));
+  if (!iv || !tag || !data) throw new Error("Malformed stored secret.");
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAAD(Buffer.from(context, "utf8"));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+}
+
+/** A ciphertext and its key id in one column ("<keyId>$<ciphertext>"), for short-lived secrets such as access tokens. */
+export const packSecret = (s: { ciphertext: string; keyId: string }) => `${s.keyId}$${s.ciphertext}`;
+export function unpackSecret(packed: string): { ciphertext: string; keyId: string } | null {
+  const at = packed.indexOf("$");
+  return at > 0 ? { keyId: packed.slice(0, at), ciphertext: packed.slice(at + 1) } : null;
+}
+
 /** Decrypts a stored ciphertext. Throws if the key id is unknown or the data was altered or moved. */
 export function decryptFor(userId: number, provider: string, ciphertext: string, keyId: string, env: Env = process.env): string {
   const ring = keyring(env);

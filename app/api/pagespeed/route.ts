@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { getProject } from "@/lib/projects";
+import { managementRequired } from "@/lib/access";
 import {
   MAX_PAGES_PER_PROJECT,
   addPage,
@@ -25,9 +26,9 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as { projectId?: number; url?: string };
   const projectId = Number(body.projectId);
-  if (!(await getProject(user.id, projectId))) {
-    return NextResponse.json({ error: "unknown project" }, { status: 404 });
-  }
+  const project = await getProject(user.id, projectId);
+  if (!project) return NextResponse.json({ error: "unknown project" }, { status: 404 });
+  if (!project.canManage) return managementRequired(project);
 
   const raw = (body.url ?? "").trim();
   let url: URL;
@@ -55,6 +56,7 @@ export async function DELETE(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const page = await pageFor(user.id, Number(req.nextUrl.searchParams.get("pageId")));
   if (!page) return NextResponse.json({ error: "unknown page" }, { status: 404 });
+  if (!page.project.canManage) return managementRequired(page.project);
   await removePage(page.id);
   return NextResponse.json({ ok: true });
 }

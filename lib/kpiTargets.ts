@@ -67,9 +67,10 @@ export function currentPeriod(timeZone: string | null, now = new Date()): string
   return now.toISOString().slice(0, 7);
 }
 
-export async function projectTimeZone(userId: number, gaPropertyId: string | null): Promise<string | null> {
-  if (!gaPropertyId) return null;
-  const r = (await db.prepare("SELECT time_zone FROM ga_properties WHERE user_id = ? AND property_id = ?").get(userId, gaPropertyId)) as
+/** The project's GA4 time zone, as discovered by its GA4 connection (null when unknown). */
+export async function projectTimeZone(project: { gaPropertyId: string | null; gaConnectionId: number | null }): Promise<string | null> {
+  if (!project.gaPropertyId || project.gaConnectionId == null) return null;
+  const r = (await db.prepare("SELECT time_zone FROM ga_properties WHERE connection_id = ? AND property_id = ?").get(project.gaConnectionId, project.gaPropertyId)) as
     | { time_zone: string | null }
     | undefined;
   return r?.time_zone ?? null;

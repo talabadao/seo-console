@@ -37,9 +37,10 @@ export async function POST(req: Request, ctx: RouteCtx) {
     propertyId: c.propertyId,
     spec: n.spec,
     period: periodFor(n.spec.preset, n.spec.compare, c.timeZone),
-    config: await projectConfigVersion(c.user, c.project),
+    config: await projectConfigVersion(c.project),
   };
-  const r = await readThrough<Ga4CustomQuery, CustomResult>({ kind: "ga4:custom", userId: c.user.id, projectId: c.project.id, query, waitMs: 20_000, force: body.refresh === true });
+  const force = body.refresh === true && c.project.canManage;
+  const r = await readThrough<Ga4CustomQuery, CustomResult>({ kind: "ga4:custom", workspaceId: c.project.workspaceId, actorUserId: c.user.id, projectId: c.project.id, query, waitMs: 20_000, force });
   if (r.payload) return NextResponse.json({ state: "live", result: r.payload, cache: cacheInfo(r) });
   if (r.state === "pending") return NextResponse.json({ state: "pending", message: "Fetching from GA4…" });
   return NextResponse.json({ state: "error", source: GA4_SOURCE, message: r.error ?? "The GA4 request failed." });

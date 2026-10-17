@@ -14,7 +14,7 @@ export interface RawTask {
   completed: boolean;
   completed_at: string | null;
   due_on: string | null;
-  assignee: { name: string } | null;
+  assignee: { gid?: string; name: string } | null;
   permalink_url: string | null;
 }
 
@@ -35,6 +35,7 @@ export function summarizeTasks(
     gid: t.gid,
     name: t.name,
     assignee: t.assignee?.name ?? null,
+    assigneeGid: t.assignee?.gid ?? null,
     dueOn: t.due_on,
     completedAt: t.completed_at,
     status: t.completed ? "completed" : t.due_on != null && t.due_on < month.today ? "overdue" : "open",

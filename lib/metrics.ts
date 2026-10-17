@@ -15,11 +15,12 @@ export interface BreakdownRow extends Totals {
   key: string;
 }
 
-export async function siteIdFor(userId: number, property: string): Promise<number | null> {
+/** The shared site row of a connection and Search Console property (null when not discovered). */
+export async function siteIdForConnection(connectionId: number, property: string): Promise<number | null> {
   const row = (await db
-    .prepare("SELECT id FROM sites WHERE user_id = ? AND property = ? AND source = 'google'")
-    .get(userId, property)) as { id: number } | undefined;
-  return row?.id ?? null;
+    .prepare("SELECT id FROM sites WHERE connection_id = ? AND property = ? AND source = 'google'")
+    .get(connectionId, property)) as { id: number } | undefined;
+  return row ? Number(row.id) : null;
 }
 
 /** Impression-weighted position, recomputed CTR. */

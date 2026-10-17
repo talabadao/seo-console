@@ -7,8 +7,10 @@
 import { createHash } from "node:crypto";
 import { db, tableExists } from "@/lib/db";
 import { userById } from "@/lib/session";
-import { getProject, type Project } from "@/lib/projects";
-import { aiDomainsFor, ownsGaProperty } from "@/lib/gaConfig";
+import { projectById, type Project } from "@/lib/projects";
+import { projectGsc } from "@/lib/access";
+import { ConnectionUnavailableError } from "@/lib/google/connections";
+import { aiDomainsForProject } from "@/lib/gaConfig";
 import { classifyGaFailure, cleanGaError, getGaMetadata, type GaFieldMeta } from "@/lib/ga4";
 import { ProviderBusyError } from "./providerHttp";
 import { runTemplate, type LeadSetup, type TemplateId, type TemplateResult } from "@/lib/v2/ga4reports/templates";
@@ -16,7 +18,7 @@ import { runCustomReport, type CustomResult } from "@/lib/v2/ga4reports/run";
 import type { ReportSpec } from "@/lib/v2/ga4reports/spec";
 import type { UserRow } from "@/lib/session";
 import type { PeriodInfo, Section, SummaryPart } from "@/lib/v2/summary/types";
-import { ga4Section, gaContext, googleToken, gscSection, healthSection, kpiSection, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
+import { ga4Section, gaContext, gscSection, healthSection, kpiSection, projectToken, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
 import { llmReport, type Granularity, type LlmMetric } from "@/lib/v2/llm/report";
 import { peek, registerKind } from "./cache";
 import { SeRankingError } from "@/lib/seranking/client";
@@ -66,11 +68,12 @@ class SectionFailed extends Error {}
 const isAccess = (e: unknown) => e instanceof AccessLostError || (e instanceof Error && /\b(401|403)\b|permission|forbidden/i.test(e.message));
 
 /**
- * A short hash of everything outside the period that changes a project's numbers: linked properties, Asana and
- * SE Ranking mappings, lead events, AI source domains and KPI targets. Part of every cache key, so changing any
- * of them makes the next read refetch instead of serving the old result.
+ * A short hash of everything outside the period that changes a project's numbers: linked properties and the shared
+ * connections that read them, Asana and SE Ranking mappings, lead events, the project's AI source domains and KPI
+ * targets. Part of every cache key, so changing any of them (including switching a mapping to another connection)
+ * makes the next read refetch instead of serving the old result. Never depends on who is viewing.
  */
-export async function projectConfigVersion(user: UserRow, project: Project): Promise<string> {
+export async function projectConfigVersion(project: Project): Promise<string> {
   const settings = (await tableExists("project_settings"))
     ? ((await db.prepare("SELECT lead_events, seranking_site_id FROM project_settings WHERE project_id = ?").get(project.id)) as Record<string, unknown> | undefined)
     : undefined;
@@ -79,30 +82,33 @@ export async function projectConfigVersion(user: UserRow, project: Project): Pro
     : undefined;
   const parts = [
     project.gscProperty,
+    project.gscConnectionId,
     project.gaPropertyId,
+    project.gaConnectionId,
     project.asanaProjectGid,
+    project.asanaConnectionId,
     project.websiteUrl,
     settings?.lead_events ?? null,
     settings?.seranking_site_id ?? null,
-    aiDomainsFor(user).join(","),
+    (await aiDomainsForProject(project.id)).join(","),
     targets ? `${targets.n}:${targets.at}` : null,
   ];
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
 }
 
-async function context(userId: number, projectId: number | null): Promise<{ user: UserRow; project: Project }> {
-  const user = await userById(userId);
-  if (!user) throw new AccessLostError("This account can no longer sign in.");
-  const project = projectId == null ? null : await getProject(user.id, projectId);
-  if (!project) throw new AccessLostError("The project is no longer this account's.");
-  return { user, project };
+/** The live workspace project a job is for (rechecked when it runs). */
+async function context(projectId: number | null): Promise<{ project: Project }> {
+  const project = projectId == null ? null : await projectById(projectId);
+  if (!project) throw new AccessLostError("The project was deleted or is no longer in the workspace.");
+  return { project };
 }
 
-async function token(user: UserRow, source: string): Promise<string> {
-  const t = await googleToken(user, source);
+/** A Google token through the project's mapped connection. */
+async function token(project: Project, kind: "gsc" | "ga4", source: string): Promise<string> {
+  const t = await projectToken(project, kind, source);
   if ("token" in t) return t.token;
-  // Expired or revoked Google access: hide cached Google data until the account reconnects.
-  if (t.error.state === "unavailable") throw new AccessLostError(t.error.message ?? "Google access expired.");
+  // A connection to reconnect, or no mapping: hide cached Google data until it is fixed.
+  if (t.error.state === "unavailable" || t.error.state === "not-connected") throw new AccessLostError(t.error.message ?? "Google access is unavailable.");
   throw new SectionFailed(t.error.message ?? "Couldn't get Google access.");
 }
 
@@ -128,13 +134,17 @@ for (const part of ["gsc", "ga4", "kpi", "tasks", "health", "rankings"] as const
     provider: part === "gsc" ? "gsc" : part === "ga4" || part === "kpi" ? "ga4" : part === "tasks" ? "asana" : part === "rankings" ? "seranking" : "local",
     freshMs: FRESH[`summary:${part}`],
     isAccessError: isAccess,
-    async run({ userId, projectId, query }) {
-      const { user, project } = await context(userId, projectId);
-      if (part === "gsc") return settle(await gscSection(user.id, await token(user, "Google Search Console"), project, query.period, query.detail));
-      if (part === "ga4") return settle(await ga4Section(user, await token(user, "Google Analytics 4"), project, query.period, query.detail));
-      if (part === "kpi") return settle(await kpiSection(user, await token(user, "Monthly targets (KPI settings) and GA4"), project));
-      if (part === "tasks") return settle(await tasksSection(user, project));
-      if (part === "health") return settle(await healthSection(user, project));
+    async run({ projectId, query }) {
+      const { project } = await context(projectId);
+      if (part === "gsc") {
+        const access = await projectGsc(project);
+        const siteId = access instanceof ConnectionUnavailableError ? null : access.siteId;
+        return settle(await gscSection(siteId, await token(project, "gsc", "Google Search Console"), project, query.period, query.detail));
+      }
+      if (part === "ga4") return settle(await ga4Section(await token(project, "ga4", "Google Analytics 4"), project, query.period, query.detail));
+      if (part === "kpi") return settle(await kpiSection(await token(project, "ga4", "Monthly targets (KPI settings) and GA4"), project));
+      if (part === "tasks") return settle(await tasksSection(project));
+      if (part === "health") return settle(await healthSection(project));
       return settle(await rankingsSection(project, query.period));
     },
   });
@@ -154,17 +164,17 @@ registerKind<LlmQuery, unknown>({
   provider: "ga4",
   freshMs: FRESH["llm-traffic"],
   isAccessError: isAccess,
-  async run({ userId, projectId, query }) {
-    const { user, project } = await context(userId, projectId);
-    if (!project.gaPropertyId) throw new SectionFailed("No GA4 property linked.");
-    const t = await token(user, "Google Analytics 4");
+  async run({ projectId, query, workspaceId }) {
+    const { project } = await context(projectId);
+    if (!project.gaPropertyId || project.gaConnectionId == null) throw new SectionFailed("No GA4 property linked.");
+    const t = await token(project, "ga4", "Google Analytics 4");
     try {
-      const { timeZone } = await gaContext(user, t, project.gaPropertyId);
+      const { timeZone } = await gaContext(project.gaConnectionId, t, project.gaPropertyId);
       const report = await llmReport({
         token: t,
         propertyId: project.gaPropertyId,
         timeZone,
-        aiDomains: aiDomainsFor(user),
+        aiDomains: await aiDomainsForProject(project.id),
         period: query.period,
         metric: query.metric,
         granularity: query.granularity,
@@ -196,8 +206,8 @@ registerKind<SeReportQuery, SeReportPayload>({
   provider: "seranking",
   freshMs: FRESH["seranking:report"],
   isAccessError: (e) => e instanceof AccessLostError || (e instanceof SeRankingError && (e.status === 401 || e.status === 403)),
-  async run({ userId, projectId, query }) {
-    const { project } = await context(userId, projectId);
+  async run({ projectId, query, workspaceId }) {
+    const { project } = await context(projectId);
     const sites = await listSites();
     const chosen = await seRankingSiteFor(project.id);
     const site = chosen ? sites.find((x) => x.id === chosen) : matchSite(sites, project.websiteUrl);
@@ -258,8 +268,8 @@ registerKind<SeModuleQuery, SeModulePayload<{ summary: SeSummary | null; engines
   provider: "seranking",
   freshMs: FRESH["seranking:report"],
   isAccessError: seAccess,
-  async run({ userId, projectId }) {
-    const { project } = await context(userId, projectId);
+  async run({ projectId }) {
+    const { project } = await context(projectId);
     const m = await siteForProject(project);
     if (!m.site) return { payload: { status: "not-mapped", chosenMissing: m.chosenMissing } };
     const site = m.site;
@@ -299,14 +309,14 @@ registerKind<SeModuleQuery, SeModulePayload<{ engines: SeEngine[]; keywords: SeK
   freshMs: 24 * H,
   freshFor: (p) => (p.status === "ok" && p.competition?.coverage && !p.competition.coverage.complete ? COMPETITION_CONTINUE_MS : 24 * H),
   isAccessError: seAccess,
-  async run({ userId, projectId, query }) {
-    const { project } = await context(userId, projectId);
+  async run({ projectId, query, workspaceId }) {
+    const { project } = await context(projectId);
     const m = await siteForProject(project);
     if (!m.site) return { payload: { status: "not-mapped", chosenMissing: m.chosenMissing } };
     const site = m.site;
     const to = isoDay(Date.now());
     const from30 = isoDay(Date.now() - 30 * DAY);
-    const earlier = await peek<SeModulePayload<{ competition: SeCompetition | null; rivals: SeRival[] }>>({ kind: "seranking:competition", userId, query });
+    const earlier = await peek<SeModulePayload<{ competition: SeCompetition | null; rivals: SeRival[] }>>({ kind: "seranking:competition", workspaceId, query });
     const before = earlier.payload?.status === "ok" ? earlier.payload : null;
     const errors: SeSnapshot["errors"] = {};
     const [engines, names, keywords, competitors] = await Promise.all([
@@ -351,8 +361,8 @@ registerKind<SeModuleQuery, SeModulePayload<{ audit: SeAudit | null }>>({
   provider: "seranking",
   freshMs: 24 * H,
   isAccessError: seAccess,
-  async run({ userId, projectId }) {
-    const { project } = await context(userId, projectId);
+  async run({ projectId }) {
+    const { project } = await context(projectId);
     const m = await siteForProject(project);
     if (!m.site) return { payload: { status: "not-mapped", chosenMissing: m.chosenMissing } };
     const audit = await fetchAudit(m.site.id, hostOf(m.site.url));
@@ -368,7 +378,11 @@ registerKind<SeModuleQuery, SeModulePayload<{ linkProfile: SeLinkProfile; compet
   manualOnly: true,
   isAccessError: seAccess,
   async run({ userId, projectId }) {
-    const { user, project } = await context(userId, projectId);
+    const { project } = await context(projectId);
+    // Manual only: the person who asked for this paid refresh is the payer; a refresh with no actor never runs.
+    if (userId == null) throw new SectionFailed("A paid refresh needs the person who asked for it.");
+    const user = await userById(userId);
+    if (!user) throw new SectionFailed("The person who asked for this refresh can no longer act.");
     const m = await siteForProject(project);
     if (!m.site) return { payload: { status: "not-mapped", chosenMissing: m.chosenMissing } };
     const decision = linkProfileDecision(user.id);
@@ -426,11 +440,12 @@ export interface Ga4MetadataQuery {
 }
 
 /** The project still uses the property the query was made for, and the account still lists it. */
-async function ga4Context(userId: number, projectId: number | null, propertyId: string) {
-  const { user, project } = await context(userId, projectId);
+async function ga4Context(projectId: number | null, propertyId: string) {
+  const { project } = await context(projectId);
   if (project.gaPropertyId !== propertyId) throw new AccessLostError("The project's GA4 property changed.");
-  if (!(await ownsGaProperty(user.id, propertyId))) throw new AccessLostError("This account no longer lists the linked GA4 property.");
-  return { user, project, token: await token(user, "Google Analytics 4") };
+  const listed = project.gaConnectionId != null && (await db.prepare("SELECT 1 FROM ga_properties WHERE connection_id = ? AND property_id = ?").get(project.gaConnectionId, propertyId));
+  if (!listed) throw new AccessLostError("The project's Google connection no longer lists the linked GA4 property.");
+  return { project, token: await token(project, "ga4", "Google Analytics 4") };
 }
 
 /** GA4 rejected the request itself (HTTP 400): the same definition would fail again, so it isn't retried. */
@@ -453,8 +468,8 @@ registerKind<Ga4TemplateQuery, TemplateResult>({
   // GA4 reports refresh when read, not on the 4-hourly schedule: many views and saved reports, explicit use.
   noSchedule: true,
   isAccessError: isAccess,
-  async run({ userId, projectId, query }) {
-    const { token: t } = await ga4Context(userId, projectId, query.propertyId);
+  async run({ projectId, query }) {
+    const { token: t } = await ga4Context(projectId, query.propertyId);
     try {
       const payload = await runTemplate({
         token: t,
@@ -477,8 +492,8 @@ registerKind<Ga4CustomQuery, CustomResult>({
   freshMs: 2 * H,
   noSchedule: true,
   isAccessError: isAccess,
-  async run({ userId, projectId, query }) {
-    const { token: t } = await ga4Context(userId, projectId, query.propertyId);
+  async run({ projectId, query }) {
+    const { token: t } = await ga4Context(projectId, query.propertyId);
     try {
       return { payload: await runCustomReport({ token: t, propertyId: query.propertyId, spec: query.spec, period: query.period }) };
     } catch (e) {
@@ -494,8 +509,8 @@ registerKind<Ga4MetadataQuery, { dimensions: GaFieldMeta[]; metrics: GaFieldMeta
   freshMs: 24 * H,
   noSchedule: true,
   isAccessError: isAccess,
-  async run({ userId, projectId, query }) {
-    const { token: t } = await ga4Context(userId, projectId, query.propertyId);
+  async run({ projectId, query }) {
+    const { token: t } = await ga4Context(projectId, query.propertyId);
     try {
       return { payload: await getGaMetadata(t, query.propertyId) };
     } catch (e) {

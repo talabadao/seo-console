@@ -29,7 +29,9 @@ export async function GET(req: NextRequest) {
     if (!(await syncReady())) return { status: "ok", details: { note: "migration 0008 has not run" } };
     const queued = await enqueueDueRefreshes({ activeSinceMs: 7 * 24 * 3600_000, limit: 500 });
     const run = await runDueJobs({ limit: 400, budgetMs: 240_000 });
-    const users = (await db.prepare("SELECT DISTINCT user_id FROM report_cache WHERE last_read_at >= ?").all(Date.now() - 7 * 24 * 3600_000)) as Array<{ user_id: number }>;
+    // Every active team member: their alerts come from the shared results of the projects they manage and from
+    // the Asana tasks assigned to them (lib/notifications/store.ts routing).
+    const users = (await db.prepare("SELECT id AS user_id FROM users WHERE kind = 'person' AND status = 'active' AND workspace_id IS NOT NULL").all()) as Array<{ user_id: number }>;
     let notified = 0;
     for (const u of users) notified += (await runRules(Number(u.user_id), { force: true }).catch(() => ({ created: 0 }))).created;
     return {

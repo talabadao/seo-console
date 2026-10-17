@@ -63,7 +63,7 @@ export function normalizeSettings(raw: unknown): NotificationSettings {
 export type Severity = "info" | "warning" | "critical";
 
 export interface Candidate {
-  rule: "performance" | "rankings" | "tasks" | "content" | "docs" | "digest";
+  rule: "performance" | "rankings" | "tasks" | "content" | "docs" | "digest" | "spending";
   dedupeKey: string;
   projectId: number | null;
   severity: Severity;
@@ -71,6 +71,11 @@ export interface Candidate {
   body: string;
   href: string | null;
   sourceAt: number;
+  /**
+   * Personal task alerts (upcoming / overdue) go only to the team member whose verified Asana user is this
+   * assignee; other candidates go to the project's management members.
+   */
+  assigneeGid?: string | null;
 }
 
 /** One saved section from the shared cache. */
@@ -177,7 +182,7 @@ function tasks(s: CachedSection, cfg: NotificationSettings["tasks"], now: number
     list.slice(0, MAX_PER_KIND).forEach((t) => out.push(make(t)));
     if (list.length > MAX_PER_KIND) {
       const n = list.length - MAX_PER_KIND;
-      out.push({ ...make(list[MAX_PER_KIND]), dedupeKey: `${summaryKey}:${s.projectId}:${d.today}`, title: summaryTitle(n), body: `${n} more in ${s.projectName}'s Asana project.` });
+      out.push({ ...make(list[MAX_PER_KIND]), assigneeGid: undefined, dedupeKey: `${summaryKey}:${s.projectId}:${d.today}`, title: summaryTitle(n), body: `${n} more in ${s.projectName}'s Asana project.` });
     }
   };
   if (cfg.overdue) {
@@ -187,6 +192,7 @@ function tasks(s: CachedSection, cfg: NotificationSettings["tasks"], now: number
         rule: "tasks",
         dedupeKey: `tasks-overdue:${s.projectId}:${t.gid}:${t.dueOn}`,
         projectId: s.projectId,
+        assigneeGid: t.assigneeGid ?? null,
         severity: "warning",
         title: `${s.projectName}: overdue task`,
         body: `“${t.name}” was due ${t.dueOn}${t.assignee ? ` (${t.assignee})` : ""}.`,
@@ -204,6 +210,7 @@ function tasks(s: CachedSection, cfg: NotificationSettings["tasks"], now: number
       rule: "tasks",
       dedupeKey: `tasks-upcoming:${s.projectId}:${t.gid}:${t.dueOn}`,
       projectId: s.projectId,
+      assigneeGid: t.assigneeGid ?? null,
       severity: "info",
       title: `${s.projectName}: task due ${t.dueOn === d.today ? "today" : t.dueOn}`,
       body: `“${t.name}”${t.assignee ? ` (${t.assignee})` : ""}.`,

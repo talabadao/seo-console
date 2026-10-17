@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
-import { GoogleReauthRequiredError, accessTokenFor, hasAnalyticsScope } from "@/lib/google/oauth";
-import { ownsGaProperty, aiDomainsFor } from "@/lib/gaConfig";
+import { gaForProperty } from "@/lib/access";
+import { isReconnectError } from "@/lib/google/connections";
+import { aiDomainsForProject } from "@/lib/gaConfig";
 import { cleanGaError, getPropertyMeta, propertyNow, Semaphore } from "@/lib/ga4";
 import {
   availableEvents,
@@ -19,23 +20,22 @@ export const maxDuration = 300;
 export async function GET(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!hasAnalyticsScope(user.google_scopes)) {
-    return NextResponse.json({ needsReconnect: true }, { status: 200 });
-  }
 
   const p = req.nextUrl.searchParams;
   const propertyId = p.get("propertyId");
-  if (!propertyId || !(await ownsGaProperty(user.id, propertyId))) {
+  // Any team member may read a property mapped by a project they can see, through that project's connection.
+  const ga = await gaForProperty(user, propertyId);
+  if (!propertyId || !ga) {
     return NextResponse.json({ error: "unknown or unlinked GA property" }, { status: 404 });
   }
 
-  const aiDomains = aiDomainsFor(user);
+  const aiDomains = await aiDomainsForProject(ga.project.id);
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await ga.token();
   } catch (e) {
-    if (e instanceof GoogleReauthRequiredError) return NextResponse.json({ needsReconnect: true });
+    if (isReconnectError(e)) return NextResponse.json({ needsReconnect: true });
     return NextResponse.json({ error: e instanceof Error ? e.message : "auth" }, { status: 502 });
   }
 
@@ -44,8 +44,8 @@ export async function GET(req: NextRequest) {
   // instead would drift by the property's UTC offset, under/overcounting a
   // partial day at every window boundary versus a reference report.
   const cachedTz = (await db
-    .prepare("SELECT time_zone FROM ga_properties WHERE user_id = ? AND property_id = ?")
-    .get(user.id, propertyId)) as { time_zone: string | null } | undefined;
+    .prepare("SELECT time_zone FROM ga_properties WHERE connection_id = ? AND property_id = ?")
+    .get(ga.connectionId, propertyId)) as { time_zone: string | null } | undefined;
   let timeZone = cachedTz?.time_zone ?? null;
   if (!timeZone) {
     const meta = await getPropertyMeta(token, propertyId);
@@ -53,9 +53,9 @@ export async function GET(req: NextRequest) {
     if (timeZone) {
       await db
         .prepare(
-          "UPDATE ga_properties SET time_zone = COALESCE(time_zone, ?) WHERE user_id = ? AND property_id = ?",
+          "UPDATE ga_properties SET time_zone = COALESCE(time_zone, ?) WHERE connection_id = ? AND property_id = ?",
         )
-        .run(timeZone, user.id, propertyId);
+        .run(timeZone, ga.connectionId, propertyId);
     }
   }
 

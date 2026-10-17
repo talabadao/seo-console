@@ -1,8 +1,7 @@
 import { db, rawSql } from "@/lib/db";
-import { GoogleReauthRequiredError, accessTokenFor } from "@/lib/google/oauth";
+import { isReconnectError, type GoogleTokenSource } from "@/lib/google/connections";
 import { inspectUrl, listSitemaps, type UrlInspectionResult } from "@/lib/google/searchconsole";
 import { publishUrl, serviceAccountConfigured } from "@/lib/google/indexingApi";
-import type { UserRow } from "@/lib/session";
 import { checkEligibility } from "@/lib/indexingEligibility";
 
 export interface SiteRow {
@@ -96,7 +95,7 @@ async function collectFromSitemap(
 }
 
 export async function discoverSitemapUrls(
-  user: UserRow,
+  google: GoogleTokenSource,
   site: SiteRow,
   manualSitemapUrl?: string,
 ): Promise<{ found: number; sitemaps: string[] }> {
@@ -106,7 +105,7 @@ export async function discoverSitemapUrls(
 
   // 1. Sitemaps submitted in Search Console
   try {
-    const token = await accessTokenFor(user);
+    const token = await google.token();
     for (const s of await listSitemaps(token, site.property)) {
       if (s.path) roots.add(s.path);
     }
@@ -345,7 +344,7 @@ export async function persistInspection(site: SiteRow, url: string, r: UrlInspec
 }
 
 export async function runIndexCheck(
-  user: UserRow,
+  google: GoogleTokenSource,
   site: SiteRow,
   opts: { max?: number; interactive?: boolean } = {},
 ): Promise<{ checked: number; quotaLeft: number; message?: string; needsReconnect?: boolean }> {
@@ -382,7 +381,7 @@ export async function runIndexCheck(
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await google.token();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await db
@@ -392,7 +391,7 @@ export async function runIndexCheck(
       checked: 0,
       quotaLeft: await quotaLeft(site.id),
       message: msg,
-      needsReconnect: e instanceof GoogleReauthRequiredError,
+      needsReconnect: isReconnectError(e),
     };
   }
 
@@ -546,7 +545,7 @@ function emptyLive(url: string, ok: boolean, error: string | null): LiveInspecti
  * (source 'manual') so they show up in the main table, history and movements.
  */
 export async function inspectUrlsLive(
-  user: UserRow,
+  google: GoogleTokenSource,
   site: SiteRow,
   rawUrls: string[],
 ): Promise<{ results: LiveInspection[]; quotaLeft: number; needsReconnect?: boolean; error?: string }> {
@@ -555,12 +554,12 @@ export async function inspectUrlsLive(
 
   let token: string;
   try {
-    token = await accessTokenFor(user);
+    token = await google.token();
   } catch (e) {
     return {
       results: [],
       quotaLeft: await quotaLeft(site.id),
-      needsReconnect: e instanceof GoogleReauthRequiredError,
+      needsReconnect: isReconnectError(e),
       error: e instanceof Error ? e.message : String(e),
     };
   }

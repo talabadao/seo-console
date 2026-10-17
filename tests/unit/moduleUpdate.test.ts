@@ -48,8 +48,8 @@ const preview = (extra: Record<string, string> = {}) => ({ VERCEL_ENV: "preview"
 beforeAll(async () => {
   for (const s of BASELINE_STATEMENTS) await pg.exec(s);
   for (const m of MIGRATIONS.slice(1)) for (const s of m.statements) await pg.exec(s);
-  await pg.exec(`INSERT INTO users (email, created_at, updated_at) VALUES ('tin@artemisdigital.com', 0, 0), ('analytics@artemisdigital.com', 0, 0);
-    INSERT INTO projects (id, user_id, name, website_url, created_at, updated_at) VALUES (7, 1, 'Wewine', 'https://wewine.vn/', 0, 0), (8, 1, 'Other', 'https://other.example/', 0, 0), (9, 2, 'Theirs', 'https://theirs.example/', 0, 0);`);
+  await pg.exec(`INSERT INTO users (email, created_at, updated_at, workspace_id, kind) VALUES ('tin@artemisdigital.com', 0, 0, 1, 'person'), ('analytics@artemisdigital.com', 0, 0, 1, 'shared-connection');
+    INSERT INTO projects (id, user_id, name, website_url, created_at, updated_at, workspace_id) VALUES (7, 1, 'Wewine', 'https://wewine.vn/', 0, 0, 1), (8, 1, 'Other', 'https://other.example/', 0, 0, 1), (9, 2, 'Theirs', 'https://theirs.example/', 0, 0, 1);`);
 });
 beforeEach(async () => {
   vi.stubEnv("CREDENTIALS_ENCRYPTION_KEY", KEY);
@@ -121,7 +121,7 @@ describe("manual-only datasets", () => {
 
   it("plain reads never fetch, cold or stale; the scheduler skips them; only an explicit refresh does", async () => {
     calls = 0;
-    const read = (force = false) => readThrough<{ projectId: number }, { n: number }>({ kind: "test:manual", userId: 1, projectId: 7, query: { projectId: 7 }, waitMs: 2000, force });
+    const read = (force = false) => readThrough<{ projectId: number }, { n: number }>({ kind: "test:manual", workspaceId: 1, actorUserId: 1, projectId: 7, query: { projectId: 7 }, waitMs: 2000, force });
     expect((await read()).state).toBe("pending");
     expect(calls).toBe(0);
     expect((await read(true)).payload).toEqual({ n: 1 });
@@ -130,7 +130,7 @@ describe("manual-only datasets", () => {
     expect(await enqueueDueRefreshes({ activeSinceMs: 86_400_000, limit: 10 })).toBe(0);
     expect(calls).toBe(1);
     // A job queued some other way still runs (it's the explicit path's mechanism).
-    const id = await enqueue({ kind: "test:manual", userId: 1, projectId: 7, query: { projectId: 7 }, reason: "manual" });
+    const id = await enqueue({ kind: "test:manual", workspaceId: 1, actorUserId: 1, projectId: 7, query: { projectId: 7 }, reason: "manual" });
     await pg.query("UPDATE report_cache SET fetched_at = 0");
     expect(await runJob(id)).toBe("done");
     expect(calls).toBe(2);

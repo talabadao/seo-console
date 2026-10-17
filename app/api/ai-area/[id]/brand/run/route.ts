@@ -11,7 +11,7 @@ export const maxDuration = 300;
  * owners only; there's no cron path (scheduled runs are off in this phase).
  */
 export async function POST(req: NextRequest, ctx: Ctx) {
-  const g = await guard(ctx);
+  const g = await guard(ctx, { manage: true });
   if ("error" in g) return g.error;
   const body = (await req.json().catch(() => ({}))) as { runId?: unknown };
   try {

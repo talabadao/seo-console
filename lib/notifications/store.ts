@@ -1,6 +1,12 @@
-// In-app notifications (migration 0010): created from persisted sync results (./rules.ts), Docs publications and
-// a weekly digest; listed, filtered and marked read/unread by the account that owns them. Nothing leaves the app:
-// no email, Slack or Asana messages.
+// In-app notifications (migration 0010): created from persisted shared results (./rules.ts), Docs publications
+// and a weekly digest; one inbox and read state per User. Nothing leaves the app: no email, Slack or Asana messages.
+//
+// Routing (docs/seo-console-v2/WORKSPACE-MEMBERS.md, section 7):
+// - performance, rankings and completed-task progress: the project's management members (the primary manager is
+//   one), unless they muted the project or the category. Viewing a project alone subscribes nobody.
+// - upcoming / overdue task alerts: only the team member whose verified Asana user is the assignee, across every
+//   visible project — never everyone's tasks to every editor.
+// - spending failures: the payer and the project's managers (notifySpendingFailure).
 
 import { db, tableExists } from "@/lib/db";
 import { scopeOf } from "@/lib/sync/cache";
@@ -57,18 +63,49 @@ export async function insertCandidates(userId: number, candidates: Candidate[]):
   return n;
 }
 
-/** Saved sections this account's projects have in the shared cache (the account's own scope only). */
-async function savedSections(userId: number): Promise<CachedSection[]> {
+export const MUTE_CATEGORIES = ["performance", "rankings", "tasks", "content"] as const;
+export type MuteCategory = (typeof MUTE_CATEGORIES)[number];
+
+/** The User's mutes: project 0 = every project. */
+export async function listMutes(userId: number): Promise<Array<{ projectId: number; category: string }>> {
+  if (!(await tableExists("notification_mutes"))) return [];
+  const rows = (await db.prepare("SELECT project_id, category FROM notification_mutes WHERE user_id = ? ORDER BY project_id, category").all(userId)) as Array<{ project_id: number; category: string }>;
+  return rows.map((r) => ({ projectId: Number(r.project_id), category: r.category }));
+}
+
+/** Mutes or unmutes a project (or every project: 0) for one category or "all". Personal; nobody else can change it. */
+export async function setMute(userId: number, projectId: number, category: string, muted: boolean): Promise<void> {
+  if (category !== "all" && !(MUTE_CATEGORIES as readonly string[]).includes(category)) throw new Error("Unknown notification category.");
+  if (muted) {
+    await db.prepare("INSERT INTO notification_mutes (user_id, project_id, category, muted_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING").run(userId, projectId, category, Date.now());
+  } else {
+    await db.prepare("DELETE FROM notification_mutes WHERE user_id = ? AND project_id = ? AND category = ?").run(userId, projectId, category);
+  }
+}
+
+const ruleCategory = (rule: string): MuteCategory | null => ((MUTE_CATEGORIES as readonly string[]).includes(rule) ? (rule as MuteCategory) : null);
+
+interface RoutedSection extends CachedSection {
+  /** The User manages this project (subscribed to its project alerts by default). */
+  manages: boolean;
+}
+
+/** Saved shared sections of the User's workspace, with whether the User manages each project. */
+async function savedSections(userId: number): Promise<RoutedSection[]> {
   if (!(await tableExists("report_cache"))) return [];
+  const ws = (await db.prepare("SELECT workspace_id FROM users WHERE id = ?").get(userId)) as { workspace_id: number | null } | undefined;
+  if (!ws?.workspace_id) return [];
   const rows = (await db
     .prepare(
-      `SELECT c.kind, c.project_id, p.name, c.query, c.payload, c.fetched_at FROM report_cache c
-         JOIN projects p ON p.id = c.project_id AND p.user_id = ?
+      `SELECT c.kind, c.project_id, p.name, c.query, c.payload, c.fetched_at,
+              EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = p.id AND m.user_id = ?) AS manages
+         FROM report_cache c
+         JOIN projects p ON p.id = c.project_id AND p.workspace_id = ? AND p.deleted_at IS NULL
         WHERE c.scope = ? AND c.kind IN ('summary:gsc', 'summary:ga4', 'summary:rankings', 'summary:tasks')
           AND c.payload IS NOT NULL AND c.access_error IS NULL AND c.fetched_at IS NOT NULL
-        ORDER BY c.fetched_at DESC LIMIT 2000`,
+        ORDER BY c.fetched_at DESC LIMIT 4000`,
     )
-    .all(userId, scopeOf(userId))) as Array<Record<string, unknown>>;
+    .all(userId, ws.workspace_id, scopeOf(Number(ws.workspace_id)))) as Array<Record<string, unknown>>;
   const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
   return rows.map((r) => ({
     kind: String(r.kind),
@@ -77,7 +114,75 @@ async function savedSections(userId: number): Promise<CachedSection[]> {
     query: parse(r.query) as CachedSection["query"],
     payload: parse(r.payload) as CachedSection["payload"],
     fetchedAt: Number(r.fetched_at),
+    manages: Boolean(r.manages),
   }));
+}
+
+type TaskPayload = { overdueTasks?: Array<{ assigneeGid?: string | null }>; upcoming?: Array<{ assigneeGid?: string | null }>; recentlyCompleted?: unknown[] };
+
+/**
+ * The candidates this User should receive: project alerts of the projects they manage (not muted), and personal
+ * task alerts for tasks assigned to their verified Asana user in any visible project.
+ */
+export async function candidatesForUser(userId: number, settings: NotificationSettings, now: number): Promise<Candidate[]> {
+  const sections = await savedSections(userId);
+  const mutes = await listMutes(userId);
+  const muted = (projectId: number, category: string) =>
+    mutes.some((m) => (m.projectId === 0 || m.projectId === projectId) && (m.category === "all" || m.category === category));
+  const me = (await db.prepare("SELECT asana_user_gid FROM users WHERE id = ?").get(userId)) as { asana_user_gid: string | null } | undefined;
+  const gid = me?.asana_user_gid ?? null;
+  const forManager: CachedSection[] = [];
+  const forAssignee: CachedSection[] = [];
+  for (const s of sections) {
+    const data = (s.payload as { data?: TaskPayload }).data;
+    if (s.kind === "summary:tasks" && data) {
+      // Managers: project progress (completed tasks) only.
+      if (s.manages) forManager.push({ ...s, payload: { ...s.payload, data: { ...data, overdueTasks: [], upcoming: [] } } as CachedSection["payload"] });
+      // The assignee: their own upcoming and overdue tasks, from any visible project.
+      if (gid) {
+        const mine = (list?: Array<{ assigneeGid?: string | null }>) => (list ?? []).filter((t) => t.assigneeGid === gid);
+        forAssignee.push({ ...s, payload: { ...s.payload, data: { ...data, overdueTasks: mine(data.overdueTasks), upcoming: mine(data.upcoming), recentlyCompleted: [] } } as CachedSection["payload"] });
+      }
+    } else if (s.manages) {
+      forManager.push(s);
+    }
+  }
+  const out = [...candidatesFrom(forManager, settings, now), ...candidatesFrom(forAssignee, settings, now)];
+  const seen = new Set<string>();
+  return out.filter((c) => {
+    if (seen.has(c.dedupeKey)) return false;
+    seen.add(c.dedupeKey);
+    const cat = ruleCategory(c.rule);
+    return !(c.projectId != null && cat && muted(c.projectId, cat));
+  });
+}
+
+/**
+ * A paid job couldn't run (missing key, budget exhausted, payer inactive, access lost): the payer and the project's
+ * managers are told, without secrets or anyone's spending details.
+ */
+export async function notifySpendingFailure(opts: { projectId: number; payerUserId: number | null; jobKey: string; reason: string; now?: number }): Promise<number> {
+  if (!(await notificationsReady())) return 0;
+  const now = opts.now ?? Date.now();
+  const p = (await db.prepare("SELECT name FROM projects WHERE id = ?").get(opts.projectId)) as { name: string } | undefined;
+  const managers = ((await db.prepare("SELECT user_id FROM project_members WHERE project_id = ?").all(opts.projectId)) as Array<{ user_id: number }>).map((r) => Number(r.user_id));
+  const recipients = [...new Set([...(opts.payerUserId != null ? [opts.payerUserId] : []), ...managers])];
+  let n = 0;
+  for (const userId of recipients) {
+    n += await insertCandidates(userId, [
+      {
+        rule: "spending",
+        dedupeKey: `spending:${opts.projectId}:${opts.jobKey}`,
+        projectId: opts.projectId,
+        severity: "warning",
+        title: `${p?.name ?? "A project"}: a paid run was paused`,
+        body: opts.reason.slice(0, 300),
+        href: `/p/${opts.projectId}/settings/project/sharing`,
+        sourceAt: now,
+      },
+    ]);
+  }
+  return n;
 }
 
 /**
@@ -96,13 +201,15 @@ export async function runRules(userId: number, opts: { force?: boolean; now?: nu
     .run(now, userId, Boolean(opts.force), now - RUN_EVERY_MS);
   if (!claimed.count) return { ran: false, created: 0 };
   const settings = await getSettings(userId);
-  let created = await insertCandidates(userId, candidatesFrom(await savedSections(userId), settings, now));
+  let created = await insertCandidates(userId, await candidatesForUser(userId, settings, now));
   if (settings.digest.enabled && new Date(now).getUTCDay() !== 0) {
     // The digest covers the 7 days before it's created; Monday–Saturday (UTC) create it if this week has none.
     const counts = (await db
       .prepare("SELECT rule, COUNT(*)::int AS n FROM notifications WHERE user_id = ? AND rule <> 'digest' AND created_at >= ? GROUP BY rule")
       .all(userId, now - 7 * 86_400_000)) as Array<{ rule: string; n: number }>;
-    const projects = (await db.prepare("SELECT COUNT(*)::int AS n FROM projects WHERE user_id = ?").get(userId)) as { n: number };
+    const projects = (await db
+      .prepare("SELECT COUNT(*)::int AS n FROM project_members m JOIN projects p ON p.id = m.project_id AND p.deleted_at IS NULL WHERE m.user_id = ?")
+      .get(userId)) as { n: number };
     created += await insertCandidates(userId, [digestCandidate(Object.fromEntries(counts.map((c) => [c.rule, Number(c.n)])), Number(projects.n), now)]);
   }
   return { ran: true, created };

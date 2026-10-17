@@ -63,10 +63,11 @@ export const allowanceKeys = {
   previewSerpTotal: () => "preview-serpapi-test:total",
   /** Earlier per-project allowances (before the test project was changed): kept as history and counted into the total. */
   previewSerp: (projectId: number) => `preview-serpapi-test:project:${projectId}`,
-  projectSerpMonth: (projectId: number, now: Date) => `serpapi-month:project:${projectId}:${month(now)}`,
+  /** A person's own monthly limit for one project: personal (shared projects never pool one person's limit with another's). */
+  projectSerpMonth: (userId: number, projectId: number, now: Date) => `serpapi-month:user:${userId}:project:${projectId}:${month(now)}`,
   accountSerpMonth: (userId: number, now: Date) => `serpapi-month:user:${userId}:${month(now)}`,
   accountModelDay: (userId: number, now: Date) => `llm-usd:user:${userId}:${day(now)}`,
-  projectModelMonth: (projectId: number, now: Date) => `llm-usd-month:project:${projectId}:${month(now)}`,
+  projectModelMonth: (userId: number, projectId: number, now: Date) => `llm-usd-month:user:${userId}:project:${projectId}:${month(now)}`,
 };
 
 /**
@@ -119,10 +120,10 @@ export async function serpDecision(userId: number, projectId: number, env: Env =
   const account = limits.find((l) => l.scope === "account" && l.metric === "serpapi_requests_month");
   if (project?.value != null) {
     allowances.push({
-      key: allowanceKeys.projectSerpMonth(projectId, now),
+      key: allowanceKeys.projectSerpMonth(userId, projectId, now),
       max: project.value,
-      note: "Monthly SerpApi limit for this project",
-      label: `${project.value.toLocaleString("en-US")} SerpApi requests for this project in ${month(now)}`,
+      note: "Your monthly SerpApi limit for this project",
+      label: `${project.value.toLocaleString("en-US")} of your SerpApi requests for this project in ${month(now)}`,
       syncMax: true,
     });
   }
@@ -180,10 +181,10 @@ export async function llmDecision(userId: number, projectId: number | null = nul
   }
   if (projectId != null && monthly?.value != null) {
     allowances.push({
-      key: allowanceKeys.projectModelMonth(projectId, now),
+      key: allowanceKeys.projectModelMonth(userId, projectId, now),
       max: monthly.value,
-      note: "Monthly AI spending limit for this project",
-      label: `$${monthly.value.toFixed(2)} of estimated model spend for this project in ${month(now)}`,
+      note: "Your monthly AI spending limit for this project",
+      label: `$${monthly.value.toFixed(2)} of your estimated model spend for this project in ${month(now)}`,
       syncMax: true,
     });
   }
