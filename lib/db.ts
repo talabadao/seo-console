@@ -30,6 +30,8 @@ function open(): postgres.Sql {
     // the old SQLite assumption, so restore that behavior globally rather
     // than auditing every `?? null` by hand.
     transform: { undefined: null },
+    // Postgres NOTICEs ("relation ... already exists, skipping") are informational; keep them out of the logs.
+    onnotice: () => {},
     // postgres.js returns BIGINT (our ids + epoch-ms timestamps) as strings by
     // default to avoid precision loss. Every value we store in a bigint column
     // is well under Number.MAX_SAFE_INTEGER, and the whole app types ids and
@@ -136,8 +138,12 @@ export async function rawSql(): Promise<postgres.Sql> {
 }
 
 // Schema statements live in lib/schema.ts, shared with the versioned migration
-// runner (scripts/migrate.mts). Until production is switched over to that
-// runner, every new server instance still applies the idempotent baseline here.
+// runner (scripts/migrate.mts). A database whose schema_migrations already records
+// 0001_baseline (Production since 17 Oct 2026; Preview and local once they have
+// started once) is managed by the runner, so a new server instance only checks
+// that one row instead of re-running the ~43 idempotent baseline statements
+// (each a round trip on every cold start, and a NOTICE line in the logs).
+// A database that has never been baselined still gets them, as before.
 //
 // Versioned migrations after the baseline (0002+) are applied automatically
 // only on Preview and in local development — databases that are isolated and
@@ -146,8 +152,16 @@ export async function rawSql(): Promise<postgres.Sql> {
 // the newer tables report themselves unavailable (see tableExists).
 async function migrate(): Promise<void> {
   const sql = getSql();
-  for (const statement of BASELINE_STATEMENTS) await sql.unsafe(statement);
+  if (!(await baselined(sql))) for (const statement of BASELINE_STATEMENTS) await sql.unsafe(statement);
   if (deploymentOf() !== "production") await applyVersioned(sql);
+}
+
+/** Whether this database's schema is managed by the versioned runner (0001_baseline recorded). */
+async function baselined(sql: postgres.Sql): Promise<boolean> {
+  const [t] = await sql`SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present`;
+  if (!t?.present) return false;
+  const rows = await sql`SELECT 1 FROM schema_migrations WHERE id = ${MIGRATIONS[0].id}`;
+  return rows.length > 0;
 }
 
 async function applyVersioned(sql: postgres.Sql): Promise<void> {
