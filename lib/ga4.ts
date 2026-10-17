@@ -141,11 +141,23 @@ interface RunReportOpts {
   keepEmptyRows?: boolean;
 }
 
+/** Response notes that change how numbers should be read (ResponseMetaData). */
+export interface ReportFlags {
+  /** Rows below Google's minimum aggregation thresholds were withheld. */
+  thresholded: boolean;
+  /** Some dimension combinations were rolled into an "(other)" row. */
+  otherRow: boolean;
+  currency: string | null;
+  timeZone: string | null;
+  /** Metric types from metricHeaders (TYPE_INTEGER, TYPE_FLOAT, TYPE_SECONDS, TYPE_CURRENCY, …). */
+  metricTypes: string[];
+}
+
 export async function runReport(
   token: string,
   propertyId: string,
   opts: RunReportOpts,
-): Promise<{ rows: GaRow[]; metricHeaders: string[]; sampled: boolean; rowCount: number }> {
+): Promise<{ rows: GaRow[]; metricHeaders: string[]; sampled: boolean; rowCount: number; flags: ReportFlags }> {
   const body = {
     dateRanges: opts.dateRanges,
     dimensions: opts.dimensions.map((name) => ({ name })),
@@ -180,7 +192,64 @@ export async function runReport(
   );
   const sampled =
     Array.isArray(data.metadata?.samplingMetadatas) && data.metadata.samplingMetadatas.length > 0;
-  return { rows, metricHeaders, sampled, rowCount: Number(data.rowCount ?? rows.length) };
+  const flags: ReportFlags = {
+    thresholded: Boolean(data.metadata?.subjectToThresholding),
+    otherRow: Boolean(data.metadata?.dataLossFromOtherRow),
+    currency: data.metadata?.currencyCode ?? null,
+    timeZone: data.metadata?.timeZone ?? null,
+    metricTypes: (data.metricHeaders ?? []).map((h: { type?: string }) => h.type ?? "TYPE_STANDARD"),
+  };
+  return { rows, metricHeaders, sampled, rowCount: Number(data.rowCount ?? rows.length), flags };
+}
+
+export interface GaFieldMeta {
+  apiName: string;
+  uiName: string;
+  category: string;
+  description: string;
+  custom: boolean;
+  /** Metrics only: TYPE_INTEGER, TYPE_FLOAT, TYPE_SECONDS, TYPE_CURRENCY, … */
+  type?: string;
+}
+
+/** The dimensions and metrics a property can report on, including its custom definitions (Data API getMetadata). */
+export async function getGaMetadata(token: string, propertyId: string): Promise<{ dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }> {
+  const d = await gfetch(`${DATA}/${propertyId}/metadata`, token);
+  type Raw = { apiName?: string; uiName?: string; category?: string; description?: string; customDefinition?: boolean; type?: string; deprecatedApiNames?: string[] };
+  const map = (r: Raw, metric: boolean): GaFieldMeta => ({
+    apiName: r.apiName ?? "",
+    uiName: r.uiName ?? r.apiName ?? "",
+    category: r.category ?? "Other",
+    description: (r.description ?? "").slice(0, 400),
+    custom: Boolean(r.customDefinition),
+    ...(metric ? { type: r.type ?? "TYPE_STANDARD" } : {}),
+  });
+  return {
+    dimensions: ((d.dimensions ?? []) as Raw[]).map((r) => map(r, false)).filter((m) => m.apiName),
+    metrics: ((d.metrics ?? []) as Raw[]).map((r) => map(r, true)).filter((m) => m.apiName),
+  };
+}
+
+/** Which of a request's dimensions and metrics can't be combined (Data API checkCompatibility). */
+export async function checkCompatibility(
+  token: string,
+  propertyId: string,
+  q: { dimensions: string[]; metrics: string[]; dimensionFilter?: unknown },
+): Promise<{ dimensions: string[]; metrics: string[] }> {
+  const d = await gfetch(`${DATA}/${propertyId}:checkCompatibility`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      dimensions: q.dimensions.map((name) => ({ name })),
+      metrics: q.metrics.map((name) => ({ name })),
+      ...(q.dimensionFilter ? { dimensionFilter: q.dimensionFilter } : {}),
+      compatibilityFilter: "INCOMPATIBLE",
+    }),
+  });
+  type C = { compatibility?: string; dimensionMetadata?: { apiName?: string }; metricMetadata?: { apiName?: string } };
+  return {
+    dimensions: ((d.dimensionCompatibilities ?? []) as C[]).filter((c) => c.compatibility === "INCOMPATIBLE").map((c) => c.dimensionMetadata?.apiName ?? ""),
+    metrics: ((d.metricCompatibilities ?? []) as C[]).filter((c) => c.compatibility === "INCOMPATIBLE").map((c) => c.metricMetadata?.apiName ?? ""),
+  };
 }
 
 /**

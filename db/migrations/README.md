@@ -45,5 +45,7 @@ For now `lib/db.ts` still applies `BASELINE_STATEMENTS` when a server instance s
 | 0009_organic_serp | serp_configs, serp_snapshots | none | additive |
 | 0010_notifications_docs | notifications, notification_settings, doc_articles | none (Preview/dev seed two demo docs at runtime, never Production) | additive |
 | 0011_page_meta | page_meta | none (fills on view) | safe to truncate |
+| 0012_ops_incremental | cron_runs, gsc_daily_coverage | none (fills on run / read) | safe to truncate; GSC days refetch |
+| 0013_ga4_saved_reports | ga4_saved_reports | none | additive; dropping loses saved report definitions |
 
 Preview and local development apply pending migrations automatically on first database access (`lib/db.ts`). Production never does: use the runner (`npm run migrate`), as listed in `docs/seo-console-v2/PRODUCTION-PILOT.md`.
