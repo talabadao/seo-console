@@ -85,7 +85,7 @@ export async function serpReadiness(userId: number, projectId: number, env: Reco
     limits = await allowanceStatuses(decision.allowances);
     const tight = tightest(limits);
     const exhausted = tight && tight.left <= 0;
-    const previewLine = decision.allowances.find((a) => a.key === allowanceKeys.previewSerp(projectId));
+    const previewLine = decision.allowances.find((a) => a.key === allowanceKeys.previewSerpTotal());
     const code: ExecutionCode = !resolved ? "no-key" : exhausted ? (previewLine && tight?.label === previewLine.label ? "preview-allowance-exhausted" : "limit-reached") : "ok";
     execution = {
       allowed: code === "ok",
@@ -97,7 +97,7 @@ export async function serpReadiness(userId: number, projectId: number, env: Reco
 
   let previewAllowance: SerpReadiness["previewAllowance"] = null;
   if (deployment === "preview" && previewSerpTest(env).projectId === projectId) {
-    const r = (await db.prepare("SELECT used_units, max_units FROM provider_allowances WHERE key = ?").get(allowanceKeys.previewSerp(projectId))) as
+    const r = (await db.prepare("SELECT used_units, max_units FROM provider_allowances WHERE key = ?").get(allowanceKeys.previewSerpTotal())) as
       | { used_units: number; max_units: number }
       | undefined;
     previewAllowance = { used: Number(r?.used_units ?? 0), max: Number(r?.max_units ?? previewSerpTest(env).max) };

@@ -74,7 +74,7 @@ describe("SerpApi readiness", () => {
     expect(ok.execution).toMatchObject({ allowed: true, code: "ok" });
     expect(ok.credential.verification).toBe("not-verified");
     expect(ok.previewAllowance).toEqual({ used: 0, max: 5 });
-    await takeAllowance(allowanceKeys.previewSerp(7), 5, 5, "Preview SerpApi smoke test");
+    await takeAllowance(allowanceKeys.previewSerpTotal(), 5, 5, "Preview SerpApi smoke test");
     const used = await serpReadiness(1, 7, env);
     expect(used.execution).toMatchObject({ allowed: false, code: "preview-allowance-exhausted" });
     expect(used.previewAllowance).toEqual({ used: 5, max: 5 });

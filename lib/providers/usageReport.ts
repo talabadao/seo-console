@@ -202,7 +202,7 @@ export async function usageReport(userId: number, projectId: number | null, sinc
     : { allowed: false, scope: ld.reason, limits: [] };
   const test = previewSerpTest();
   const preview = deploymentOf() === "preview";
-  const previewUsed = preview && test.projectId != null ? ((await allowanceState(allowanceKeys.previewSerp(test.projectId)))?.used ?? 0) : null;
+  const previewUsed = preview && test.projectId != null ? ((await allowanceState(allowanceKeys.previewSerpTotal()))?.used ?? 0) : null;
 
   const runs = ledger
     ? ((await db

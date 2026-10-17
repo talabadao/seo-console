@@ -77,11 +77,41 @@ afterEach(() => {
 describe("Preview SerpApi policy", () => {
   it("allows only the smoke-test project, never more than 5 requests", async () => {
     const d = await serpDecision(1, 1);
-    expect(d.allowed && d.allowances[0]).toMatchObject({ key: "preview-serpapi-test:project:1", max: 5, syncMax: false });
+    expect(d.allowed && d.allowances[0]).toMatchObject({ key: "preview-serpapi-test:total", max: 5, syncMax: false });
     expect((await serpDecision(1, 2)).allowed).toBe(false);
     const capped = await serpDecision(1, 1, { VERCEL_ENV: "preview", PREVIEW_SERPAPI_TEST_PROJECT_ID: "1", PREVIEW_SERPAPI_TEST_MAX_REQUESTS: "50" });
     expect(capped.allowed && capped.allowances[0].max).toBe(5);
     expect((await serpDecision(1, 1, { VERCEL_ENV: "preview" })).allowed).toBe(false);
+  });
+
+  it("changing the test project keeps the cumulative allowance: earlier usage on the old project still counts", async () => {
+    // Before the change: 3 requests were recorded against the old per-project allowance for project 1 (e.g. Wewine).
+    await pg.exec("INSERT INTO provider_allowances (key, max_units, used_units, note, created_at, updated_at) VALUES ('preview-serpapi-test:project:1', 5, 3, 'old', 0, 0)");
+    await pg.exec("INSERT INTO provider_usage (user_id, project_id, provider, operation, units, unit_type, status, created_at) VALUES (1, 1, 'serpapi', 'google', 1, 'search', 'ok', 1)");
+    const env = { VERCEL_ENV: "preview", PREVIEW_SERPAPI_TEST_PROJECT_ID: "2", PREVIEW_SERPAPI_TEST_MAX_REQUESTS: "5" };
+    const d = await serpDecision(1, 2, env);
+    expect(d.allowed).toBe(true);
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 3, max: 5 });
+    // Raising the configured maximum or calling again never resets or grants more.
+    await serpDecision(1, 2, { ...env, PREVIEW_SERPAPI_TEST_MAX_REQUESTS: "50" });
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 3, max: 5 });
+    // The old project is now refused; the new one gets only the 2 that remain.
+    expect((await serpDecision(1, 1, env)).allowed).toBe(false);
+    const { takeAllowances } = await import("@/lib/providers/ledger");
+    if (d.allowed) {
+      await takeAllowances(d.allowances, 2);
+      await expect(takeAllowances(d.allowances, 1)).rejects.toThrow();
+    }
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 5, max: 5 });
+    // History is untouched.
+    expect((await pg.query("SELECT used_units FROM provider_allowances WHERE key = 'preview-serpapi-test:project:1'")).rows[0]).toEqual({ used_units: 3 });
+    expect((await pg.query("SELECT COUNT(*)::int AS n FROM provider_usage")).rows[0]).toEqual({ n: 1 });
+  });
+
+  it("usage across several earlier projects is summed and capped at the maximum", async () => {
+    await pg.exec("INSERT INTO provider_allowances (key, max_units, used_units, note, created_at, updated_at) VALUES ('preview-serpapi-test:project:1', 5, 4, 'old', 0, 0), ('preview-serpapi-test:project:9', 5, 4, 'old', 0, 0)");
+    await serpDecision(1, 1);
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 5, max: 5 });
   });
 
   it("refuses other projects without sending or recording anything", async () => {
@@ -105,7 +135,7 @@ describe("Preview SerpApi policy", () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
     const rows = await usageRows(1);
     expect(rows.map((r) => r.status)).toEqual(["error", "ok", "ok", "ok", "ok"]);
-    expect(await allowanceState("preview-serpapi-test:project:1")).toEqual({ used: 5, max: 5 });
+    expect(await allowanceState("preview-serpapi-test:total")).toEqual({ used: 5, max: 5 });
   });
 
   it("can't be overshot by concurrent requests", async () => {
