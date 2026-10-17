@@ -8,6 +8,7 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import type { ReportNotes } from "@/lib/v2/ga4reports/run";
 import type { PeriodInfo } from "@/lib/v2/summary/types";
 import { fmtInt, fmtMoney, fmtPct, fmtTime } from "./summaryUi";
+import { alignSeries, daysOf } from "@/lib/v2/ga4reports/days";
 
 /** Formats a GA4 metric value by its name and type: rates as percentages, seconds as durations, currency. */
 export function fmtMetric(name: string, value: number | null | undefined, type?: string, currency?: string | null): string {
@@ -115,34 +116,36 @@ export function TrendChart({
   prev,
   label,
   split,
+  period,
+  fill = 0,
 }: {
   cur: { date: string; key: string; value: number }[];
   prev: { date: string; key: string; value: number }[] | null;
   label: string;
   /** One line per key (current period only), e.g. per event. */
   split: boolean;
+  period: PeriodInfo;
+  /** Value for a day GA4 didn't return: 0 for counts, null for rates and averages. */
+  fill?: number | null;
 }) {
   const { data, keys } = useMemo(() => {
+    // One slot per day of the period; the comparison's day N next to the current day N.
+    const dates = daysOf(period.current);
     if (split) {
       const keys = [...new Set(cur.map((p) => p.key))];
-      const by = new Map<string, Record<string, number | string>>();
-      for (const p of cur) {
-        const row = by.get(p.date) ?? { date: p.date };
-        row[p.key] = p.value;
-        by.set(p.date, row);
-      }
-      return { data: [...by.values()].sort((a, b) => String(a.date).localeCompare(String(b.date))), keys };
+      const series = keys.map((k) => alignSeries(cur.filter((p) => p.key === k), dates, fill));
+      return { data: dates.map((date, i) => Object.fromEntries([["date", date], ...keys.map((k, j) => [k, series[j][i]])])), keys };
     }
-    // Comparison aligned by day position (day 1 with day 1).
-    const c = [...cur].sort((a, b) => a.date.localeCompare(b.date));
-    const p = prev ? [...prev].sort((a, b) => a.date.localeCompare(b.date)) : [];
+    const c = alignSeries(cur, dates, fill);
+    const prevDates = prev && period.previous ? daysOf(period.previous) : [];
+    const p = prev ? alignSeries(prev, prevDates, fill) : [];
     return {
-      data: c.map((x, i) => ({ date: x.date, Current: x.value, ...(prev ? { Comparison: p[i]?.value ?? null, comparisonDate: p[i]?.date ?? "" } : {}) })),
+      data: dates.map((date, i) => ({ date, Current: c[i], ...(prev ? { Comparison: i < p.length ? p[i] : null, comparisonDate: prevDates[i] ?? "" } : {}) })),
       keys: prev ? ["Current", "Comparison"] : ["Current"],
     };
-  }, [cur, prev, split]);
+  }, [cur, prev, split, period.current, period.previous, fill]);
   const colors = ["var(--clicks)", "var(--impressions)", "var(--position)", "var(--ctr)", "var(--good)"];
-  if (!data.length) return <p className="py-6 text-center text-sm text-muted">No {label.toLowerCase()} in this period.</p>;
+  if (!cur.length) return <p className="py-6 text-center text-sm text-muted">No {label.toLowerCase()} in this period.</p>;
   return (
     <div className="h-56 w-full" role="img" aria-label={`${label} by day`}>
       <ResponsiveContainer>

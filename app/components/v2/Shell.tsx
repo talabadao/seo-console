@@ -889,7 +889,7 @@ function ProjectPage({
     case "analytics/llm-traffic":
       return <LlmTrafficReport projectId={project.id} />;
     case "analytics/reports":
-      return <Ga4Reports projectId={project.id} sub={loc.sub} onSub={subNav} onOpenLeadSettings={() => onNavigate({ ...loc, group: "settings", item: "project", sub: "analytics" })} />;
+      return <Ga4Reports key={project.id} projectId={project.id} sub={loc.sub} onSub={subNav} onOpenLeadSettings={() => onNavigate({ ...loc, group: "settings", item: "project", sub: "analytics" })} />;
     case "analytics/overview":
       return <Analytics fixedPropertyId={project.gaPropertyId ?? ""} sub={loc.sub} onSub={subNav} />;
     case "reports/weekly":

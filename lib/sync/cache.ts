@@ -30,6 +30,8 @@ export interface JobKind<Q = unknown, P = unknown> {
   isAccessError?(e: unknown): boolean;
   /** Refreshed only by an explicit (e.g. chargeable) action: never by stale reads or the scheduler. */
   manualOnly?: boolean;
+  /** Not refreshed by the scheduled sync: only when someone reads it (stale reads refresh in the background). */
+  noSchedule?: boolean;
   /**
    * A result's own freshness, when it depends on the result: a resumable dataset that isn't complete yet returns a
    * short time, so the next read or scheduled tick continues it; a complete one returns its full interval.
@@ -319,7 +321,7 @@ export async function enqueueDueRefreshes(opts: { activeSinceMs: number; limit: 
   let n = 0;
   for (const r of due) {
     const k = kindOf(r.kind);
-    if (!k || k.manualOnly) continue;
+    if (!k || k.manualOnly || k.noSchedule) continue;
     await enqueue({ kind: r.kind, userId: Number(r.user_id), projectId: r.project_id == null ? null : Number(r.project_id), query: parse(r.query), reason: "schedule" });
     n++;
   }

@@ -142,7 +142,7 @@ function TemplateBody({
         render: (row) => (
           <span className="inline-flex flex-col items-end">
             <span>{fmtMetric(c.metric, row.cur[i], undefined, r.currency)}</span>
-            {hasPrev && <Delta pair={{ current: row.cur[i], previous: row.prev?.[i] ?? null }} absolute={/Rate$/.test(c.metric)} />}
+            {hasPrev && <Delta pair={{ current: row.cur[i], previous: row.prev?.[i] ?? null }} />}
           </span>
         ),
       }),
@@ -225,7 +225,6 @@ function TemplateBody({
               label={s.label}
               value={fmtMetric(s.metric, s.cur, undefined, r.currency)}
               pair={hasPrev ? { current: s.cur, previous: s.prev } : undefined}
-              absolute={/Rate$/.test(s.metric)}
             />
           ))}
         </div>
@@ -235,7 +234,7 @@ function TemplateBody({
         {r.template === "leads" && leadsMissing ? (
           <p className="py-6 text-center text-sm text-muted">Choose lead events to see their trend.</p>
         ) : (
-          <TrendChart cur={r.trend.cur} prev={r.template === "events" ? null : r.trend.prev} label={r.trend.label} split={r.template === "events"} />
+          <TrendChart cur={r.trend.cur} prev={r.template === "events" ? null : r.trend.prev} label={r.trend.label} split={r.template === "events"} period={r.period} />
         )}
         {r.template === "events" && <p className="mt-1 text-xs text-muted">Current period only, one line per event. Choose events with Show/Hide in the table (up to 5).</p>}
         {r.template !== "events" && hasPrev && <p className="mt-1 text-xs text-muted">The dashed line is the comparison period, aligned day by day.</p>}

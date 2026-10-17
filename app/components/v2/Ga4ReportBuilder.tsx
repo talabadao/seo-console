@@ -15,6 +15,7 @@ import { SearchableSelect } from "../SearchableSelect";
 import { Delta, PeriodPicker, Stat, fmtTime } from "./summaryUi";
 import { Card, DataTable, EmptyState, ErrorState, LoadingState, buttonClass, primaryButtonClass, type Column } from "./ui";
 import { ReportFooter, fmtMetric, useGaJson, type CacheMeta } from "./ga4Shared";
+import { alignSeries, daysOf, fillFor } from "@/lib/v2/ga4reports/days";
 
 type MetaResponse =
   | { state: "live"; propertyId: string; timeZone: string | null; currency: string | null; dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }
@@ -136,6 +137,7 @@ export function Ga4ReportBuilder({ projectId }: { projectId: number }) {
   if (meta.error) return <ErrorState title="Couldn't load GA4 fields." body={meta.error} />;
   if (!m) {
     const d = meta.data as { state: string; message?: string } | null;
+    if (d?.state === "error") return <ErrorState title="Couldn't load GA4 fields." body={d.message} />;
     return <EmptyState title={d?.state === "demo" ? "Demo project" : "Not available"} body={d?.message} />;
   }
 
@@ -428,7 +430,6 @@ function ResultView({ r, chart, label }: { r: CustomResult; chart: ChartType; la
           label={label(mm.name)}
           value={fmt(i, r.totals.cur[i])}
           pair={hasPrev ? { current: r.totals.cur[i], previous: r.totals.prev?.[i] ?? null } : undefined}
-          absolute={/Rate$/.test(mm.name)}
         />
       ))}
     </div>
@@ -448,6 +449,8 @@ function ResultView({ r, chart, label }: { r: CustomResult; chart: ChartType; la
   if (chart === "scorecard" || !r.dimensions.length) view = null;
   else if (chart === "line" && r.series) {
     const split = r.dimensions.length > 1;
+    const dates = daysOf(r.period.current);
+    const fill = fillFor(metric.name, metric.type);
     let data: Record<string, string | number | null>[];
     let keys: string[];
     if (split) {
@@ -455,17 +458,14 @@ function ResultView({ r, chart, label }: { r: CustomResult; chart: ChartType; la
       const rank = new Map<string, number>();
       for (const p of r.series) rank.set(p.split ?? "", (rank.get(p.split ?? "") ?? 0) + (p.values[metricIdx] ?? 0));
       keys = [...rank.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k]) => k);
-      const by = new Map<string, Record<string, string | number | null>>();
-      for (const p of r.series) {
-        if (!keys.includes(p.split ?? "")) continue;
-        const row = by.get(p.date) ?? { date: p.date };
-        row[p.split ?? ""] = p.values[metricIdx];
-        by.set(p.date, row);
-      }
-      data = [...by.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const lines = keys.map((k) => alignSeries(r.series!.filter((p) => (p.split ?? "") === k).map((p) => ({ date: p.date, value: p.values[metricIdx] })), dates, fill));
+      data = dates.map((date, i) => Object.fromEntries([["date", date], ...keys.map((k, j) => [k, lines[j][i]])]));
     } else {
-      const prev = r.prevSeries ?? [];
-      data = r.series.map((p, i) => ({ date: p.date, Current: p.values[metricIdx], ...(r.prevSeries ? { Comparison: prev[i]?.values[metricIdx] ?? null } : {}) }));
+      // One slot per day; the comparison's day N next to the current day N (GA4 omits days without data).
+      const cur = alignSeries(r.series.map((p) => ({ date: p.date, value: p.values[metricIdx] })), dates, fill);
+      const prevDates = r.period.previous ? daysOf(r.period.previous) : [];
+      const prev = r.prevSeries ? alignSeries(r.prevSeries.map((p) => ({ date: p.date, value: p.values[metricIdx] })), prevDates, fill) : [];
+      data = dates.map((date, i) => ({ date, Current: cur[i], ...(r.prevSeries ? { Comparison: i < prev.length ? prev[i] : null } : {}) }));
       keys = r.prevSeries ? ["Current", "Comparison"] : ["Current"];
     }
     view = (
@@ -534,7 +534,7 @@ function ResultView({ r, chart, label }: { r: CustomResult; chart: ChartType; la
         render: (row) => (
           <span className="inline-flex flex-col items-end">
             <span>{fmt(i, row.cur[i])}</span>
-            {hasPrev && <Delta pair={{ current: row.cur[i], previous: row.prev?.[i] ?? null }} absolute={/Rate$/.test(mm.name)} />}
+            {hasPrev && <Delta pair={{ current: row.cur[i], previous: row.prev?.[i] ?? null }} />}
           </span>
         ),
       }),

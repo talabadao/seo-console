@@ -51,6 +51,8 @@ Sources:
 - **Lead-event counts** are additive event counts. Lead events per row and in total come from filtered queries.
 - **Donut charts** accept only metrics that add up across rows: sessions, event counts, key events, revenue. A donut of users, rates or averages is refused when saving and when running, with the reason.
 - **Revisions.** GA4 can revise the last 24–48 hours; every report says so. Results are cached for 2 hours, and Refresh asks GA4 again (5-minute cool-down).
+- **Refresh policy.** GA4 reports are refreshed only when someone opens them: a result older than 2 hours is shown with its age while one background refresh runs. The 4-hourly scheduled sync does **not** refresh GA4 templates, custom reports or the field list, so viewing many reports never queues repeated GA4 requests.
+- **Trends.** Each trend has one point per calendar day. GA4 leaves out days without data, so counts show 0 on those days and rates or averages show a gap. The comparison line pairs day N of the comparison period with day N of the current period.
 
 ## Saved custom reports
 - **Configurable:**
@@ -79,19 +81,26 @@ Sources:
 - **Not available here:** segments, comparisons by audience, funnels, path analysis, cohort exploration, importing saved GA4 Explorations, and metric filters (`metricFilter`).
 - **Event-scoped custom dimensions registered before October 2020** use the `customEvent:param[event]` form. They are accepted if the property's metadata lists them.
 
-## Acceptance checklist (owner, on Preview)
-Preview: https://seo-console-git-preview-zoro-hoang.vercel.app. On Preview, Góc Săn Deal is project 4.
-1. Analytics (GA4) → **GA4 reports** appears between Analytics and LLMs Traffic. Analytics and LLMs Traffic are unchanged.
-2. **Generate leads:**
-   - with lead events set: the lead events, sessions and key events scorecards; a lead events trend; a per-event setup list with key-event status;
-   - with none: a "Choose lead events" prompt.
-3. **Events:** the key-event badge; Show/Hide adds events to the trend.
-4. **Landing pages:** Show on a row limits the trend to that page.
-5. **Traffic vs User acquisition:** the different wording (session vs first-user); switching the breakdown works.
-6. Every report shows the period, comparison, property timezone, currency (when relevant), source and fetch time.
-7. **Custom reports:**
-   - build sessions by channel and Run;
-   - save; reopen; edit and save; save as copy; duplicate; delete;
-   - try a donut of Total users (refused with a reason);
-   - Check fields on a valid report.
-8. Change nothing in Production. GA4 is free, and no paid provider is called.
+## Acceptance checklist (owner, on Preview, about 10 minutes)
+Use your normal signed-in browser. Base URL: https://seo-console-git-preview-zoro-hoang.vercel.app. Góc Săn Deal is project **4** on Preview.
+
+1. **Database** (30 s). Open `/account/sync`. Expect **Database: Preview (its own database) · latest migration 0013_ga4_saved_reports**, and "Every migration this version knows about is applied."
+2. **Templates** (3 min). Open `/p/4/analytics/reports`. Under Analytics (GA4), GA4 reports sits between Analytics and LLMs Traffic, and Analytics and LLMs Traffic are unchanged. Open all five tabs: Generate leads, Events, Landing pages, Traffic acquisition, User acquisition.
+   - Each shows scorecards, a daily trend and a table. The footer gives the period, comparison, property time zone, source and fetch time.
+   - The first open of a tab can take up to ~20 s ("Loading from GA4…"). Reopening it is instant.
+3. **Period** (1 min). On Traffic acquisition, choose **Last 7 days vs previous period**. The footer dates change to 7 days, and the dashed comparison line has 7 points.
+4. **Numbers vs GA4** (2–3 min). In GA4: same property, Reports → Acquisition → Traffic acquisition, same 7 dates. GA4 uses the property time zone, as the app does. Compare **Sessions** and **Engaged sessions** in total and for **Organic Search**. Expect equal values, or within 1–2% if GA4 is still processing the last 48 hours. On User acquisition, compare **Total users** and **New users** with GA4's User acquisition report. The app's total users comes from GA4 itself, so it is lower than the sum of the rows.
+5. **Lead events** (1 min). On Generate leads:
+   - With lead events set: each event is listed with its count and "Also a GA4 key event" or "Not a GA4 key event". The Lead events column differs from Key events (all).
+   - With none set: "Choose lead events" opens Project settings → Analytics / Key events (`/p/4/settings/project/analytics`). Save one event, return, and lead counts appear.
+6. **Custom report** (2 min). On the Custom reports tab, name it **Test – sessions by channel**. Keep the default fields and press **Run**: totals, a table and comparisons appear. Press **Save**, then **reload the page**. Open the saved report from the list: it runs once and shows the same numbers.
+7. **Edit, copy, delete** (1 min). Change the chart to **Bar**, Save changes, then **Save as copy**. Use **Duplicate** in the list on either report. Try **Donut** with **Total users**: Save is refused, explaining that users can't be split into shares. **Delete** the test reports. The list returns to its earlier state.
+8. **Project association** (30 s). Switch to another project that has GA4 and open GA4 reports → Custom reports. Góc Săn Deal's saved reports are not listed there. Switch back: they are listed again.
+
+**If something fails, send:**
+- the step number;
+- the page address (path only);
+- the visible message text;
+- for numbers: the app value, the GA4 value, the dates and comparison you selected, and the GA4 report name.
+
+Don't include screenshots that show credentials, cookies or browser developer tools.

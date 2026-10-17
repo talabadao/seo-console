@@ -441,6 +441,8 @@ registerKind<Ga4TemplateQuery, TemplateResult>({
   kind: "ga4:template",
   provider: "ga4",
   freshMs: 2 * H,
+  // GA4 reports refresh when read, not on the 4-hourly schedule: many views and saved reports, explicit use.
+  noSchedule: true,
   isAccessError: isAccess,
   async run({ userId, projectId, query }) {
     const { token: t } = await ga4Context(userId, projectId, query.propertyId);
@@ -463,6 +465,7 @@ registerKind<Ga4CustomQuery, CustomResult>({
   kind: "ga4:custom",
   provider: "ga4",
   freshMs: 2 * H,
+  noSchedule: true,
   isAccessError: isAccess,
   async run({ userId, projectId, query }) {
     const { token: t } = await ga4Context(userId, projectId, query.propertyId);
@@ -478,6 +481,7 @@ registerKind<Ga4MetadataQuery, { dimensions: GaFieldMeta[]; metrics: GaFieldMeta
   kind: "ga4:metadata",
   provider: "ga4",
   freshMs: 24 * H,
+  noSchedule: true,
   isAccessError: isAccess,
   async run({ userId, projectId, query }) {
     const { token: t } = await ga4Context(userId, projectId, query.propertyId);

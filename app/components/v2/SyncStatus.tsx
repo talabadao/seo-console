@@ -8,8 +8,9 @@
 import { useEffect, useState } from "react";
 import type { SyncStatus as BaseStatus } from "@/lib/sync/status";
 import type { CronRunRow } from "@/lib/cronRuns";
+import type { DatabaseStatus } from "@/lib/dbStatus";
 
-type Status = BaseStatus & { cronRuns?: CronRunRow[] | null };
+type Status = BaseStatus & { cronRuns?: CronRunRow[] | null; database?: DatabaseStatus };
 import { Card, buttonClass } from "./ui";
 
 const when = (ms: number | null) => (ms ? new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -146,6 +147,22 @@ export function SyncStatusPage({ projectId, onOpenUsage }: { projectId: number |
           </p>
         )}
       </Card>
+
+      {data.database && (
+        <Card title="Database">
+          <p className="text-sm">
+            {data.database.environment === "production" ? "Production" : data.database.environment === "preview" ? "Preview (its own database)" : "Development"} ·{" "}
+            {data.database.applied == null
+              ? "no migration history recorded"
+              : `latest migration ${data.database.applied[data.database.applied.length - 1] ?? "none"} (${data.database.applied.length} recorded)`}
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            {data.database.pending.length
+              ? `Not applied yet: ${data.database.pending.join(", ")}. Features that need them stay off until they are.`
+              : "Every migration this version knows about is applied."}
+          </p>
+        </Card>
+      )}
 
       <Card title="Scheduled runs">
         {data.cronRuns == null ? (

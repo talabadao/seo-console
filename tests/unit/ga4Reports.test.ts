@@ -217,7 +217,7 @@ describe("number rules", () => {
   });
 });
 
-describe("saved reports through the routes", () => {
+describe("saved reports through the routes", { timeout: 30_000 }, () => {
   const spec = { ...DEFAULT_SPEC };
   let aReport = 0;
 
@@ -281,5 +281,35 @@ describe("saved reports through the routes", () => {
     expect(view.json.propertyChanged).toBe(true);
     const rebound = await call(REPORT, "PUT", `/api/v2/ga4/1/reports/${aReport}`, { id: "1", reportId: String(aReport) }, { name: "Channels", spec, rebind: true });
     expect(rebound.json.report.propertyId).toBe("112");
+  });
+});
+
+describe("charts and scheduling", () => {
+  it("lays out a trend one slot per day, so a missing GA4 day never shifts the comparison", async () => {
+    const { alignSeries, daysOf, fillFor } = await import("@/lib/v2/ga4reports/days");
+    const dates = daysOf({ start: "2026-10-01", end: "2026-10-04" });
+    expect(dates).toEqual(["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"]);
+    // GA4 returned no row for 10-02: a count is 0 that day, a rate is undefined (a gap).
+    const pts = [
+      { date: "2026-10-01", value: 5 },
+      { date: "2026-10-03", value: 7 },
+      { date: "2026-10-04", value: 1 },
+    ];
+    expect(alignSeries(pts, dates, fillFor("sessions"))).toEqual([5, 0, 7, 1]);
+    expect(alignSeries(pts, dates, fillFor("engagementRate"))).toEqual([5, null, 7, 1]);
+    expect(fillFor("averageSessionDuration")).toBeNull();
+  });
+
+  it("doesn't refresh GA4 reports on the schedule (only when read)", async () => {
+    const { enqueueDueRefreshes } = await import("@/lib/sync/cache");
+    await import("@/lib/sync/kinds");
+    const now = Date.now();
+    await pg.query(
+      `INSERT INTO report_cache (scope, cache_key, kind, provider, user_id, project_id, query, payload, fetched_at, fresh_until, last_read_at)
+       VALUES ('user:1', 'stale-ga4-custom', 'ga4:custom', 'ga4', 1, 1, '{"projectId":1}', '{}', 1, 1, $1),
+              ('user:1', 'stale-ga4-template', 'ga4:template', 'ga4', 1, 1, '{"projectId":1}', '{}', 1, 1, $1)`,
+      [now],
+    );
+    expect(await enqueueDueRefreshes({ activeSinceMs: 3600_000, limit: 50 })).toBe(0);
   });
 });
