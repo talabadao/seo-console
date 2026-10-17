@@ -8,19 +8,26 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "sync": "tsx scripts/sync.mts"
+    "sync": "tsx scripts/sync.mts",
+    "test": "vitest run",
+    "migrate": "tsx scripts/migrate.mts",
+    "seed:preview": "tsx --env-file-if-exists=.env.preview-migrate scripts/seed-preview.mts",
+    "migrate:preview": "tsx --env-file-if-exists=.env.preview-migrate scripts/migrate.mts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "date-fns": "^4.4.0",
     "google-auth-library": "^11.0.2",
     "iron-session": "^9.0.1",
     "next": "16.3.4",
+    "openai": "^7.20.0",
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "recharts": "^3.10.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.15",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.13.3",
     "@types/react": "^19",
@@ -29,6 +36,7 @@
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.4"
   }
 }

@@ -1,3 +1,4 @@
+import { providerFetch } from "@/lib/sync/providerHttp";
 const WMX = "https://www.googleapis.com/webmasters/v3";
 const INSPECT = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
 
@@ -16,13 +17,25 @@ export interface SearchAnalyticsRow {
 
 export type SearchType = "web" | "image" | "video" | "news" | "discover" | "googleNews";
 
+/** Search Console quota is per site (and per user); requests to one site share a window across instances. */
+function gscBucket(url: string): string {
+  const site = /\/sites\/([^/]+)/.exec(url)?.[1];
+  return site ? `gsc:site:${decodeURIComponent(site)}` : "gsc:sites";
+}
+
 async function gfetch(url: string, token: string, init?: RequestInit) {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
+  const res = await providerFetch({
+    provider: "gsc",
+    bucket: gscBucket(url),
+    limit: { max: 10, windowMs: 1000 },
+    url,
+    init: {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
     },
   });
   if (!res.ok) {

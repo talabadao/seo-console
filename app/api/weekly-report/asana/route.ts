@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment";
 import { currentUser } from "@/lib/session";
 import { ownsGaProperty } from "@/lib/gaConfig";
 import { configFor, reportWindows } from "@/lib/weeklyReport";
@@ -9,6 +10,7 @@ const VALID_STATUS: AsanaStatusType[] = ["on_track", "at_risk", "off_track", "on
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!externalWritesAllowed()) return NextResponse.json({ error: PREVIEW_WRITES_BLOCKED }, { status: 403 });
   if (!user.asana_api_token) {
     return NextResponse.json({ error: "Asana isn't connected — add a token in Settings." }, { status: 400 });
   }

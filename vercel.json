@@ -27,6 +27,12 @@
     { "path": "/api/cron/index-check?hour=23", "schedule": "0 23 * * *" },
     { "path": "/api/cron/pagespeed", "schedule": "30 1 * * *" },
     { "path": "/api/cron/pagespeed", "schedule": "30 2 * * *" },
-    { "path": "/api/cron/pagespeed", "schedule": "30 3 * * *" }
+    { "path": "/api/cron/pagespeed", "schedule": "30 3 * * *" },
+    { "path": "/api/cron/sync", "schedule": "15 0 * * *" },
+    { "path": "/api/cron/sync", "schedule": "15 4 * * *" },
+    { "path": "/api/cron/sync", "schedule": "15 8 * * *" },
+    { "path": "/api/cron/sync", "schedule": "15 12 * * *" },
+    { "path": "/api/cron/sync", "schedule": "15 16 * * *" },
+    { "path": "/api/cron/sync", "schedule": "15 20 * * *" }
   ]
 }

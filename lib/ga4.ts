@@ -1,7 +1,7 @@
+import { providerFetch } from "@/lib/sync/providerHttp";
 const ADMIN = "https://analyticsadmin.googleapis.com/v1beta";
 const DATA = "https://analyticsdata.googleapis.com/v1beta";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // GA4's Data API caps how many requests a property can have in flight at
 // once ("Exhausted concurrent requests quota") — easy to hit here since
@@ -10,31 +10,34 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // surfacing the raw error, honoring Retry-After when Google sends one.
 const MAX_429_RETRIES = 4;
 
+/** GA4 quotas are per property; requests for one property share a window across instances. */
+function ga4Bucket(url: string): string {
+  const id = /properties\/(\d+)/.exec(url)?.[1];
+  return id ? `ga4:property:${id}` : "ga4:admin";
+}
+
 async function gfetch(url: string, token: string, init?: RequestInit) {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
+  // Retries (429 with Retry-After, 5xx) and cross-instance limits live in providerFetch.
+  const res = await providerFetch({
+    provider: "ga4",
+    bucket: ga4Bucket(url),
+    limit: { max: 10, windowMs: 1000 },
+    url,
+    maxRetries: MAX_429_RETRIES,
+    init: {
       ...init,
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         ...(init?.headers || {}),
       },
-    });
-    if (res.ok) return res.json();
-
-    const body = await res.text();
-    if (res.status === 429 && attempt < MAX_429_RETRIES) {
-      const retryAfter = Number(res.headers.get("Retry-After"));
-      const delay = isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1000
-        : 500 * 2 ** attempt + Math.random() * 250;
-      await sleep(delay);
-      continue;
-    }
-    // Keep enough of the body that the "API not enabled" enable-URL survives
-    // truncation — Google's error payloads (with `details`) can run long.
-    throw new Error(`GA4 API ${res.status}: ${body.slice(0, 2000)}`);
-  }
+    },
+  });
+  if (res.ok) return res.json();
+  const body = await res.text();
+  // Keep enough of the body that the "API not enabled" enable-URL survives
+  // truncation — Google's error payloads (with `details`) can run long.
+  throw new Error(`GA4 API ${res.status}: ${body.slice(0, 2000)}`);
 }
 
 // ---------- Admin API: property discovery ----------
@@ -230,42 +233,9 @@ export function andFilter(...filters: unknown[]) {
   return { andGroup: { expressions: filters } };
 }
 
-// ---------- AI-source classification ----------
+// ---------- AI-source classification (lib/ga4Traffic.ts, safe for client components) ----------
 
-export const DEFAULT_AI_DOMAINS = [
-  "chatgpt.com",
-  "chat.openai.com",
-  "openai.com",
-  "perplexity.ai",
-  "gemini.google.com",
-  "bard.google.com",
-  "copilot.microsoft.com",
-  "claude.ai",
-  "you.com",
-  "poe.com",
-  "meta.ai",
-  "phind.com",
-  "chat.deepseek.com",
-  "chat.mistral.ai",
-  "grok.com",
-];
-
-export type TrafficKind = "organic" | "ai" | "other";
-
-export function classifyTraffic(
-  source: string,
-  channel: string,
-  aiDomains: string[],
-): TrafficKind {
-  const s = (source || "").toLowerCase();
-  if (aiDomains.some((d) => d && (s === d || s.endsWith("." + d) || s.includes(d)))) return "ai";
-  // Exact match on GA4's "Organic Search" channel group only — a substring
-  // match on "organic" also swept in "Organic Social", "Organic Video", and
-  // "Organic Shopping", which is why totals here ran ~15-20% ahead of a
-  // reference report filtered to just Organic Search.
-  if ((channel || "").trim().toLowerCase() === "organic search") return "organic";
-  return "other";
-}
+export { DEFAULT_AI_DOMAINS, classifyTraffic, type TrafficKind } from "./ga4Traffic";
 
 // ---------- higher-level: trend breakdown ----------
 

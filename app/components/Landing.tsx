@@ -1,4 +1,10 @@
-export function Landing({ configured }: { configured: boolean }) {
+const ERRORS: Record<string, string> = {
+  not_allowed:
+    "This Google account isn't allowed to use SEO Console. Sign in with an approved account, or ask the owner for access.",
+  access_denied: "Google sign-in was cancelled.",
+};
+
+export function Landing({ configured, error }: { configured: boolean; error?: string | null }) {
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6">
       <div className="rounded-2xl border bg-surface p-8 shadow-sm">
@@ -7,6 +13,12 @@ export function Landing({ configured }: { configured: boolean }) {
           A cleaner, more customizable view of Google Search Console (and Bing) performance,
           plus index &amp; crawl signals for technical SEO.
         </p>
+
+        {error && (
+          <div role="alert" className="mt-6 rounded-lg border border-bad/40 bg-bad/10 p-4 text-sm">
+            {ERRORS[error] ?? "Sign-in didn't complete. Please try again."}
+          </div>
+        )}
 
         {configured ? (
           <a
@@ -44,7 +56,7 @@ export function Landing({ configured }: { configured: boolean }) {
         )}
 
         <p className="mt-6 text-xs text-muted">
-          Read-only access. We request the Search Console scope only.
+          Access is limited to approved Google accounts.
         </p>
       </div>
     </main>

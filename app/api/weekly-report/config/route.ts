@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/session";
 import { ownsGaProperty } from "@/lib/gaConfig";
 import { configFor, reportWindows, saveConfig, type KpiConfig } from "@/lib/weeklyReport";
+import { projectForGa } from "@/lib/projects";
 
 export async function GET(req: NextRequest) {
   const user = await currentUser();
@@ -41,6 +42,9 @@ export async function POST(req: NextRequest) {
     asanaProjectGid: String(body.asanaProjectGid ?? ""),
     asanaStatusTitle: String(body.asanaStatusTitle ?? ""),
   };
-  await saveConfig(user.id, propertyId, cfg);
-  return NextResponse.json({ ok: true, config: cfg });
+  // A property that belongs to a project has its targets in KPI Planning (kpi_targets); this route then leaves
+  // targets alone and saves only the other report settings, so there's one target editor.
+  const project = await projectForGa(user.id, propertyId);
+  await saveConfig(user.id, propertyId, cfg, { keepTargets: Boolean(project) });
+  return NextResponse.json({ ok: true, config: await configFor(user.id, propertyId, yearMonth), targetsIgnored: Boolean(project) });
 }

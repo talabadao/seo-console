@@ -69,6 +69,13 @@ export interface KpiConfig {
   leadEvents: string[];
   asanaProjectGid: string;
   asanaStatusTitle: string;
+  /** Where leadEvents came from: the project setting, an older Weekly Report selection, or nothing yet. */
+  leadEventsSource?: "project" | "weekly-report" | "none";
+  /** The project this GA4 property belongs to (lead events are a project setting). */
+  projectId?: number | null;
+  /** The month's targets with blank (null) and an explicit 0 kept apart; from KPI Planning for project properties. */
+  targets?: Record<"traffic_organic" | "traffic_ai" | "lead_organic" | "lead_ai", number | null>;
+  targetsSource?: "kpi-planning" | "weekly-report";
 }
 
 export interface Section {

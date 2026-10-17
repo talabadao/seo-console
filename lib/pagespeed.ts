@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { accessTokenFor } from "@/lib/google/oauth";
 import type { UserRow } from "@/lib/session";
+import { isAllowedEmail } from "@/lib/auth/allowlist";
 import {
   STRATEGIES,
   parsePsi,
@@ -258,18 +259,21 @@ export async function pageHistory(
  */
 export async function runDuePages(budgetMs: number): Promise<{ ran: number; failed: number; left: number }> {
   const started = Date.now();
-  const due = (await db
+  const rows = (await db
     .prepare(
-      `SELECT g.id, g.url, s.strategy, p.user_id AS "userId"
+      `SELECT g.id, g.url, s.strategy, p.user_id AS "userId", u.email AS "email"
          FROM psi_pages g
          JOIN projects p ON p.id = g.project_id
+         JOIN users u ON u.id = p.user_id
          CROSS JOIN (VALUES ('mobile'), ('desktop')) AS s(strategy)
         WHERE NOT EXISTS (
                 SELECT 1 FROM psi_runs r
                  WHERE r.page_id = g.id AND r.strategy = s.strategy AND r.run_date = ? AND r.score IS NOT NULL)
         ORDER BY g.id`,
     )
-    .all(today())) as { id: number; url: string; strategy: Strategy; userId: number }[];
+    .all(today())) as { id: number; url: string; strategy: Strategy; userId: number; email: string }[];
+  // Accounts that may no longer sign in don't get work run on their behalf.
+  const due = rows.filter((r) => isAllowedEmail(r.email));
 
   // One access token per user (only needed when no API key is configured).
   const tokens = new Map<number, string | null>();

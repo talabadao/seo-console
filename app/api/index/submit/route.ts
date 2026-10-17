@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PREVIEW_WRITES_BLOCKED, externalWritesAllowed } from "@/lib/environment";
 import { currentUser } from "@/lib/session";
 import { db } from "@/lib/db";
 import { GoogleReauthRequiredError, accessTokenFor, hasIndexingScope } from "@/lib/google/oauth";
@@ -18,6 +19,7 @@ const OWNER_MSG =
 export async function POST(req: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!externalWritesAllowed()) return NextResponse.json({ error: PREVIEW_WRITES_BLOCKED }, { status: 403 });
 
   const body = (await req.json().catch(() => ({}))) as {
     property?: string;
@@ -68,8 +70,8 @@ export async function POST(req: NextRequest) {
       | undefined)?.google_scopes ?? user.google_scopes;
   if (!hasIndexingScope(scopes)) return fail(RECONNECT_MSG, { needsReconnect: true });
 
-  const { results, skipped, quotaLeft } = await submitUrls(site, urls, token);
-  const failed = results.filter((r) => !r.ok);
+  const { results, skipped, ineligible, quotaLeft } = await submitUrls(site, urls, token);
+  const failed = results.filter((r) => !r.ok && !r.ineligible);
   const needsReconnect = failed.some((r) =>
     /insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(r.message),
   );
@@ -78,6 +80,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     submitted: results.filter((r) => r.ok).length,
     failed: failed.length,
+    ineligible,
     skipped,
     quotaLeft,
     needsReconnect,

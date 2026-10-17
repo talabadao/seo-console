@@ -1,3 +1,4 @@
+import { KPI_METRICS, kpiTargetsReady, targetsForMonth, type KpiMetricId } from "@/lib/kpiTargets";
 import {
   differenceInCalendarDays,
   endOfMonth,
@@ -9,6 +10,7 @@ import {
 } from "date-fns";
 import { db } from "@/lib/db";
 import { projectForGa } from "@/lib/projects";
+import { leadEventsFor, type LeadEventsSource } from "@/lib/projectSettings";
 import { resolveComparison, enumerateBuckets, type Range } from "@/lib/dateRanges";
 import {
   classifyTraffic,
@@ -320,6 +322,17 @@ export interface KpiConfig {
   asanaProjectGid: string;
   /** Optional fixed title for the Asana status update; falls back to the GA property name. */
   asanaStatusTitle: string;
+  /** Where leadEvents came from (see lib/projectSettings.ts). Lead events are a project setting. */
+  leadEventsSource?: LeadEventsSource;
+  /** The project this GA4 property belongs to, for links to its settings. */
+  projectId?: number | null;
+  /**
+   * The month's targets with blank and zero kept apart (null = no target). The number fields above are the
+   * same values with blank as 0, for older readers. Source: KPI Planning (kpi_targets) for a property that
+   * belongs to a project; the old per-property Weekly report values only for a property with no project.
+   */
+  targets?: Record<KpiMetricId, number | null>;
+  targetsSource?: "kpi-planning" | "weekly-report";
 }
 
 function defaultConfig(yearMonth: string): KpiConfig {
@@ -360,7 +373,27 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
     asanaProjectGid: project?.asanaProjectGid || gid,
     asanaStatusTitle: project?.asanaProjectName || title,
   });
-  if (!row) return { ...defaultConfig(yearMonth), ...asana("", "") };
+  // Lead events are one project-level list (Project settings → Analytics);
+  // older per-month Weekly Report selections are the fallback.
+  const lead = project ? await leadEventsFor(userId, project) : null;
+  const leadFields = (rowEvents: string[]) =>
+    lead && lead.source !== "none"
+      ? { leadEvents: lead.events, leadEventsSource: lead.source, projectId: project?.id ?? null }
+      : { leadEvents: rowEvents, leadEventsSource: (rowEvents.length ? "weekly-report" : "none") as LeadEventsSource, projectId: project?.id ?? null };
+  // Targets: KPI Planning is the one source for a property that belongs to a project.
+  const planned = project && (await kpiTargetsReady()) ? await targetsForMonth(project.id, yearMonth) : null;
+  const targetFields = (legacy: Record<KpiMetricId, number>) => {
+    const targets = planned ?? (Object.fromEntries(KPI_METRICS.map((m) => [m.id, legacy[m.id] > 0 ? legacy[m.id] : null])) as Record<KpiMetricId, number | null>);
+    return {
+      trafficOrganicTarget: targets.traffic_organic ?? 0,
+      trafficAiTarget: targets.traffic_ai ?? 0,
+      leadOrganicTarget: targets.lead_organic ?? 0,
+      leadAiTarget: targets.lead_ai ?? 0,
+      targets,
+      targetsSource: (planned ? "kpi-planning" : "weekly-report") as KpiConfig["targetsSource"],
+    };
+  };
+  if (!row) return { ...defaultConfig(yearMonth), ...asana("", ""), ...leadFields([]), ...targetFields({ traffic_organic: 0, traffic_ai: 0, lead_organic: 0, lead_ai: 0 }) };
   let leadEvents: string[] = [];
   try {
     const parsed = JSON.parse(row.lead_events);
@@ -370,16 +403,28 @@ export async function configFor(userId: number, propertyId: string, yearMonth: s
   }
   return {
     yearMonth,
-    trafficOrganicTarget: Number(row.traffic_organic_target) || 0,
-    trafficAiTarget: Number(row.traffic_ai_target) || 0,
-    leadOrganicTarget: Number(row.lead_organic_target) || 0,
-    leadAiTarget: Number(row.lead_ai_target) || 0,
-    leadEvents,
+    ...targetFields({
+      traffic_organic: Number(row.traffic_organic_target) || 0,
+      traffic_ai: Number(row.traffic_ai_target) || 0,
+      lead_organic: Number(row.lead_organic_target) || 0,
+      lead_ai: Number(row.lead_ai_target) || 0,
+    }),
     ...asana(row.asana_project_gid ?? "", row.asana_status_title ?? ""),
+    ...leadFields(leadEvents),
   };
 }
 
-export async function saveConfig(userId: number, propertyId: string, cfg: KpiConfig): Promise<void> {
+/**
+ * Saves the Weekly report settings for a property and month. With keepTargets (the property belongs to a project,
+ * whose targets live in KPI Planning), the stored target columns are left untouched — they stay as history.
+ */
+export async function saveConfig(userId: number, propertyId: string, cfg: KpiConfig, opts: { keepTargets?: boolean } = {}): Promise<void> {
+  const targets = opts.keepTargets
+    ? ""
+    : `traffic_organic_target = EXCLUDED.traffic_organic_target,
+         traffic_ai_target = EXCLUDED.traffic_ai_target,
+         lead_organic_target = EXCLUDED.lead_organic_target,
+         lead_ai_target = EXCLUDED.lead_ai_target,`;
   await db
     .prepare(
       `INSERT INTO weekly_kpi_config
@@ -388,10 +433,7 @@ export async function saveConfig(userId: number, propertyId: string, cfg: KpiCon
           asana_status_title, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (user_id, property_id, year_month) DO UPDATE SET
-         traffic_organic_target = EXCLUDED.traffic_organic_target,
-         traffic_ai_target = EXCLUDED.traffic_ai_target,
-         lead_organic_target = EXCLUDED.lead_organic_target,
-         lead_ai_target = EXCLUDED.lead_ai_target,
+         ${targets}
          lead_events = EXCLUDED.lead_events,
          asana_project_gid = EXCLUDED.asana_project_gid,
          asana_status_title = EXCLUDED.asana_status_title,

@@ -1,4 +1,5 @@
-import { db } from "@/lib/db";
+import { db, tableExists } from "@/lib/db";
+import { serverKeysAllowed } from "@/lib/credentials/resolve";
 import { brandFromHost, faviconFor, hostOf, matchGa, normalizeUrl } from "@/lib/projectMatch";
 import { normalizeMapsUrl } from "@/lib/serpapi";
 
@@ -14,8 +15,17 @@ export interface Project {
   /** Place id resolved from the Maps link, and the business name Google returns for it. */
   gbpLocation: string | null;
   gbpLocationTitle: string | null;
-  /** Whether a SerpApi key is saved. The key itself never leaves the server. */
+  /**
+   * Whether a SerpApi key applies to this project — the account's credential, or a legacy key still stored on
+   * the project. The key itself never leaves the server.
+   */
   hasSerpKey: boolean;
+  /** Which key applies: a legacy project key, the account credential, or an explicitly allowed server key. */
+  serpKeySource: "project-legacy" | "account" | "server-legacy" | null;
+  /** Masked identifier of the key that applies (last 4 characters); null when none. */
+  serpKeyLast4: string | null;
+  /** When that key was last saved (epoch ms); null when none or unknown. */
+  serpKeyUpdatedAt: number | null;
   asanaProjectGid: string;
   asanaProjectName: string;
 }
@@ -27,8 +37,6 @@ export interface ProjectInput {
   gscProperty?: string | null;
   gaPropertyId?: string | null;
   mapsUrl?: string;
-  /** Omit to keep the saved key; an empty string removes it. */
-  serpApiKey?: string;
   asanaProjectGid?: string;
   asanaProjectName?: string;
 }
@@ -37,19 +45,47 @@ const COLUMNS = `id, name, website_url AS "websiteUrl", favicon_url AS "faviconU
   gsc_property AS "gscProperty", ga_property_id AS "gaPropertyId",
   maps_url AS "mapsUrl", gbp_location AS "gbpLocation", gbp_location_title AS "gbpLocationTitle",
   (serpapi_key IS NOT NULL AND serpapi_key <> '') AS "hasSerpKey",
+  CASE WHEN serpapi_key IS NOT NULL AND serpapi_key <> '' THEN RIGHT(serpapi_key, 4) END AS "serpKeyLast4",
+  serpapi_key_updated_at AS "serpKeyUpdatedAt",
   asana_project_gid AS "asanaProjectGid", asana_project_name AS "asanaProjectName"`;
 
+/**
+ * Fills in which SerpApi key applies to each project, in the resolver's order (lib/credentials/resolve.ts):
+ * a legacy key still stored on the project, else the account's credential, else a server key the account is
+ * explicitly allowed to use. Reads only metadata (hint, timestamp) — never decrypts.
+ */
+async function withSerpStatus(userId: number, projects: Project[]): Promise<Project[]> {
+  const needsAccount = projects.some((p) => !p.hasSerpKey);
+  let account: { hint: string | null; updated_at: number } | undefined;
+  let server = false;
+  if (needsAccount) {
+    if (await tableExists("account_credentials")) {
+      account = (await db
+        .prepare("SELECT hint, updated_at FROM account_credentials WHERE user_id = ? AND provider = 'serpapi'")
+        .get(userId)) as { hint: string | null; updated_at: number } | undefined;
+    }
+    if (!account && process.env.SERPAPI_API_KEY?.trim()) server = await serverKeysAllowed(userId);
+  }
+  return projects.map((p) => {
+    if (p.hasSerpKey) return { ...p, serpKeySource: "project-legacy" };
+    if (account) return { ...p, hasSerpKey: true, serpKeySource: "account", serpKeyLast4: account.hint, serpKeyUpdatedAt: Number(account.updated_at) };
+    if (server) return { ...p, hasSerpKey: true, serpKeySource: "server-legacy", serpKeyLast4: null, serpKeyUpdatedAt: null };
+    return { ...p, serpKeySource: null };
+  });
+}
+
 export async function listProjects(userId: number): Promise<Project[]> {
-  return (await db
+  const rows = (await db
     .prepare(`SELECT ${COLUMNS} FROM projects WHERE user_id = ? ORDER BY LOWER(name), id`)
     .all(userId)) as unknown as Project[];
+  return withSerpStatus(userId, rows);
 }
 
 export async function getProject(userId: number, id: number): Promise<Project | null> {
-  const row = await db
+  const row = (await db
     .prepare(`SELECT ${COLUMNS} FROM projects WHERE user_id = ? AND id = ?`)
-    .get(userId, id);
-  return (row as unknown as Project | undefined) ?? null;
+    .get(userId, id)) as unknown as Project | undefined;
+  return row ? (await withSerpStatus(userId, [row]))[0] : null;
 }
 
 /** The project a GA4 property is linked to, if any (first match when linked more than once). */
@@ -117,6 +153,19 @@ export async function serpKeyFor(projectId: number): Promise<string | null> {
   return row?.serpapi_key || null;
 }
 
+/**
+ * Removes a legacy SerpApi key stored on a project (explicit action), so the project uses the account's
+ * credential. New keys are saved only as encrypted account credentials. Returns the updated project, or null
+ * if the project isn't the user's.
+ */
+export async function removeSerpKey(userId: number, projectId: number): Promise<Project | null> {
+  const res = await db
+    .prepare("UPDATE projects SET serpapi_key = NULL, serpapi_key_updated_at = NULL WHERE user_id = ? AND id = ?")
+    .run(userId, projectId);
+  if (res.count === 0) return null;
+  return getProject(userId, projectId);
+}
+
 function cleanMapsUrl(input: ProjectInput): string | undefined {
   if (input.mapsUrl === undefined) return undefined;
   if (!input.mapsUrl.trim()) return "";
@@ -125,15 +174,12 @@ function cleanMapsUrl(input: ProjectInput): string | undefined {
   return url;
 }
 
-/** Saves the Maps link and SerpApi key. A new link clears the resolved place so it is looked up again. */
-async function saveReviewSource(id: number, mapsUrl: string | undefined, input: ProjectInput, base?: Project) {
+/** Saves the Maps link. A new link clears the resolved place so it is looked up again. */
+async function saveReviewSource(id: number, mapsUrl: string | undefined, base?: Project) {
   if (mapsUrl !== undefined && mapsUrl !== (base?.mapsUrl ?? "")) {
     await db
       .prepare("UPDATE projects SET maps_url = ?, gbp_location = NULL, gbp_location_title = NULL WHERE id = ?")
       .run(mapsUrl, id);
-  }
-  if (input.serpApiKey !== undefined) {
-    await db.prepare("UPDATE projects SET serpapi_key = ? WHERE id = ?").run(input.serpApiKey.trim() || null, id);
   }
 }
 
@@ -160,7 +206,7 @@ export async function createProject(userId: number, input: ProjectInput): Promis
       now,
     );
   const id = Number(res.rows[0].id);
-  await saveReviewSource(id, mapsUrl, input);
+  await saveReviewSource(id, mapsUrl);
   return (await getProject(userId, id))!;
 }
 
@@ -191,7 +237,7 @@ export async function updateProject(
       userId,
       id,
     );
-  await saveReviewSource(id, mapsUrl, input, base);
+  await saveReviewSource(id, mapsUrl, base);
   return getProject(userId, id);
 }
 

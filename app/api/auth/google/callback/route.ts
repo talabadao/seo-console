@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { oauthClient } from "@/lib/google/oauth";
 import { getSession } from "@/lib/session";
 import { db } from "@/lib/db";
+import { isAllowedIdentity } from "@/lib/auth/allowlist";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -23,11 +24,24 @@ export async function GET(req: NextRequest) {
     const { tokens } = await client.getToken(code);
     client.setCredentials(tokens);
 
-    const info = await client.request<{ email: string; name?: string; picture?: string }>({
-      url: "https://www.googleapis.com/oauth2/v3/userinfo",
+    // Identity comes from Google's signed ID token, verified against our client
+    // ID, so the email and its verified flag can't be supplied by the caller.
+    if (!tokens.id_token) return NextResponse.redirect(`${origin}/?error=no_id_token`);
+    const ticket = await client.verifyIdToken({
+      idToken: tokens.id_token,
+      audience: process.env.GOOGLE_CLIENT_ID,
     });
-    const { email, name, picture } = info.data;
+    const claims = ticket.getPayload();
+    const email = claims?.email;
     if (!email) return NextResponse.redirect(`${origin}/?error=no_email`);
+    // Phase 1 allowlist. A refused account is not stored: no user row, no tokens.
+    if (!isAllowedIdentity(claims)) {
+      session.oauthState = undefined;
+      await session.save();
+      return NextResponse.redirect(`${origin}/?error=not_allowed`);
+    }
+    const name = claims?.name;
+    const picture = claims?.picture;
 
     const now = Date.now();
     const existing = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as
