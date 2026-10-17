@@ -60,7 +60,6 @@ const KEY = Buffer.alloc(32, 5).toString("base64");
 const A = 1; // manages project 1
 const B = 2; // same workspace: views project 1, manages project 2
 const C = 3; // another workspace
-const B_PROJECT = 2;
 
 async function as(userId: number) {
   acting = (await pg.query("SELECT * FROM users WHERE id = $1", [userId])).rows[0] as Record<string, unknown>;

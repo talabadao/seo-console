@@ -59,6 +59,8 @@ export const migration: Migration = {
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS asana_user_name TEXT`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS asana_verified_at BIGINT`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS asana_verified_via TEXT`,
+    // One verified Asana user per active person in a workspace (task alerts follow it).
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_users_asana_gid ON users(workspace_id, asana_user_gid) WHERE asana_user_gid IS NOT NULL AND status = 'active'`,
     `UPDATE users u SET kind = 'shared-connection' WHERE ${ANALYTICS} AND u.kind <> 'shared-connection'`,
     `UPDATE users u SET workspace_id = 1 WHERE u.workspace_id IS NULL AND (${COMPANY} OR ${GMAIL_EXCEPTION})`,
     `CREATE TABLE IF NOT EXISTS user_identities (

@@ -4,7 +4,8 @@ import { isDenied, viewer } from "@/lib/access";
 
 /**
  * The team directory: every active person in the workspace with name, avatar, company login addresses, job title,
- * the projects they manage and their confirmed Asana user. Never logins' secrets, budgets, usage or inboxes.
+ * the projects they manage and their confirmed Asana user, plus the workspace's brand labels. Never logins' secrets,
+ * budgets, usage or inboxes.
  */
 export async function GET() {
   const user = await viewer();
@@ -22,8 +23,10 @@ export async function GET() {
     )
     .all(user.workspace_id)) as Array<Record<string, unknown>>;
   const parse = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
+  const brands = (await db.prepare("SELECT id, name, email_domain FROM brands WHERE workspace_id = ? ORDER BY name").all(user.workspace_id)) as Array<Record<string, unknown>>;
   return NextResponse.json({
     me: user.id,
+    brands: brands.map((b) => ({ id: Number(b.id), name: String(b.name), domain: String(b.email_domain) })),
     people: people.map((p) => ({
       id: Number(p.id),
       name: (p.name as string | null) ?? null,

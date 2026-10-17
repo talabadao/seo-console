@@ -29,13 +29,17 @@ async function projectLegacyKey(userId: number, projectId: number): Promise<stri
   return r?.serpapi_key?.trim() || null;
 }
 
-/** The acting User's own credential for a provider (the project id is accepted for callers' symmetry, unused). Null when they have none. */
+/**
+ * The acting User's own credential for a provider, or null when they have none. The project is accepted for the
+ * callers' symmetry and deliberately ignored: no project, manager or server key ever substitutes for the person's own.
+ */
 export async function resolveCredential(
   userId: number,
   provider: CredentialProvider,
-  _projectId: number | null = null,
+  projectId: number | null = null,
   env: Env = process.env,
 ): Promise<ResolvedSecret | null> {
+  void projectId;
   if (!storageConfigured(env)) return null;
   const own = await readCredential(userId, provider);
   return own ? { values: own.values, source: "account", fingerprint: own.fingerprint } : null;

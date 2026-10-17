@@ -16,6 +16,7 @@ import { Delta, PeriodPicker, Stat, fmtTime } from "./summaryUi";
 import { Card, DataTable, EmptyState, ErrorState, LoadingState, buttonClass, primaryButtonClass, type Column } from "./ui";
 import { ReportFooter, fmtMetric, useGaJson, type CacheMeta } from "./ga4Shared";
 import { alignSeries, daysOf, fillFor } from "@/lib/v2/ga4reports/days";
+import { useCanManage } from "./Workspace";
 
 type MetaResponse =
   | { state: "live"; propertyId: string; timeZone: string | null; currency: string | null; dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }
@@ -400,6 +401,7 @@ function ResultPanel({
   /** The definition was edited after this Run: the results are for the previous definition. */
   outdated: boolean;
 }) {
+  const canManage = useCanManage();
   if (res.loading) return <LoadingState label="Running in GA4…" />;
   if (res.error) return <ErrorState title="The report didn't run." body={res.error} />;
   const d = res.data;
@@ -412,9 +414,11 @@ function ResultPanel({
     <Card
       title="Result"
       actions={
-        <button className={buttonClass} onClick={onRefresh}>
-          Refresh
-        </button>
+        canManage ? (
+          <button className={buttonClass} onClick={onRefresh}>
+            Refresh
+          </button>
+        ) : null
       }
     >
       <div className="space-y-4">

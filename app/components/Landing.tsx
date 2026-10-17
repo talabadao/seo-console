@@ -1,8 +1,4 @@
-const ERRORS: Record<string, string> = {
-  not_allowed:
-    "This Google account isn't allowed to use SEO Console. Sign in with an approved account, or ask the owner for access.",
-  access_denied: "Google sign-in was cancelled.",
-};
+import { authErrorMessage } from "@/lib/auth/messages";
 
 export function Landing({ configured, error }: { configured: boolean; error?: string | null }) {
   return (
@@ -16,7 +12,7 @@ export function Landing({ configured, error }: { configured: boolean; error?: st
 
         {error && (
           <div role="alert" className="mt-6 rounded-lg border border-bad/40 bg-bad/10 p-4 text-sm">
-            {ERRORS[error] ?? "Sign-in didn't complete. Please try again."}
+            {authErrorMessage(error)}
           </div>
         )}
 
@@ -56,7 +52,8 @@ export function Landing({ configured, error }: { configured: boolean; error?: st
         )}
 
         <p className="mt-6 text-xs text-muted">
-          Access is limited to approved Google accounts.
+          For Artemis Digital and Heads on Pillows team members: sign in with your company Google account. Shared analytics
+          accounts can&apos;t sign in; they are connected as data sources inside the app.
         </p>
       </div>
     </main>

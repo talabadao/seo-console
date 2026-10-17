@@ -207,6 +207,7 @@ describe("linked logins and merging two records of one person", () => {
     await pg.query("INSERT INTO notifications (user_id, project_id, rule, dedupe_key, severity, title, body, source_at, created_at) VALUES (5, $1, 'performance', 'd1', 'info', 'From company record', 'b', 1, 1)", [p.id]);
     await pg.exec(`INSERT INTO provider_allowances (key, max_units, used_units, note, created_at, updated_at) VALUES
       ('serpapi-month:user:1:2026-10', 100, 2, 'x', 0, 0), ('serpapi-month:user:5:2026-10', 50, 3, 'x', 0, 0)`);
+    await pg.exec("UPDATE users SET asana_user_gid = 'g-tin', asana_user_name = 'Tin' WHERE id = 5"); // confirmed on the company record only
 
     const r = await linkIdentity(TIN, claims("tin@artemisdigital.com", "s-tin-ad", "artemisdigital.com"));
     expect(r).toMatchObject({ ok: true, status: "merge-required" });
@@ -243,6 +244,7 @@ describe("linked logins and merging two records of one person", () => {
     expect((await listManagers(managed.id)).map((m) => m.userId)).toEqual([TIN]);
     expect(await q1("SELECT user_id FROM notifications WHERE dedupe_key = 'd1'")).toEqual({ user_id: TIN });
     expect(await q1("SELECT status, merged_into FROM users WHERE id = 5")).toEqual({ status: "merged", merged_into: TIN });
+    expect(await q1("SELECT asana_user_gid FROM users WHERE id = 1")).toEqual({ asana_user_gid: "g-tin" }); // moved under the one-active-owner index
     expect(await q1("SELECT user_id FROM user_identities WHERE subject = 's-tin-ad'")).toEqual({ user_id: TIN });
     expect(await q1("SELECT event FROM identity_audit WHERE user_id = 1 AND event = 'merge'")).toEqual({ event: "merge" });
     // Docs publishing stays with Tin's verified linked profile, through either login.

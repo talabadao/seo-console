@@ -34,8 +34,10 @@ import {
 } from "./summaryUi";
 import { buttonClass } from "./ui";
 import { Icon } from "./icons";
+import { useCanManage } from "./Workspace";
 
 export function ProjectDashboard({ project, onNavigate }: { project: Project; onNavigate: (l: ShellLocation) => void }) {
+  const canManage = useCanManage();
   const [period, setPeriod] = usePeriodChoice();
   const [nonce, setNonce] = useState(0);
   const loaded = useSummary({ projectId: project.id, preset: period.preset, compare: period.compare, parts: ALL_PARTS, detail: true }, nonce);
@@ -68,9 +70,11 @@ export function ProjectDashboard({ project, onNavigate }: { project: Project; on
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <PeriodPicker value={period} onChange={setPeriod} />
-          <button className={buttonClass} onClick={() => setNonce((n) => n + 1)} disabled={loading} title="Fetch fresh numbers from the sources">
-            Refresh
-          </button>
+          {canManage && (
+            <button className={buttonClass} onClick={() => setNonce((n) => n + 1)} disabled={loading} title="Fetch fresh numbers from the sources">
+              Refresh
+            </button>
+          )}
           <button className={buttonClass} onClick={() => go("settings", "project")} aria-label="Project settings">
             <Icon name="gear" className="h-4 w-4" />
             <span className="hidden sm:inline">Settings</span>

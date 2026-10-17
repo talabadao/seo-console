@@ -5,7 +5,8 @@
 // settings panel (brand terms, AI sources, indexing automation, Asana/Bing
 // keys) and the monthly KPI config API. Infrastructure secrets — database
 // URLs, OAuth client secrets, the session key — stay in the server
-// environment and are never editable here.
+// environment and are never editable here. Everyone on the team can open these pages; only the project's managers
+// see the editing controls (the server refuses changes from anyone else).
 
 import { useEffect, useState, type ReactNode } from "react";
 import type { Project } from "../ProjectManager";
@@ -17,9 +18,11 @@ import { LeadEventsEditor } from "../LeadEventsEditor";
 import { BudgetLimits } from "./BudgetLimits";
 import { useUsage } from "./UsageCosts";
 import { KpiPlanner } from "./KpiPlanner";
+import { ProjectSharing, SHARING_EXPLANATION, SpendingStatus } from "./Workspace";
 
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
+  { id: "sharing", label: "Managers & sharing" },
   { id: "integrations", label: "Integrations" },
   { id: "kpi", label: "KPI planning" },
   { id: "analytics", label: "Analytics / Key events" },
@@ -32,6 +35,8 @@ type SectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 interface SiteMeta {
   property: string;
   source: string;
+  connectionId?: number;
+  connectionEmail?: string;
   lastSync: { status: string; finished_at: number | null } | null;
 }
 
@@ -55,11 +60,11 @@ export function ProjectSettings({
   onProjectChanged: () => void | Promise<void>;
 }) {
   const section: SectionId = SETTINGS_SECTIONS.some((s) => s.id === sub) ? (sub as SectionId) : "general";
-  const edit = (
+  const edit = project.canManage ? (
     <button className={buttonClass} onClick={() => onEditProject(project.id)}>
       Edit project
     </button>
-  );
+  ) : null;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[13rem_1fr]">
@@ -85,14 +90,39 @@ export function ProjectSettings({
                 <p className="text-sm text-muted">{project.websiteUrl ? hostOf(project.websiteUrl) : "No website set"}</p>
               </div>
             </div>
-            <p className="mt-4 text-sm text-muted">
-              Only this account can see this project. Signing in is limited to approved Google accounts, and being approved gives no access to
-              another account&apos;s projects.
-            </p>
+            <ul className="mt-4 space-y-2 text-sm">
+              <Row label="Brand" body={project.brandName ?? "No brand label"} />
+              <Row label="Primary manager" body={project.primaryManagerName ?? "None yet — the operator assigns one"} />
+              <Row
+                label="Managers"
+                body={
+                  <>
+                    {project.managerCount} manager{project.managerCount === 1 ? "" : "s"}.{" "}
+                    <button className="text-accent hover:underline" onClick={() => onSub("sharing")}>
+                      See who
+                    </button>
+                  </>
+                }
+              />
+              <Row label="Created by" body={project.createdByName ?? "Unknown"} />
+              <Row label="Your access" body={project.canManage ? (project.isPrimaryManager ? "Primary manager" : "Manager") : "View only"} />
+            </ul>
+            {!project.canManage && <div className="mt-4">{SHARING_EXPLANATION}</div>}
           </Card>
         )}
 
-        {section === "integrations" && <Integrations project={project} edit={edit} onNavigate={onNavigate} onProjectChanged={onProjectChanged} />}
+        {section === "sharing" && (
+          <ProjectSharing
+            project={project}
+            onChanged={onProjectChanged}
+            onDeleted={async () => {
+              await onProjectChanged();
+              onNavigate({ kind: "portfolio" });
+            }}
+          />
+        )}
+
+        {section === "integrations" && <Integrations project={project} sites={sites} edit={edit} onNavigate={onNavigate} onProjectChanged={onProjectChanged} />}
 
         {section === "kpi" && (
           <KpiPlanner
@@ -112,9 +142,11 @@ export function ProjectSettings({
             ) : (
               <>
                 <p className="text-sm text-muted">Lead events are chosen from the project&apos;s GA4 events. Link a GA4 property first.</p>
-                <button className={`mt-3 ${primaryButtonClass}`} onClick={() => onEditProject(project.id)}>
-                  Link GA4
-                </button>
+                {project.canManage && (
+                  <button className={`mt-3 ${primaryButtonClass}`} onClick={() => onEditProject(project.id)}>
+                    Link GA4
+                  </button>
+                )}
               </>
             )}
           </Card>
@@ -124,9 +156,11 @@ export function ProjectSettings({
           <Card
             title="Tracking"
             actions={
-              <button className={buttonClass} onClick={onOpenConsoleSettings}>
-                Open tracking &amp; connections
-              </button>
+              project.canManage ? (
+                <button className={buttonClass} onClick={onOpenConsoleSettings}>
+                  Open tracking &amp; connections
+                </button>
+              ) : null
             }
           >
             <ul className="space-y-2 text-sm">
@@ -138,7 +172,12 @@ export function ProjectSettings({
           </Card>
         )}
 
-        {section === "budgets" && <Budgets project={project} onNavigate={onNavigate} />}
+        {section === "budgets" && (
+          <>
+            <SpendingStatus project={project} onOpenMySpending={() => onNavigate({ kind: "account", section: "spending", projectId: project.id })} />
+            <Budgets project={project} onNavigate={onNavigate} />
+          </>
+        )}
 
         {section === "sync" && <SyncHistory project={project} sites={sites} />}
 
@@ -173,25 +212,35 @@ function Row({ label, body, right }: { label: string; body: ReactNode; right?: R
 
 function Integrations({
   project,
+  sites,
   edit,
   onNavigate,
   onProjectChanged,
 }: {
   project: Project;
+  sites: SiteMeta[];
   edit: ReactNode;
   onNavigate: (l: ShellLocation) => void;
   onProjectChanged: () => void | Promise<void>;
 }) {
+  const via = (connectionId: number | null) => {
+    const email = sites.find((s) => s.connectionId === connectionId)?.connectionEmail;
+    return connectionId == null ? "" : email ? ` · via ${email}` : ` · via connection #${connectionId}`;
+  };
   const connections = [
-    { label: "Google Search Console", detail: project.gscProperty, on: Boolean(project.gscProperty) },
-    { label: "Google Analytics 4", detail: project.gaPropertyId ? `Property ${project.gaPropertyId}` : null, on: Boolean(project.gaPropertyId) },
+    { label: "Google Search Console", detail: project.gscProperty ? `${project.gscProperty}${via(project.gscConnectionId)}` : null, on: Boolean(project.gscProperty) },
+    { label: "Google Analytics 4", detail: project.gaPropertyId ? `Property ${project.gaPropertyId}${via(project.gaConnectionId)}` : null, on: Boolean(project.gaPropertyId) },
     {
       // The Maps link is a project field; the SerpApi key is a separate credential, shown below.
       label: "Google Maps link",
       detail: project.gbpLocationTitle ?? (project.mapsUrl || null),
       on: Boolean(project.mapsUrl),
     },
-    { label: "Asana", detail: project.asanaProjectName || project.asanaProjectGid || null, on: Boolean(project.asanaProjectGid) },
+    {
+      label: "Asana",
+      detail: project.asanaProjectGid ? `${project.asanaProjectName || project.asanaProjectGid}${project.asanaConnectionId ? "" : " · no Asana connection chosen"}` : null,
+      on: Boolean(project.asanaProjectGid && project.asanaConnectionId),
+    },
   ];
   const pages = NAV.flatMap((g) => g.items.filter((i) => i.status === "live" && i.requires).map((i) => ({ g, i })));
   return (
@@ -207,10 +256,11 @@ function Integrations({
           ))}
         </ul>
         <p className="mt-3 text-xs text-muted">
-          API keys, the Asana token and the Bing key belong to your account, not the project.{" "}
-          <button className="text-accent hover:underline" onClick={() => onNavigate({ kind: "account", section: "", projectId: project.id })}>
-            Account settings
+          Search Console and GA4 are read through the workspace&apos;s shared Google connections, never a person&apos;s login.{" "}
+          <button className="text-accent hover:underline" onClick={() => onNavigate({ kind: "account", section: "connections", projectId: project.id })}>
+            Data connections
           </button>
+          . API keys belong to each person and pay for the runs they start.
         </p>
       </Card>
       <SerpApiKeyCard project={project} onProjectChanged={onProjectChanged} onNavigate={onNavigate} />
@@ -242,9 +292,9 @@ function Integrations({
 }
 
 /**
- * Which SerpApi key this project uses. Keys are saved once per account (Settings → Account → API credentials);
- * a legacy key stored on the project still applies until it's removed or adopted there. A free Check verifies
- * the key that applies (SerpApi's account endpoint; no search spent).
+ * The SerpApi key that pays for the runs YOU start here: your own (Account → API credentials). A legacy key still
+ * stored on the project from before the team workspace is never used; a manager can remove it. A free Check verifies
+ * your key (SerpApi's account endpoint; no search spent).
  */
 function SerpApiKeyCard({
   project,
@@ -283,18 +333,13 @@ function SerpApiKeyCard({
     <Card title="SerpApi key">
       <ul className="space-y-2 text-sm">
         <Row
-          label="Key that applies"
-          body={
-            project.serpKeySource === "account"
-              ? `Your account's SerpApi key ••••${project.serpKeyLast4 ?? ""}${updated}`
-              : project.serpKeySource === "project-legacy"
-                ? `A legacy key stored on this project ••••${project.serpKeyLast4 ?? ""}${updated}. It keeps working until you remove it or move it to your account.`
-                : project.serpKeySource === "server-legacy"
-                  ? "The server's SerpApi key (legacy, allowed for this account)."
-                  : "None. Add a SerpApi key for your account."
-          }
+          label="Your key"
+          body={project.serpKeySource === "account" ? `Your own SerpApi key ••••${project.serpKeyLast4 ?? ""}${updated}` : "None. Add your own SerpApi key to run paid searches."}
           right={<ConnectionBadge on={project.hasSerpKey} />}
         />
+        {project.legacyProjectKey && (
+          <Row label="Legacy project key" body="A key stored on this project before the team workspace. It isn't used for any run." />
+        )}
       </ul>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button className={buttonClass} onClick={() => onNavigate(accountHref)}>
@@ -305,9 +350,9 @@ function SerpApiKeyCard({
             {busy === "check" ? "Checking…" : "Check connection"}
           </button>
         )}
-        {project.serpKeySource === "project-legacy" && (
+        {project.legacyProjectKey && project.canManage && (
           <button className="text-sm text-muted hover:text-bad" onClick={clear} disabled={busy !== null}>
-            {busy === "clear" ? "Removing…" : "Remove project key (use account key)"}
+            {busy === "clear" ? "Removing…" : "Remove legacy project key"}
           </button>
         )}
       </div>
@@ -317,7 +362,9 @@ function SerpApiKeyCard({
           {result.message}
         </p>
       )}
-      <p className="mt-2 text-xs text-muted">Used for Maps reviews, Google Search Tracking, Rank tracking → Google and Brand Mentions.</p>
+      <p className="mt-2 text-xs text-muted">
+        Used for the Maps reviews, Google Search Tracking and Brand Mentions runs you start. Each manager runs with their own key and budget.
+      </p>
     </Card>
   );
 }
@@ -371,6 +418,7 @@ function SeRankingCard({ project }: { project: Project }) {
           </p>
           <select
             value={effective ?? ""}
+            disabled={!project.canManage}
             onChange={(e) => choose(e.target.value ? Number(e.target.value) : null)}
             className="w-full rounded-md border bg-background px-2 py-1.5"
             aria-label="SE Ranking project"

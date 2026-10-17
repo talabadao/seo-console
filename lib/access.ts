@@ -21,15 +21,20 @@ export async function viewer(): Promise<UserRow | Denied> {
 
 export const isDenied = (v: unknown): v is NextResponse => v instanceof NextResponse;
 
-/** The explanation shown to a viewer who tries to change something. */
+/**
+ * The explanation shown to a viewer who tries to change something: `error` is the readable sentence (what existing
+ * pages display), `code` is stable for clients.
+ */
 export async function managementRequired(project: Project): Promise<NextResponse> {
   const managers = await listManagers(project.id);
+  const message = managers.length
+    ? `Viewing is open to the whole team; changing or running things in ${project.name} needs management access. Ask one of its managers to share it with you: ${managers.map((m) => m.name ?? m.email).join(", ")}.`
+    : `${project.name} has no manager yet. Ask the operator to assign one.`;
   return NextResponse.json(
     {
-      error: "management-required",
-      message: managers.length
-        ? `Viewing is open to the whole team; changing or running things in ${project.name} needs management access. Ask one of its managers to share it with you: ${managers.map((m) => m.name ?? m.email).join(", ")}.`
-        : `${project.name} has no manager yet. Ask the operator to assign one.`,
+      error: message,
+      code: "management-required",
+      message,
       managers: managers.map((m) => ({ userId: m.userId, name: m.name, email: m.email, isPrimary: m.isPrimary })),
     },
     { status: 403 },

@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { connectionAccessToken } from "@/lib/google/connections";
 import { getProject, type Project } from "@/lib/projects";
-import type { UserRow } from "@/lib/session";
 import {
   STRATEGIES,
   parsePsi,

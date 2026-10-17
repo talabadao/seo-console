@@ -246,6 +246,8 @@ export async function performMerge(requestId: number, targetUserId: number, choi
       );
     }
     await q("DELETE FROM scheduled_spending WHERE user_id = ?", source);
+    // The source stops being an active person first, so its Asana user can move without two active owners.
+    await q("UPDATE users SET status = 'merged', merged_into = ?, updated_at = ? WHERE id = ?", target, now, source);
     // Profile details the target doesn't have yet; the Asana user follows the explicit choice when both differ.
     const asanaChoice = pick("asana", "gid");
     await q(
@@ -266,7 +268,6 @@ export async function performMerge(requestId: number, targetUserId: number, choi
     );
     await q("UPDATE google_connections SET granted_by_user_id = ? WHERE granted_by_user_id = ?", target, source);
     await q("UPDATE asana_connections SET granted_by_user_id = ? WHERE granted_by_user_id = ?", target, source);
-    await q("UPDATE users SET status = 'merged', merged_into = ?, updated_at = ? WHERE id = ?", target, now, source);
     await q("UPDATE merge_requests SET status = 'done', choices = ?::jsonb, resolved_at = ? WHERE id = ?", JSON.stringify(choices), now, requestId);
     await q(
       "INSERT INTO identity_audit (user_id, event, email, detail, created_at) VALUES (?, 'merge', ?, ?::jsonb, ?)",

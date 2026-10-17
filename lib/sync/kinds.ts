@@ -16,7 +16,6 @@ import { ProviderBusyError } from "./providerHttp";
 import { runTemplate, type LeadSetup, type TemplateId, type TemplateResult } from "@/lib/v2/ga4reports/templates";
 import { runCustomReport, type CustomResult } from "@/lib/v2/ga4reports/run";
 import type { ReportSpec } from "@/lib/v2/ga4reports/spec";
-import type { UserRow } from "@/lib/session";
 import type { PeriodInfo, Section, SummaryPart } from "@/lib/v2/summary/types";
 import { ga4Section, gaContext, gscSection, healthSection, kpiSection, projectToken, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
 import { llmReport, type Granularity, type LlmMetric } from "@/lib/v2/llm/report";
@@ -164,7 +163,7 @@ registerKind<LlmQuery, unknown>({
   provider: "ga4",
   freshMs: FRESH["llm-traffic"],
   isAccessError: isAccess,
-  async run({ projectId, query, workspaceId }) {
+  async run({ projectId, query }) {
     const { project } = await context(projectId);
     if (!project.gaPropertyId || project.gaConnectionId == null) throw new SectionFailed("No GA4 property linked.");
     const t = await token(project, "ga4", "Google Analytics 4");
@@ -206,7 +205,7 @@ registerKind<SeReportQuery, SeReportPayload>({
   provider: "seranking",
   freshMs: FRESH["seranking:report"],
   isAccessError: (e) => e instanceof AccessLostError || (e instanceof SeRankingError && (e.status === 401 || e.status === 403)),
-  async run({ projectId, query, workspaceId }) {
+  async run({ projectId, query }) {
     const { project } = await context(projectId);
     const sites = await listSites();
     const chosen = await seRankingSiteFor(project.id);
