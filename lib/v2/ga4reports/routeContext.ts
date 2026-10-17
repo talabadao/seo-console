@@ -5,7 +5,7 @@
 import { NextResponse, after } from "next/server";
 import { currentUser, type UserRow } from "@/lib/session";
 import { getProject, type Project } from "@/lib/projects";
-import { checkCompatibility, cleanGaError, propertyNow } from "@/lib/ga4";
+import { propertyNow, validateReportCompatibility, type GaFailureKind } from "@/lib/ga4";
 import { filterExpression, normalizeSpec, unknownFields, type ReportSpec } from "./spec";
 import { isDemoWebsite } from "@/lib/v2/summary/demo";
 import { gaContext, gaPreconditions, googleToken } from "@/lib/v2/summary/live";
@@ -79,21 +79,32 @@ export function cacheInfo(r: { state: string; fetchedAt?: number | null; refresh
   return { state: r.state === "stale" ? "stale" : "fresh", fetchedAt: r.fetchedAt ?? null, refreshing: Boolean(r.refreshing), lastError: r.error ?? null, cooldown: r.cooldown };
 }
 
-/** Structure, field names from the property's metadata, then GA4's own compatibility check. */
-export async function validateSpec(c: GaRouteContext, raw: unknown): Promise<{ ok: true; spec: ReportSpec } | { ok: false; errors: string[]; incompatible?: { dimensions: string[]; metrics: string[] } }> {
+/** Why a definition can't be saved: "invalid" is a problem with the definition itself; the rest are GA4 or access conditions. */
+export type ValidationFailure = { ok: false; kind: GaFailureKind; errors: string[] };
+
+/** HTTP status for a validation failure, so a permission or quota problem is never mistaken for a bad definition. */
+export const validationStatus = (kind: GaFailureKind) => ({ invalid: 400, access: 403, quota: 429, unavailable: 503 })[kind];
+
+/**
+ * Validates a report definition for the project's GA4 property, the same way for Check fields, Save, Save as copy,
+ * Duplicate and re-checking after a property change:
+ * 1. structure and chart rules (normalizeSpec — Run uses the same normalized definition);
+ * 2. every dimension, metric and filter field exists in the property's metadata;
+ * 3. GA4's checkCompatibility for exactly the dimensions, metrics and dimension filter that Run sends to runReport.
+ * A GA4 failure (permission, quota, network, timeout) is returned as such and never counts as valid.
+ */
+export async function validateSpec(c: GaRouteContext, raw: unknown): Promise<{ ok: true; spec: ReportSpec } | ValidationFailure> {
   const n = normalizeSpec(raw);
-  if ("errors" in n) return { ok: false, errors: n.errors };
+  if ("errors" in n) return { ok: false, kind: "invalid", errors: n.errors };
   const meta = await cachedMetadata(c);
-  if ("error" in meta) return { ok: false, errors: [meta.error] };
+  if ("error" in meta) return { ok: false, kind: "unavailable", errors: [meta.error] };
   const unknown = unknownFields(n.spec, meta);
-  if (unknown.length) return { ok: false, errors: [`Not available in this GA4 property: ${unknown.join(", ")}.`] };
-  try {
-    const bad = await checkCompatibility(c.token, c.propertyId, { dimensions: n.spec.dimensions, metrics: n.spec.metrics, dimensionFilter: filterExpression(n.spec.filters) });
-    if (bad.dimensions.length || bad.metrics.length) {
-      return { ok: false, errors: [`GA4 can't combine these in one report: ${[...bad.dimensions, ...bad.metrics].join(", ")}. Remove one side of the conflict.`], incompatible: bad };
-    }
-  } catch (e) {
-    return { ok: false, errors: [cleanGaError(e instanceof Error ? e.message : String(e)).message] };
-  }
+  if (unknown.length) return { ok: false, kind: "invalid", errors: [`Not available in this GA4 property: ${unknown.join(", ")}.`] };
+  const verdict = await validateReportCompatibility(c.token, c.propertyId, {
+    dimensions: n.spec.dimensions,
+    metrics: n.spec.metrics,
+    dimensionFilter: filterExpression(n.spec.filters),
+  });
+  if (!verdict.ok) return { ok: false, kind: verdict.kind, errors: [verdict.message] };
   return { ok: true, spec: n.spec };
 }

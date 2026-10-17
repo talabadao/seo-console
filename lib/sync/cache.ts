@@ -32,6 +32,8 @@ export interface JobKind<Q = unknown, P = unknown> {
   manualOnly?: boolean;
   /** Not refreshed by the scheduled sync: only when someone reads it (stale reads refresh in the background). */
   noSchedule?: boolean;
+  /** True when retrying can't help (the provider rejected the request itself, e.g. HTTP 400): fail without retries. */
+  isPermanentError?(e: unknown): boolean;
   /**
    * A result's own freshness, when it depends on the result: a resumable dataset that isn't complete yet returns a
    * short time, so the next read or scheduled tick continues it; a complete one returns its full interval.
@@ -221,6 +223,10 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
     if (k.isAccessError?.(e)) {
       await finish("failed", message, null, counters);
       await db.prepare("UPDATE report_cache SET access_error = ? WHERE scope = ? AND cache_key = ?").run(message.slice(0, 300), job.scope, job.cache_key);
+      return "failed";
+    }
+    if (k.isPermanentError?.(e)) {
+      await finish("failed", message, null, counters);
       return "failed";
     }
     if (job.attempts < job.max_attempts) return (await finish("queued", message, Date.now() + backoffMs(job.attempts), counters)) ? "requeued" : "lost-lease";

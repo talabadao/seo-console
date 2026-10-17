@@ -9,7 +9,8 @@ import { db, tableExists } from "@/lib/db";
 import { userById } from "@/lib/session";
 import { getProject, type Project } from "@/lib/projects";
 import { aiDomainsFor, ownsGaProperty } from "@/lib/gaConfig";
-import { cleanGaError, getGaMetadata, type GaFieldMeta } from "@/lib/ga4";
+import { classifyGaFailure, cleanGaError, getGaMetadata, type GaFieldMeta } from "@/lib/ga4";
+import { ProviderBusyError } from "./providerHttp";
 import { runTemplate, type LeadSetup, type TemplateId, type TemplateResult } from "@/lib/v2/ga4reports/templates";
 import { runCustomReport, type CustomResult } from "@/lib/v2/ga4reports/run";
 import type { ReportSpec } from "@/lib/v2/ga4reports/spec";
@@ -432,14 +433,22 @@ async function ga4Context(userId: number, projectId: number | null, propertyId: 
   return { user, project, token: await token(user, "Google Analytics 4") };
 }
 
+/** GA4 rejected the request itself (HTTP 400): the same definition would fail again, so it isn't retried. */
+class GaRequestRejected extends Error {}
+
 const gaFailure = (e: unknown) => {
-  const message = cleanGaError(e instanceof Error ? e.message : String(e)).message;
-  return isAccess(e) ? new AccessLostError(message) : new SectionFailed(message);
+  // Rate limits keep their own handling: the job waits for the provider without using up an attempt.
+  if (e instanceof ProviderBusyError) return e;
+  const f = classifyGaFailure(e);
+  if (f.kind === "access" || isAccess(e)) return new AccessLostError(f.message);
+  return f.kind === "invalid" ? new GaRequestRejected(f.message) : new SectionFailed(f.message);
 };
+const gaPermanent = (e: unknown) => e instanceof GaRequestRejected;
 
 registerKind<Ga4TemplateQuery, TemplateResult>({
   kind: "ga4:template",
   provider: "ga4",
+  isPermanentError: gaPermanent,
   freshMs: 2 * H,
   // GA4 reports refresh when read, not on the 4-hourly schedule: many views and saved reports, explicit use.
   noSchedule: true,
@@ -464,6 +473,7 @@ registerKind<Ga4TemplateQuery, TemplateResult>({
 registerKind<Ga4CustomQuery, CustomResult>({
   kind: "ga4:custom",
   provider: "ga4",
+  isPermanentError: gaPermanent,
   freshMs: 2 * H,
   noSchedule: true,
   isAccessError: isAccess,
@@ -480,6 +490,7 @@ registerKind<Ga4CustomQuery, CustomResult>({
 registerKind<Ga4MetadataQuery, { dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }>({
   kind: "ga4:metadata",
   provider: "ga4",
+  isPermanentError: gaPermanent,
   freshMs: 24 * H,
   noSchedule: true,
   isAccessError: isAccess,

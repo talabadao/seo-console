@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cleanName, deleteSaved, getSaved, savedReportsAvailable, updateSaved } from "@/lib/v2/ga4reports/saved";
-import { gaRouteContext, ownedProject, validateSpec, type RouteCtx } from "@/lib/v2/ga4reports/routeContext";
+import { gaRouteContext, ownedProject, validateSpec, validationStatus, type RouteCtx } from "@/lib/v2/ga4reports/routeContext";
 
 const reportIdOf = async (ctx: RouteCtx) => {
   const n = Number((await ctx.params).reportId);
@@ -34,7 +34,7 @@ export async function PUT(req: Request, ctx: RouteCtx) {
   const name = cleanName(body.name ?? existing.name);
   if (!name) return NextResponse.json({ ok: false, errors: ["Give the report a name."] }, { status: 400 });
   const v = await validateSpec(c, body.spec ?? existing.spec);
-  if (!v.ok) return NextResponse.json(v, { status: 400 });
+  if (!v.ok) return NextResponse.json(v, { status: validationStatus(v.kind) });
   const report = await updateSaved(c.user.id, c.project.id, id, { name, spec: v.spec, propertyId: c.propertyId });
   return report ? NextResponse.json({ ok: true, report }) : NextResponse.json({ error: "unknown report" }, { status: 404 });
 }

@@ -1,5 +1,6 @@
 // GA4 report templates and saved custom reports, on the real schema (baseline + every migration, PGlite) with a
-// fake GA4 Data API (runReport, getMetadata, checkCompatibility). Covers the report-definition rules, the number
+// fake GA4 Data API: runReport and getMetadata are replaced; checkCompatibility runs the REAL adapter
+// (lib/ga4.ts validateReportCompatibility) against stubbed HTTP responses shaped like Google's. Covers the report-definition rules, the number
 // rules (totals from GA4's own query, never summed rows; comparison queried separately; lead events kept apart
 // from key events), the shared cache (an identical run makes no new GA4 request), saved-report ownership between
 // two accounts that both have GA4 properties, and an explicit GA4 property change.
@@ -54,7 +55,27 @@ interface Req {
 }
 const gaCalls: Req[] = [];
 let answer: (r: Req) => { dims: string[]; range: number; metrics: number[] }[] = () => [];
-let incompatible: { dimensions: string[]; metrics: string[] } = { dimensions: [], metrics: [] };
+/**
+ * The checkCompatibility HTTP endpoint. Default: success, with the candidate lists Google returns for
+ * compatibilityFilter INCOMPATIBLE — fields that could NOT be added to the request (none of them selected).
+ */
+type CompatAnswer = { status: number; body: unknown; headers?: Record<string, string> } | Error;
+let compat: (body: Record<string, unknown>) => CompatAnswer = () => ({ status: 200, body: CANDIDATES_RESPONSE });
+const compatBodies: Record<string, unknown>[] = [];
+const field = (kind: "dimension" | "metric", apiName: string) => ({
+  [`${kind}Metadata`]: { apiName, uiName: apiName, description: "", category: kind === "dimension" ? "Demographics" : "Advertising", customDefinition: false },
+  compatibility: "INCOMPATIBLE",
+});
+/** Representative of a successful response: unselected fields that can't be added (the owner's reported list). */
+const CANDIDATES_RESPONSE = {
+  dimensionCompatibilities: ["brandingInterest", "cohortNthDay", "cohortNthMonth", "cohortNthWeek", "userAgeBracket", "userGender"].map((n) => field("dimension", n)),
+  metricCompatibilities: [
+    "advertiserAdClicks", "advertiserAdCost", "advertiserAdCostPerClick", "advertiserAdCostPerKeyEvent", "advertiserAdImpressions", "cohortActiveUsers",
+    "cohortTotalUsers", "organicGoogleSearchAveragePosition", "organicGoogleSearchClicks", "organicGoogleSearchClickThroughRate",
+    "organicGoogleSearchImpressions", "returnOnAdSpend",
+  ].map((n) => field("metric", n)),
+};
+const googleError = (code: number, status: string, message: string) => ({ error: { code, message, status } });
 const FLAGS = { thresholded: false, otherRow: false, currency: "VND", timeZone: "Asia/Ho_Chi_Minh", metricTypes: [] as string[] };
 vi.mock("@/lib/ga4", async () => {
   const actual = await vi.importActual<typeof import("@/lib/ga4")>("@/lib/ga4");
@@ -70,12 +91,17 @@ vi.mock("@/lib/ga4", async () => {
       dimensions: ["date", "sessionDefaultChannelGroup", "landingPage", "eventName", "isKeyEvent", "sessionSourceMedium", "country"].map((d) => ({ apiName: d, uiName: d, category: "Test", description: "", custom: false })),
       metrics: ["sessions", "engagedSessions", "totalUsers", "engagementRate", "keyEvents", "eventCount", "newUsers"].map((m) => ({ apiName: m, uiName: m, category: "Test", description: "", custom: false, type: "TYPE_INTEGER" })),
     }),
-    checkCompatibility: async () => incompatible,
     getPropertyMeta: async () => ({ currency: "VND", timeZone: "Asia/Ho_Chi_Minh" }),
   };
 });
-vi.stubGlobal("fetch", async (url: unknown) => {
-  throw new Error(`network blocked: ${String(url)}`);
+// Only checkCompatibility reaches "the network"; anything else is blocked.
+vi.stubGlobal("fetch", async (url: unknown, init?: RequestInit) => {
+  if (!/:checkCompatibility$/.test(String(url))) throw new Error(`network blocked: ${String(url)}`);
+  const body = JSON.parse(String(init?.body ?? "{}"));
+  compatBodies.push(body);
+  const a = compat(body);
+  if (a instanceof Error) throw a;
+  return new Response(JSON.stringify(a.body), { status: a.status, headers: { "Content-Type": "application/json", ...(a.headers ?? {}) } });
 });
 
 import { NextRequest } from "next/server";
@@ -117,7 +143,8 @@ beforeAll(async () => {
 beforeEach(() => {
   gaCalls.length = 0;
   answer = () => [];
-  incompatible = { dimensions: [], metrics: [] };
+  compat = () => ({ status: 200, body: CANDIDATES_RESPONSE });
+  compatBodies.length = 0;
 });
 
 describe("report definitions", () => {
@@ -226,10 +253,10 @@ describe("saved reports through the routes", { timeout: 30_000 }, () => {
     const bad = await call(REPORTS, "POST", "/api/v2/ga4/1/reports", { id: "1" }, { name: "Bad", spec: { ...spec, metrics: ["notAMetric"], sort: null } });
     expect(bad.status).toBe(400);
     expect(bad.json.errors.join(" ")).toMatch(/Not available in this GA4 property: notAMetric/);
-    incompatible = { dimensions: ["landingPage"], metrics: [] };
+    compat = () => ({ status: 400, body: googleError(400, "INVALID_ARGUMENT", "Please remove landingPage to make the request compatible. The request's dimensions & metrics are incompatible. To learn more, see https://ga-dev-tools.web.app/ga4/dimensions-metrics-explorer/") });
     const clash = await call(REPORTS, "POST", "/api/v2/ga4/1/reports", { id: "1" }, { name: "Clash", spec });
     expect(clash.status).toBe(400);
-    incompatible = { dimensions: [], metrics: [] };
+    compat = () => ({ status: 200, body: CANDIDATES_RESPONSE });
     const ok = await call(REPORTS, "POST", "/api/v2/ga4/1/reports", { id: "1" }, { name: "Channels", spec });
     expect(ok.json.ok).toBe(true);
     aReport = ok.json.report.id;
@@ -311,5 +338,145 @@ describe("charts and scheduling", () => {
       [now],
     );
     expect(await enqueueDueRefreshes({ activeSinceMs: 3600_000, limit: 50 })).toBe(0);
+  });
+});
+
+describe("compatibility validation: the real adapter against Google's HTTP responses", { timeout: 30_000 }, () => {
+  const CHECK = "@/app/api/v2/ga4/[id]/check/route";
+  // The owner's reported definition (Preview, Góc Săn Deal): three dimensions, two metrics, table, sorted by sessions.
+  const OWNER_SPEC = {
+    dimensions: ["sessionDefaultChannelGroup", "eventName", "sessionSourceMedium"],
+    metrics: ["sessions", "totalUsers"],
+    preset: "last28",
+    compare: "previous",
+    filters: [],
+    sort: { field: "sessions", desc: true },
+    limit: 1000,
+    chart: "table",
+  };
+  const P = { id: "2" };
+  const savedCount = async () => (await pg.query<{ n: number }>("SELECT COUNT(*)::int AS n FROM ga4_saved_reports WHERE project_id = 2")).rows[0].n;
+  const clearLimits = () => pg.exec("DELETE FROM provider_cooldown; DELETE FROM provider_rate;");
+
+  it("treats a successful response listing unselected incompatible fields as valid: the owner's report checks, saves, reopens, edits and duplicates", async () => {
+    await as(2);
+    const check = await call(CHECK, "POST", "/api/v2/ga4/2/check", P, { spec: OWNER_SPEC });
+    expect(check.status).toBe(200);
+    expect(check.json.ok).toBe(true);
+    // Google was asked about exactly the report's fields (and no filter, since the report has none).
+    expect(compatBodies.at(-1)).toMatchObject({
+      dimensions: OWNER_SPEC.dimensions.map((name) => ({ name })),
+      metrics: OWNER_SPEC.metrics.map((name) => ({ name })),
+    });
+    expect(compatBodies.at(-1)).not.toHaveProperty("dimensionFilter");
+
+    const saved = await call(REPORTS, "POST", "/api/v2/ga4/2/reports", P, { name: "Test", spec: OWNER_SPEC });
+    expect(saved.status).toBe(200);
+    expect(saved.json.ok).toBe(true);
+    const id = saved.json.report.id as number;
+    expect(id).toBeGreaterThan(0);
+    expect(saved.json.report).toMatchObject({ projectId: 2, propertyId: "222", name: "Test", spec: OWNER_SPEC });
+
+    // Reopen as after a reload: the list and the single report come from the database.
+    const list = await call(REPORTS, "GET", "/api/v2/ga4/2/reports", P);
+    expect(list.json.reports.map((r: { id: number }) => r.id)).toContain(id);
+    const one = await call(REPORT, "GET", `/api/v2/ga4/2/reports/${id}`, { ...P, reportId: String(id) });
+    expect(one.json.report.spec).toEqual(OWNER_SPEC);
+    expect(one.json.propertyChanged).toBe(false);
+
+    const edited = await call(REPORT, "PUT", `/api/v2/ga4/2/reports/${id}`, { ...P, reportId: String(id) }, { name: "Test", spec: { ...OWNER_SPEC, limit: 500 } });
+    expect(edited.json.ok).toBe(true);
+    expect(edited.json.report.spec.limit).toBe(500);
+    const copy = await call(REPORTS, "POST", "/api/v2/ga4/2/reports", P, { duplicateOf: id });
+    expect(copy.json).toMatchObject({ ok: true, report: { name: "Copy of Test", projectId: 2 } });
+  });
+
+  it("sends the report's dimension filter to checkCompatibility, the same expression Run sends to runReport", async () => {
+    await as(2);
+    const spec = {
+      ...OWNER_SPEC,
+      limit: 999,
+      filters: [
+        { field: "eventName", op: "in", value: "generate_lead, purchase", negate: false },
+        { field: "sessionSourceMedium", op: "contains", value: "google", negate: true },
+      ],
+    };
+    const n = normalizeSpec(spec);
+    if (!("spec" in n)) throw new Error(n.errors.join(" "));
+    const expected = filterExpression(n.spec.filters);
+    expect((await call(CHECK, "POST", "/api/v2/ga4/2/check", P, { spec })).json.ok).toBe(true);
+    expect(compatBodies.at(-1)?.dimensionFilter).toEqual(expected);
+    answer = (r) => (r.dimensions.length ? [] : [{ dims: [], range: 0, metrics: [1, 1] }]);
+    const run = await call(RUN, "POST", "/api/v2/ga4/2/run", P, { spec });
+    expect(run.json.state).toBe("live");
+    expect(gaCalls.length).toBeGreaterThan(0);
+    for (const c of gaCalls) expect(c.dimensionFilter).toEqual(expected);
+  });
+
+  it("rejects a genuinely incompatible request with Google's own reason, and saves nothing", async () => {
+    await as(2);
+    const before = await savedCount();
+    compat = () => ({
+      status: 400,
+      body: googleError(400, "INVALID_ARGUMENT", "Please remove eventCount to make the request compatible. The request's dimensions & metrics are incompatible. To learn more, see https://ga-dev-tools.web.app/ga4/dimensions-metrics-explorer/"),
+    });
+    const spec = { ...OWNER_SPEC, metrics: ["sessions", "eventCount"] };
+    const check = await call(CHECK, "POST", "/api/v2/ga4/2/check", P, { spec });
+    expect(check.status).toBe(400);
+    expect(check.json).toMatchObject({ ok: false, kind: "invalid" });
+    expect(check.json.errors.join(" ")).toMatch(/Please remove eventCount to make the request compatible/);
+    // Only the submitted report's problem: no catalogue fields, no invented pairs.
+    expect(check.json.errors.join(" ")).not.toMatch(/brandingInterest|cohort|advertiser|organicGoogleSearch/);
+    expect((await call(REPORTS, "POST", "/api/v2/ga4/2/reports", P, { name: "Clash", spec })).status).toBe(400);
+    expect(await savedCount()).toBe(before);
+  });
+
+  it("rejects fields the property doesn't have before asking Google", async () => {
+    await as(2);
+    const r = await call(CHECK, "POST", "/api/v2/ga4/2/check", P, { spec: { ...OWNER_SPEC, metrics: ["sessions", "notAField"], sort: null } });
+    expect(r.status).toBe(400);
+    expect(r.json.errors.join(" ")).toMatch(/Not available in this GA4 property: notAField/);
+    const f = await call(CHECK, "POST", "/api/v2/ga4/2/check", P, { spec: { ...OWNER_SPEC, filters: [{ field: "notADimension", op: "exact", value: "x", negate: false }] } });
+    expect(f.json.errors.join(" ")).toMatch(/notADimension/);
+    expect(compatBodies).toHaveLength(0);
+  });
+
+  it.each([
+    ["permission", () => ({ status: 403, body: googleError(403, "PERMISSION_DENIED", "User does not have sufficient permissions for this property.") }), 403, "access"],
+    ["quota", () => ({ status: 429, body: googleError(429, "RESOURCE_EXHAUSTED", "Exhausted property tokens per hour quota."), headers: { "Retry-After": "3600" } }), 429, "quota"],
+    ["temporary provider error", () => ({ status: 503, body: googleError(503, "UNAVAILABLE", "The service is currently unavailable.") }), 503, "unavailable"],
+    ["network failure", () => new TypeError("fetch failed"), 503, "unavailable"],
+  ] as const)("reports a %s as such, never as a valid or invalid report, and saves nothing", async (_name, answerWith, status, kind) => {
+    await as(2);
+    const before = await savedCount();
+    compat = answerWith as () => CompatAnswer;
+    try {
+      const check = await call(CHECK, "POST", "/api/v2/ga4/2/check", P, { spec: OWNER_SPEC });
+      expect(check.status).toBe(status);
+      expect(check.json).toMatchObject({ ok: false, kind });
+      const save = await call(REPORTS, "POST", "/api/v2/ga4/2/reports", P, { name: "Not saved", spec: OWNER_SPEC });
+      expect(save.status).toBe(status);
+      expect(await savedCount()).toBe(before);
+    } finally {
+      await clearLimits();
+    }
+  });
+
+  it("fails a definition GA4 rejects at Run once, without background retries", async () => {
+    await as(2);
+    const { GaApiError } = await import("@/lib/ga4");
+    const { runDueJobs } = await import("@/lib/sync/cache");
+    answer = () => {
+      throw new GaApiError(400, JSON.stringify(googleError(400, "INVALID_ARGUMENT", "Please remove totalUsers to make the request compatible.")));
+    };
+    const spec = { ...OWNER_SPEC, limit: 998 };
+    const run = await call(RUN, "POST", "/api/v2/ga4/2/run", P, { spec });
+    expect(run.json.state).toBe("error");
+    expect(run.json.message).toMatch(/GA4 rejected this report: Please remove totalUsers/);
+    const job = (await pg.query<{ status: string }>("SELECT status FROM sync_jobs WHERE kind = 'ga4:custom' ORDER BY id DESC LIMIT 1")).rows[0];
+    expect(job.status).toBe("failed");
+    const calls = gaCalls.length;
+    await runDueJobs({ limit: 10, budgetMs: 5_000 });
+    expect(gaCalls.length).toBe(calls);
   });
 });

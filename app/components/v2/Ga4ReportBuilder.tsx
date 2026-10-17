@@ -291,7 +291,15 @@ export function Ga4ReportBuilder({ projectId }: { projectId: number }) {
           </div>
         </Card>
 
-        {run && <ResultPanel res={result} chart={JSON.parse(run.body).spec.chart} label={label} onRefresh={() => runNow(draft, true)} />}
+        {run && (
+          <ResultPanel
+            res={result}
+            chart={JSON.parse(run.body).spec.chart}
+            label={label}
+            onRefresh={() => runNow(draft, true)}
+            outdated={JSON.stringify(JSON.parse(run.body).spec) !== JSON.stringify(draft.spec)}
+          />
+        )}
       </div>
     </div>
   );
@@ -378,7 +386,20 @@ function Filters({ spec, dims, label, onChange }: { spec: ReportSpec; dims: GaFi
   );
 }
 
-function ResultPanel({ res, chart, label, onRefresh }: { res: { data: RunResponse | null; error: string | null; loading: boolean }; chart: ChartType; label: (n: string) => string; onRefresh: () => void }) {
+function ResultPanel({
+  res,
+  chart,
+  label,
+  onRefresh,
+  outdated,
+}: {
+  res: { data: RunResponse | null; error: string | null; loading: boolean };
+  chart: ChartType;
+  label: (n: string) => string;
+  onRefresh: () => void;
+  /** The definition was edited after this Run: the results are for the previous definition. */
+  outdated: boolean;
+}) {
   if (res.loading) return <LoadingState label="Running in GA4…" />;
   if (res.error) return <ErrorState title="The report didn't run." body={res.error} />;
   const d = res.data;
@@ -397,6 +418,11 @@ function ResultPanel({ res, chart, label, onRefresh }: { res: { data: RunRespons
       }
     >
       <div className="space-y-4">
+        {outdated && (
+          <p className="rounded-md border px-3 py-2 text-sm" role="status">
+            These results are from the last Run. The definition has changed since; press Run to see results for the current one.
+          </p>
+        )}
         <ResultView r={r} chart={chart} label={label} />
         <ReportFooter
           period={r.period}

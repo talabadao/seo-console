@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cleanName, createSaved, getSaved, listSaved, savedReportsAvailable } from "@/lib/v2/ga4reports/saved";
-import { gaRouteContext, ownedProject, validateSpec, type RouteCtx } from "@/lib/v2/ga4reports/routeContext";
+import { gaRouteContext, ownedProject, validateSpec, validationStatus, type RouteCtx } from "@/lib/v2/ga4reports/routeContext";
 
 const UNAVAILABLE = { state: "unavailable", message: "Saved reports need migration 0013 on this database." };
 
@@ -31,7 +31,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
   }
   if (!name) return NextResponse.json({ ok: false, errors: ["Give the report a name."] }, { status: 400 });
   const v = await validateSpec(c, rawSpec);
-  if (!v.ok) return NextResponse.json(v, { status: 400 });
+  if (!v.ok) return NextResponse.json(v, { status: validationStatus(v.kind) });
   const saved = await createSaved(c.user.id, c.project.id, c.propertyId, name, v.spec);
   if (saved === "limit") return NextResponse.json({ ok: false, errors: ["This project already has 100 saved reports. Delete one first."] }, { status: 400 });
   return NextResponse.json({ ok: true, report: saved });
