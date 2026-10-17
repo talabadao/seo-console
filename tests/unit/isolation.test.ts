@@ -100,6 +100,8 @@ beforeAll(async () => {
       VALUES ('user:1', 'k1', 'summary:gsc', 'gsc', 1, 1, '{"projectId":1}', '{"state":"live","note":"gocsandeal"}', 1, 9999999999999);
     INSERT INTO notifications (id, user_id, project_id, rule, dedupe_key, severity, title, body, source_at, created_at)
       VALUES (700, 1, 1, 'performance', 'x', 'info', 'A-only notification', 'b', 1, 1);
+    INSERT INTO ga4_saved_reports (id, user_id, project_id, property_id, name, spec, created_at, updated_at)
+      VALUES (500, 1, 1, '111', 'gocsandeal leads', '{"dimensions":["landingPage"],"metrics":["sessions"],"preset":"last28","compare":"previous","filters":[],"sort":null,"limit":50,"chart":"table"}', 1, 1);
   `);
   await saveCredential(A, "serpapi", { apiKey: "a-serpapi-key-0001" });
 });
@@ -153,6 +155,15 @@ describe("project-scoped routes refuse another account's project id", () => {
     ["@/app/api/account/budgets/route", "GET", "/api/account/budgets?project=1", {}],
     ["@/app/api/account/budgets/route", "PUT", "/api/account/budgets", {}, { scope: "project", projectId: 1, metric: "serpapi_requests_month", value: 1 }],
     ["@/app/api/account/usage/route", "GET", "/api/account/usage?project=1", {}],
+    ["@/app/api/v2/ga4/[id]/template/route", "GET", "/api/v2/ga4/1/template?template=leads", { id: "1" }],
+    ["@/app/api/v2/ga4/[id]/metadata/route", "GET", "/api/v2/ga4/1/metadata", { id: "1" }],
+    ["@/app/api/v2/ga4/[id]/check/route", "POST", "/api/v2/ga4/1/check", { id: "1" }, { spec: {} }],
+    ["@/app/api/v2/ga4/[id]/run/route", "POST", "/api/v2/ga4/1/run", { id: "1" }, { spec: {}, reportId: 500 }],
+    ["@/app/api/v2/ga4/[id]/reports/route", "GET", "/api/v2/ga4/1/reports", { id: "1" }],
+    ["@/app/api/v2/ga4/[id]/reports/route", "POST", "/api/v2/ga4/1/reports", { id: "1" }, { duplicateOf: 500 }],
+    ["@/app/api/v2/ga4/[id]/reports/[reportId]/route", "GET", "/api/v2/ga4/1/reports/500", { id: "1", reportId: "500" }],
+    ["@/app/api/v2/ga4/[id]/reports/[reportId]/route", "PUT", "/api/v2/ga4/1/reports/500", { id: "1", reportId: "500" }, { name: "hacked" }],
+    ["@/app/api/v2/ga4/[id]/reports/[reportId]/route", "DELETE", "/api/v2/ga4/1/reports/500", { id: "1", reportId: "500" }],
   ];
 
   it.each(routes)("%s %s as account B → refused, nothing of A's", async (modPath, method, path, params, body) => {
@@ -171,8 +182,22 @@ describe("project-scoped routes refuse another account's project id", () => {
     expect(r.status).toBe(404);
   });
 
+  it("B can't read or delete A's saved GA4 report through B's own project", async () => {
+    await as(B);
+    const mod = (await import("@/app/api/v2/ga4/[id]/reports/[reportId]/route")) as Record<string, unknown>;
+    for (const method of ["GET", "DELETE"]) {
+      const r = await call(mod, method, "/api/v2/ga4/2/reports/500", { id: String(B_PROJECT), reportId: "500" });
+      expect(r.status).toBe(404);
+      expect(leaks(r.text)).toEqual([]);
+    }
+    const list = await call((await import("@/app/api/v2/ga4/[id]/reports/route")) as Record<string, unknown>, "GET", "/api/v2/ga4/2/reports", { id: String(B_PROJECT) });
+    expect(JSON.parse(list.text).reports).toEqual([]);
+  });
+
   it("A's data is unchanged after all of B's attempts", async () => {
     const q = async (sql: string) => (await pg.query(sql)).rows[0];
+    expect(await q("SELECT name, project_id, user_id FROM ga4_saved_reports WHERE id = 500")).toEqual({ name: "gocsandeal leads", project_id: 1, user_id: 1 });
+    expect(await q("SELECT COUNT(*)::int AS n FROM ga4_saved_reports")).toEqual({ n: 1 });
     expect(await q("SELECT name FROM projects WHERE id = 1")).toEqual({ name: "Góc Săn Deal" });
     expect(await q("SELECT target FROM kpi_targets WHERE project_id = 1 AND period = '2026-10'")).toEqual({ target: 5000 });
     expect(await q("SELECT lead_events, seranking_site_id FROM project_settings WHERE project_id = 1")).toEqual({ lead_events: '["generate_lead"]', seranking_site_id: 42 });

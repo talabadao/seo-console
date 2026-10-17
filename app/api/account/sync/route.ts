@@ -3,6 +3,7 @@ import { currentUser } from "@/lib/session";
 import { runDueJobs, syncReady } from "@/lib/sync/cache";
 import { syncStatus } from "@/lib/sync/status";
 import { recentCronRuns } from "@/lib/cronRuns";
+import { databaseStatus } from "@/lib/dbStatus";
 import "@/lib/sync/kinds";
 import { runRules } from "@/lib/notifications/store";
 
@@ -14,7 +15,8 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!(await syncReady())) return NextResponse.json({ error: "This database hasn't run migration 0008 (shared cache) yet.", state: "unavailable" }, { status: 503 });
   // Scheduled runs are deployment-wide operational records (counts only, no account data).
-  return NextResponse.json({ ...(await syncStatus(user.id)), cronRuns: await recentCronRuns(30) }, { headers: { "Cache-Control": "no-store" } });
+  // The database line shows migration ids only (no host or credentials).
+  return NextResponse.json({ ...(await syncStatus(user.id)), cronRuns: await recentCronRuns(30), database: await databaseStatus() }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**

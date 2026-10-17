@@ -103,6 +103,7 @@ export const NAV: NavGroup[] = [
     icon: "analytics",
     items: [
       { id: "overview", label: "Analytics", status: "live", requires: "ga4" },
+      { id: "reports", label: "GA4 reports", status: "live", requires: "ga4" },
       { id: "llm-traffic", label: "LLMs Traffic", status: "live", requires: "ga4" },
     ],
   },

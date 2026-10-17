@@ -1,4 +1,4 @@
-import { providerFetch } from "@/lib/sync/providerHttp";
+import { ProviderBusyError, providerFetch } from "@/lib/sync/providerHttp";
 const ADMIN = "https://analyticsadmin.googleapis.com/v1beta";
 const DATA = "https://analyticsdata.googleapis.com/v1beta";
 
@@ -37,7 +37,7 @@ async function gfetch(url: string, token: string, init?: RequestInit) {
   const body = await res.text();
   // Keep enough of the body that the "API not enabled" enable-URL survives
   // truncation — Google's error payloads (with `details`) can run long.
-  throw new Error(`GA4 API ${res.status}: ${body.slice(0, 2000)}`);
+  throw new GaApiError(res.status, body);
 }
 
 // ---------- Admin API: property discovery ----------
@@ -141,11 +141,23 @@ interface RunReportOpts {
   keepEmptyRows?: boolean;
 }
 
+/** Response notes that change how numbers should be read (ResponseMetaData). */
+export interface ReportFlags {
+  /** Rows below Google's minimum aggregation thresholds were withheld. */
+  thresholded: boolean;
+  /** Some dimension combinations were rolled into an "(other)" row. */
+  otherRow: boolean;
+  currency: string | null;
+  timeZone: string | null;
+  /** Metric types from metricHeaders (TYPE_INTEGER, TYPE_FLOAT, TYPE_SECONDS, TYPE_CURRENCY, …). */
+  metricTypes: string[];
+}
+
 export async function runReport(
   token: string,
   propertyId: string,
   opts: RunReportOpts,
-): Promise<{ rows: GaRow[]; metricHeaders: string[]; sampled: boolean; rowCount: number }> {
+): Promise<{ rows: GaRow[]; metricHeaders: string[]; sampled: boolean; rowCount: number; flags: ReportFlags }> {
   const body = {
     dateRanges: opts.dateRanges,
     dimensions: opts.dimensions.map((name) => ({ name })),
@@ -180,7 +192,114 @@ export async function runReport(
   );
   const sampled =
     Array.isArray(data.metadata?.samplingMetadatas) && data.metadata.samplingMetadatas.length > 0;
-  return { rows, metricHeaders, sampled, rowCount: Number(data.rowCount ?? rows.length) };
+  const flags: ReportFlags = {
+    thresholded: Boolean(data.metadata?.subjectToThresholding),
+    otherRow: Boolean(data.metadata?.dataLossFromOtherRow),
+    currency: data.metadata?.currencyCode ?? null,
+    timeZone: data.metadata?.timeZone ?? null,
+    metricTypes: (data.metricHeaders ?? []).map((h: { type?: string }) => h.type ?? "TYPE_STANDARD"),
+  };
+  return { rows, metricHeaders, sampled, rowCount: Number(data.rowCount ?? rows.length), flags };
+}
+
+export interface GaFieldMeta {
+  apiName: string;
+  uiName: string;
+  category: string;
+  description: string;
+  custom: boolean;
+  /** Metrics only: TYPE_INTEGER, TYPE_FLOAT, TYPE_SECONDS, TYPE_CURRENCY, … */
+  type?: string;
+}
+
+/** The dimensions and metrics a property can report on, including its custom definitions (Data API getMetadata). */
+export async function getGaMetadata(token: string, propertyId: string): Promise<{ dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }> {
+  const d = await gfetch(`${DATA}/${propertyId}/metadata`, token);
+  type Raw = { apiName?: string; uiName?: string; category?: string; description?: string; customDefinition?: boolean; type?: string; deprecatedApiNames?: string[] };
+  const map = (r: Raw, metric: boolean): GaFieldMeta => ({
+    apiName: r.apiName ?? "",
+    uiName: r.uiName ?? r.apiName ?? "",
+    category: r.category ?? "Other",
+    description: (r.description ?? "").slice(0, 400),
+    custom: Boolean(r.customDefinition),
+    ...(metric ? { type: r.type ?? "TYPE_STANDARD" } : {}),
+  });
+  return {
+    dimensions: ((d.dimensions ?? []) as Raw[]).map((r) => map(r, false)).filter((m) => m.apiName),
+    metrics: ((d.metrics ?? []) as Raw[]).map((r) => map(r, true)).filter((m) => m.apiName),
+  };
+}
+
+/** A non-2xx answer from a Google Analytics API, with its HTTP status (the message keeps the old "GA4 API <status>: <body>" form). */
+export class GaApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(`GA4 API ${status}: ${body.slice(0, 2000)}`);
+    this.name = "GaApiError";
+  }
+  /** Google's own error message and status (e.g. INVALID_ARGUMENT), when the body is Google's JSON error. */
+  get google(): { message: string | null; status: string | null } {
+    try {
+      const e = JSON.parse(this.body).error;
+      return { message: typeof e?.message === "string" ? e.message : null, status: typeof e?.status === "string" ? e.status : null };
+    } catch {
+      return { message: null, status: null };
+    }
+  }
+}
+
+/**
+ * Why a GA4 request didn't succeed, in terms the UI can act on:
+ * - "invalid": Google rejected the submitted request itself (HTTP 400), e.g. incompatible fields or a bad filter;
+ * - "access": no permission for the property, or the Google sign-in is no longer valid (401/403/404);
+ * - "quota": GA4 rate limit or quota (429, RESOURCE_EXHAUSTED, or our shared limiter's cool-down);
+ * - "unavailable": GA4 errored or didn't answer (5xx, network failure, timeout) — temporary.
+ */
+export type GaFailureKind = "invalid" | "access" | "quota" | "unavailable";
+
+export function classifyGaFailure(e: unknown): { kind: GaFailureKind; message: string } {
+  if (e instanceof ProviderBusyError) return { kind: "quota", message: "GA4's rate limit or quota is reached for this property. Try again later." };
+  if (e instanceof GaApiError) {
+    const g = e.google;
+    const detail = (g.message ?? cleanGaError(e.message).message).replace(/\s*To learn more, see \S+/i, "").trim().slice(0, 400);
+    if (e.status === 429 || g.status === "RESOURCE_EXHAUSTED") return { kind: "quota", message: `GA4 quota or rate limit reached: ${detail}` };
+    if (e.status === 400) return { kind: "invalid", message: `GA4 rejected this report: ${detail}` };
+    if (e.status === 401 || e.status === 403 || e.status === 404) return { kind: "access", message: `GA4 refused access to this property: ${detail}` };
+    return { kind: "unavailable", message: `GA4 returned an error (HTTP ${e.status}). Try again in a moment.` };
+  }
+  return { kind: "unavailable", message: "GA4 didn't respond (network error or timeout). Try again in a moment." };
+}
+
+/**
+ * Validates a report request with the Data API's checkCompatibility method. Per its contract, the method "fails if
+ * the request's dimensions and metrics are incompatible" (HTTP 400). A successful response therefore means the
+ * submitted dimensions, metrics and dimension filter are compatible. The lists in a successful response describe
+ * OTHER fields that could (or couldn't) be added to the request; they are not problems with this request and are
+ * not read here. Any failure other than a 400 (permission, quota, network, timeout) is reported as such, never as
+ * a successful validation.
+ */
+export async function validateReportCompatibility(
+  token: string,
+  propertyId: string,
+  q: { dimensions: string[]; metrics: string[]; dimensionFilter?: unknown },
+): Promise<{ ok: true } | { ok: false; kind: GaFailureKind; message: string }> {
+  try {
+    await gfetch(`${DATA}/${propertyId}:checkCompatibility`, token, {
+      method: "POST",
+      body: JSON.stringify({
+        dimensions: q.dimensions.map((name) => ({ name })),
+        metrics: q.metrics.map((name) => ({ name })),
+        ...(q.dimensionFilter ? { dimensionFilter: q.dimensionFilter } : {}),
+        // Keeps the (unused) candidate lists small; the request's own compatibility is the response status.
+        compatibilityFilter: "INCOMPATIBLE",
+      }),
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, ...classifyGaFailure(e) };
+  }
 }
 
 /**

@@ -8,8 +8,12 @@ import { createHash } from "node:crypto";
 import { db, tableExists } from "@/lib/db";
 import { userById } from "@/lib/session";
 import { getProject, type Project } from "@/lib/projects";
-import { aiDomainsFor } from "@/lib/gaConfig";
-import { cleanGaError } from "@/lib/ga4";
+import { aiDomainsFor, ownsGaProperty } from "@/lib/gaConfig";
+import { classifyGaFailure, cleanGaError, getGaMetadata, type GaFieldMeta } from "@/lib/ga4";
+import { ProviderBusyError } from "./providerHttp";
+import { runTemplate, type LeadSetup, type TemplateId, type TemplateResult } from "@/lib/v2/ga4reports/templates";
+import { runCustomReport, type CustomResult } from "@/lib/v2/ga4reports/run";
+import type { ReportSpec } from "@/lib/v2/ga4reports/spec";
 import type { UserRow } from "@/lib/session";
 import type { PeriodInfo, Section, SummaryPart } from "@/lib/v2/summary/types";
 import { ga4Section, gaContext, googleToken, gscSection, healthSection, kpiSection, rankingsSection, tasksSection } from "@/lib/v2/summary/live";
@@ -391,3 +395,111 @@ registerKind<SeModuleQuery, SeModulePayload<{ linkProfile: SeLinkProfile; compet
 
 /** Imported for its side effect: registering every kind before a job runs. */
 export const KINDS_REGISTERED = true;
+
+// ---------- GA4 reports (Analytics (GA4) → GA4 reports) ----------
+// The query carries the property, the resolved period (in the property's time zone), the view and the lead
+// events, so each is part of the cache identity; the account scope comes from the cache itself.
+
+export interface Ga4TemplateQuery {
+  projectId: number;
+  propertyId: string;
+  template: TemplateId;
+  view: string;
+  focus: string[];
+  leads: string[];
+  leadSource: LeadSetup["source"];
+  period: PeriodInfo;
+  config: string;
+}
+
+export interface Ga4CustomQuery {
+  projectId: number;
+  propertyId: string;
+  spec: ReportSpec;
+  period: PeriodInfo;
+  config: string;
+}
+
+export interface Ga4MetadataQuery {
+  projectId: number;
+  propertyId: string;
+}
+
+/** The project still uses the property the query was made for, and the account still lists it. */
+async function ga4Context(userId: number, projectId: number | null, propertyId: string) {
+  const { user, project } = await context(userId, projectId);
+  if (project.gaPropertyId !== propertyId) throw new AccessLostError("The project's GA4 property changed.");
+  if (!(await ownsGaProperty(user.id, propertyId))) throw new AccessLostError("This account no longer lists the linked GA4 property.");
+  return { user, project, token: await token(user, "Google Analytics 4") };
+}
+
+/** GA4 rejected the request itself (HTTP 400): the same definition would fail again, so it isn't retried. */
+class GaRequestRejected extends Error {}
+
+const gaFailure = (e: unknown) => {
+  // Rate limits keep their own handling: the job waits for the provider without using up an attempt.
+  if (e instanceof ProviderBusyError) return e;
+  const f = classifyGaFailure(e);
+  if (f.kind === "access" || isAccess(e)) return new AccessLostError(f.message);
+  return f.kind === "invalid" ? new GaRequestRejected(f.message) : new SectionFailed(f.message);
+};
+const gaPermanent = (e: unknown) => e instanceof GaRequestRejected;
+
+registerKind<Ga4TemplateQuery, TemplateResult>({
+  kind: "ga4:template",
+  provider: "ga4",
+  isPermanentError: gaPermanent,
+  freshMs: 2 * H,
+  // GA4 reports refresh when read, not on the 4-hourly schedule: many views and saved reports, explicit use.
+  noSchedule: true,
+  isAccessError: isAccess,
+  async run({ userId, projectId, query }) {
+    const { token: t } = await ga4Context(userId, projectId, query.propertyId);
+    try {
+      const payload = await runTemplate({
+        token: t,
+        propertyId: query.propertyId,
+        period: query.period,
+        query: { template: query.template, view: query.view, focus: query.focus },
+        leadEvents: { events: query.leads, source: query.leadSource },
+      });
+      return { payload };
+    } catch (e) {
+      throw gaFailure(e);
+    }
+  },
+});
+
+registerKind<Ga4CustomQuery, CustomResult>({
+  kind: "ga4:custom",
+  provider: "ga4",
+  isPermanentError: gaPermanent,
+  freshMs: 2 * H,
+  noSchedule: true,
+  isAccessError: isAccess,
+  async run({ userId, projectId, query }) {
+    const { token: t } = await ga4Context(userId, projectId, query.propertyId);
+    try {
+      return { payload: await runCustomReport({ token: t, propertyId: query.propertyId, spec: query.spec, period: query.period }) };
+    } catch (e) {
+      throw gaFailure(e);
+    }
+  },
+});
+
+registerKind<Ga4MetadataQuery, { dimensions: GaFieldMeta[]; metrics: GaFieldMeta[] }>({
+  kind: "ga4:metadata",
+  provider: "ga4",
+  isPermanentError: gaPermanent,
+  freshMs: 24 * H,
+  noSchedule: true,
+  isAccessError: isAccess,
+  async run({ userId, projectId, query }) {
+    const { token: t } = await ga4Context(userId, projectId, query.propertyId);
+    try {
+      return { payload: await getGaMetadata(t, query.propertyId) };
+    } catch (e) {
+      throw gaFailure(e);
+    }
+  },
+});

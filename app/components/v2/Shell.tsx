@@ -46,6 +46,7 @@ import { AccountSettings } from "./AccountSettings";
 import { AccountMenu, ACCOUNT_SECTION_LABEL } from "./AccountMenu";
 import { NotificationBell } from "./NotificationBell";
 import { LlmTrafficReport } from "./LlmTrafficReport";
+import { Ga4Reports } from "./Ga4Reports";
 import { SeRankingPage } from "./SeRankingPage";
 import { OrganicSerpPage } from "./OrganicSerpPage";
 import { DocsPage } from "./DocsPage";
@@ -887,6 +888,8 @@ function ProjectPage({
       );
     case "analytics/llm-traffic":
       return <LlmTrafficReport projectId={project.id} />;
+    case "analytics/reports":
+      return <Ga4Reports key={project.id} projectId={project.id} sub={loc.sub} onSub={subNav} onOpenLeadSettings={() => onNavigate({ ...loc, group: "settings", item: "project", sub: "analytics" })} />;
     case "analytics/overview":
       return <Analytics fixedPropertyId={project.gaPropertyId ?? ""} sub={loc.sub} onSub={subNav} />;
     case "reports/weekly":
