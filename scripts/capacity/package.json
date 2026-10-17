@@ -1,0 +1,9 @@
+{
+  "name": "seo-console-capacity-harness",
+  "private": true,
+  "description": "Local capacity harness (not part of the app build): a real Postgres server via embedded-postgres, several Node processes as server instances, fake providers only.",
+  "type": "module",
+  "dependencies": {
+    "embedded-postgres": "18.4.0-beta.17"
+  }
+}

@@ -138,7 +138,7 @@ export async function enqueue(opts: {
   throw new Error("Couldn't create or join a sync job.");
 }
 
-export type RunOutcome = "done" | "not-claimed" | "requeued" | "failed" | "lost-lease";
+export type RunOutcome = "done" | "not-claimed" | "requeued" | "failed" | "lost-lease" | "skipped";
 
 const backoffMs = (attempt: number) => Math.min(30 * 60_000, 30_000 * 2 ** Math.max(0, attempt - 1)) + Math.floor(Math.random() * 5000);
 
@@ -150,10 +150,10 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
     .prepare(
       `UPDATE sync_jobs SET status = 'running', lease_token = ?, lease_until = ?, attempts = attempts + 1, started_at = COALESCE(started_at, ?)
         WHERE id = ? AND ((status = 'queued' AND run_after <= ?) OR (status = 'running' AND lease_until < ?))
-        RETURNING id, scope, cache_key, kind, user_id, project_id, query, attempts, max_attempts`,
+        RETURNING id, scope, cache_key, kind, user_id, project_id, query, attempts, max_attempts, reason`,
     )
     .get(token, now + leaseMs, now, id, now, now)) as
-    | { id: number; scope: string; cache_key: string; kind: string; user_id: number; project_id: number | null; query: unknown; attempts: number; max_attempts: number }
+    | { id: number; scope: string; cache_key: string; kind: string; user_id: number; project_id: number | null; query: unknown; attempts: number; max_attempts: number; reason: string }
     | undefined;
   if (!job) return "not-claimed";
   const k = kindOf(job.kind);
@@ -186,6 +186,18 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
       await db.prepare("UPDATE report_cache SET payload = NULL, access_error = ? WHERE scope = ? AND cache_key = ?").run("Project no longer accessible", job.scope, job.cache_key);
       return "failed";
     }
+  }
+  // A reader may have seen the old result just before another job refreshed it, and queued this one. If the
+  // result is already fresh (or, for a manual refresh, within the cooldown), finish without asking the provider.
+  const cur = (await db
+    .prepare("SELECT fresh_until, fetched_at FROM report_cache WHERE scope = ? AND cache_key = ? AND payload IS NOT NULL AND access_error IS NULL")
+    .get(job.scope, job.cache_key)) as { fresh_until: number | null; fetched_at: number | null } | undefined;
+  const alreadyFresh = cur && (job.reason === "manual" ? Number(cur.fetched_at ?? 0) > now - MANUAL_COOLDOWN_MS : Number(cur.fresh_until ?? 0) > now);
+  if (alreadyFresh) {
+    await db
+      .prepare("UPDATE sync_jobs SET status = 'done', finished_at = ?, error = 'skipped: already fresh', lease_until = NULL, lease_token = NULL WHERE id = ? AND lease_token = ?")
+      .run(Date.now(), id, token);
+    return "skipped";
   }
   let result: { payload: unknown; dataThrough?: string | null };
   try {
@@ -235,24 +247,54 @@ export async function runJob(id: number, leaseMs = LEASE_MS): Promise<RunOutcome
   });
 }
 
-/** Runs due jobs (queued and due, or running with an expired lease), oldest first, within a time budget. */
-export async function runDueJobs(opts: { limit: number; budgetMs: number; userId?: number }): Promise<{ ran: number; outcomes: Record<string, number> }> {
+/**
+ * Runs due jobs (queued and due, or running with an expired lease), oldest first, within a time budget, with
+ * up to `concurrency` at once (default 4; provider rate windows still apply). Safe alongside other runners:
+ * each job is claimed atomically, so two runners never run the same job.
+ */
+export async function runDueJobs(opts: { limit: number; budgetMs: number; userId?: number; concurrency?: number }): Promise<{ ran: number; outcomes: Record<string, number> }> {
   const deadline = Date.now() + opts.budgetMs;
   const outcomes: Record<string, number> = {};
+  const inFlight = new Set<number>();
   let ran = 0;
-  while (ran < opts.limit && Date.now() < deadline) {
-    const now = Date.now();
-    const next = (await db
-      .prepare(
-        `SELECT id FROM sync_jobs WHERE ((status = 'queued' AND run_after <= ?) OR (status = 'running' AND lease_until < ?))
-           AND (?::bigint IS NULL OR user_id = ?) ORDER BY run_after, id LIMIT 1`,
-      )
-      .get(now, now, opts.userId ?? null, opts.userId ?? null)) as { id: number } | undefined;
-    if (!next) break;
-    const outcome = await runJob(Number(next.id));
-    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
-    ran++;
-  }
+  let exhausted = false;
+  const lanes = Math.max(1, opts.concurrency ?? 4);
+  /** The next due job no lane here is running; null when nothing is due. */
+  const next = async (): Promise<number | null> => {
+    for (;;) {
+      const now = Date.now();
+      const rows = (await db
+        .prepare(
+          `SELECT id FROM sync_jobs WHERE ((status = 'queued' AND run_after <= ?) OR (status = 'running' AND lease_until < ?))
+             AND (?::bigint IS NULL OR user_id = ?) ORDER BY run_after, id LIMIT ?`,
+        )
+        .all(now, now, opts.userId ?? null, opts.userId ?? null, inFlight.size + lanes)) as Array<{ id: number }>;
+      if (!rows.length) return null;
+      const id = rows.map((r) => Number(r.id)).find((x) => !inFlight.has(x));
+      if (id != null) return id;
+      // Everything due is being run by another lane right now: wait for one to finish.
+      if (Date.now() >= deadline) return null;
+      await sleep(50);
+    }
+  };
+  const lane = async () => {
+    while (!exhausted && ran < opts.limit && Date.now() < deadline) {
+      const id = await next();
+      if (id == null) {
+        exhausted = true;
+        break;
+      }
+      inFlight.add(id);
+      ran++;
+      try {
+        const outcome = await runJob(id);
+        outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+      } finally {
+        inFlight.delete(id);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: lanes }, lane));
   return { ran, outcomes };
 }
 

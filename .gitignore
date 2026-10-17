@@ -51,3 +51,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Capacity harness (scripts/capacity): its own install and local Postgres data
+/scripts/capacity/node_modules
+/scripts/capacity/.pgdata

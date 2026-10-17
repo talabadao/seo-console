@@ -1,0 +1,248 @@
+{
+  "generatedAt": "2026-10-17T02:30:32.549Z",
+  "kind": "controlled",
+  "pool": {
+    "instances": 4,
+    "connectionsPerInstance": 5,
+    "postgres": "embedded-postgres 18 (local)"
+  },
+  "phases": [
+    {
+      "phase": "cold-identical",
+      "note": "30 sessions, same account and project, started together on 4 instances (6 sections each)",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 30,
+      "reads": 180,
+      "distinctKeys": 6,
+      "wallMs": 2841,
+      "pageMs": {
+        "p50": 2338,
+        "p95": 2528,
+        "max": 2535
+      },
+      "readMs": {
+        "p50": 972,
+        "p95": 2482
+      },
+      "states": {
+        "fresh": 180
+      },
+      "errorRate": 0,
+      "providerRequests": 6,
+      "jobsCreated": 6,
+      "failedJobs": 0,
+      "readsPerProviderRequest": 30,
+      "cacheHitRatio": 0
+    },
+    {
+      "phase": "browse-cold",
+      "note": "30 sessions × 12 page views over their account's 16 projects, cold cache",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 360,
+      "reads": 2160,
+      "distinctKeys": 462,
+      "wallMs": 7804,
+      "pageMs": {
+        "p50": 7,
+        "p95": 1448,
+        "max": 2929
+      },
+      "readMs": {
+        "p50": 6,
+        "p95": 665
+      },
+      "states": {
+        "fresh": 2160
+      },
+      "errorRate": 0,
+      "providerRequests": 456,
+      "jobsCreated": 457,
+      "failedJobs": 0,
+      "readsPerProviderRequest": 4.7,
+      "cacheHitRatio": 76
+    },
+    {
+      "phase": "browse-warm",
+      "note": "same views again, all results fresh",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 360,
+      "reads": 2160,
+      "distinctKeys": 462,
+      "wallMs": 3914,
+      "pageMs": {
+        "p50": 6,
+        "p95": 25,
+        "max": 35
+      },
+      "readMs": {
+        "p50": 5,
+        "p95": 24
+      },
+      "states": {
+        "fresh": 2160
+      },
+      "errorRate": 0,
+      "providerRequests": 0,
+      "jobsCreated": 0,
+      "failedJobs": 0,
+      "readsPerProviderRequest": null,
+      "cacheHitRatio": 100
+    },
+    {
+      "phase": "stale",
+      "note": "all saved results past their refresh time",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 360,
+      "reads": 2160,
+      "distinctKeys": 462,
+      "wallMs": 4633,
+      "pageMs": {
+        "p50": 8,
+        "p95": 77,
+        "max": 112
+      },
+      "readMs": {
+        "p50": 7,
+        "p95": 75
+      },
+      "states": {
+        "stale": 878,
+        "fresh": 1282
+      },
+      "errorRate": 0,
+      "providerRequests": 462,
+      "jobsCreated": 472,
+      "failedJobs": 0,
+      "readsPerProviderRequest": 4.7,
+      "cacheHitRatio": 59.4
+    },
+    {
+      "phase": "outage",
+      "note": "stale results while every provider request fails",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 360,
+      "reads": 2160,
+      "distinctKeys": 462,
+      "wallMs": 4126,
+      "pageMs": {
+        "p50": 12,
+        "p95": 71,
+        "max": 94
+      },
+      "readMs": {
+        "p50": 11,
+        "p95": 69
+      },
+      "states": {
+        "stale": 2160
+      },
+      "errorRate": 0,
+      "providerRequests": 462,
+      "jobsCreated": 462,
+      "failedJobs": 0,
+      "readsPerProviderRequest": 4.7,
+      "cacheHitRatio": 0
+    },
+    {
+      "phase": "quota",
+      "note": "30 sessions of one account, 3 views each, new configuration (cold)",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 90,
+      "reads": 540,
+      "distinctKeys": 96,
+      "wallMs": 4302,
+      "pageMs": {
+        "p50": 655,
+        "p95": 2955,
+        "max": 3784
+      },
+      "readMs": {
+        "p50": 15,
+        "p95": 1742
+      },
+      "states": {
+        "fresh": 540
+      },
+      "errorRate": 0,
+      "providerRequests": 96,
+      "jobsCreated": 96,
+      "failedJobs": 0,
+      "readsPerProviderRequest": 5.6,
+      "cacheHitRatio": 53.2
+    },
+    {
+      "phase": "refresh-spam-cooldown",
+      "note": "30 concurrent manual refreshes of a page fetched minutes ago",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 30,
+      "reads": 180,
+      "distinctKeys": 6,
+      "wallMs": 358,
+      "pageMs": {
+        "p50": 43,
+        "p95": 50,
+        "max": 50
+      },
+      "readMs": {
+        "p50": 41,
+        "p95": 49
+      },
+      "states": {
+        "fresh:cooldown": 180
+      },
+      "errorRate": 0,
+      "providerRequests": 0,
+      "jobsCreated": 0,
+      "failedJobs": 0,
+      "readsPerProviderRequest": null,
+      "cacheHitRatio": 100
+    },
+    {
+      "phase": "refresh-spam-after-cooldown",
+      "note": "30 concurrent manual refreshes after the 5-minute cooldown",
+      "sessions": 30,
+      "instances": 4,
+      "pageViews": 30,
+      "reads": 180,
+      "distinctKeys": 6,
+      "wallMs": 1534,
+      "pageMs": {
+        "p50": 88,
+        "p95": 95,
+        "max": 95
+      },
+      "readMs": {
+        "p50": 87,
+        "p95": 93
+      },
+      "states": {
+        "stale": 180
+      },
+      "errorRate": 0,
+      "providerRequests": 6,
+      "jobsCreated": 6,
+      "failedJobs": 0,
+      "readsPerProviderRequest": 30,
+      "cacheHitRatio": 100
+    }
+  ],
+  "recovery": {
+    "ran": 462,
+    "outcomes": {
+      "done": 462
+    }
+  },
+  "quota": {
+    "limitPerSecondPerCredential": 10,
+    "maxInOneCalendarSecond": 10,
+    "maxInAnySliding1s": 11,
+    "note": "fixed 1 s windows: any sliding second can hold at most 2 × the limit"
+  }
+}
